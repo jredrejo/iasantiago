@@ -1,0 +1,7 @@
+[Unit]
+Description=IASantiago backups (topics, qdrant, whoosh)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/iasantiago-rag
+ExecStart=/usr/bin/make backup

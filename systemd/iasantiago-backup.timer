@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily IASantiago backups at 03:30
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=iasantiago-backup.service
+
+[Install]
+WantedBy=timers.target
