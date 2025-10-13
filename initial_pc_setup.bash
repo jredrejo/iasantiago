@@ -34,9 +34,15 @@ sudo apt-get install -y nvidia-driver-580-open nvidia-dkms-580-open cuda-drivers
 
 sudo apt -y install nvidia-cuda-toolkit cuda-toolkit-13-0
 
-# Ruta típica para CUDA 13.0
-# echo 'export PATH=/usr/local/cuda-13.0/bin:$PATH' | sudo tee /etc/profile.d/cuda.sh
-# echo 'export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}' | sudo tee -a /etc/profile.d/cuda.sh
-# source /etc/profile.d/cuda.sh
+
+# Install the toolkit
+sudo apt-get install -y nvidia-container-toolkit
+
+# Configure Docker to use NVIDIA runtime
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+
+
 
 
