@@ -1,0 +1,142 @@
+version: "3.9"
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.10.0
+    container_name: qdrant
+    restart: unless-stopped
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - TZ=${TZ}
+    volumes:
+      - ${QDRANT_STORAGE}:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+    ports:
+      - "8000:8000"
+    command: >
+      --model ${VLLM_MODEL}
+      --tensor-parallel-size 1
+      --max-model-len 8192
+      --gpu-memory-utilization 0.85
+      --torch-dtype auto
+      --enforce-eager
+      --trust-remote-code
+      --host 0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+
+  rag-api:
+    build:
+      context: ./rag-api
+    container_name: rag-api
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - QDRANT_URL=${QDRANT_URL}
+      - BM25_BASE_DIR=${BM25_BASE_DIR}
+      - TOPIC_LABELS=${TOPIC_LABELS}
+      - TOPIC_BASE_DIR=${TOPIC_BASE_DIR}
+      - EMBED_MODEL_DEFAULT=${EMBED_MODEL_DEFAULT}
+      - EMBED_MODEL_PROGRAMMING=${EMBED_MODEL_PROGRAMMING}
+      - EMBED_MODEL_ELECTRONICS=${EMBED_MODEL_ELECTRONICS}
+      - EMBED_MODEL_CHEMISTRY=${EMBED_MODEL_CHEMISTRY}
+      - RERANK_MODEL=${RERANK_MODEL}
+      - CTX_TOKENS_SOFT_LIMIT=${CTX_TOKENS_SOFT_LIMIT}
+      - MAX_CHUNKS_PER_FILE=${MAX_CHUNKS_PER_FILE}
+      - HYBRID_DENSE_K=${HYBRID_DENSE_K}
+      - HYBRID_BM25_K=${HYBRID_BM25_K}
+      - FINAL_TOPK=${FINAL_TOPK}
+      - BM25_FALLBACK_TOKEN_THRESHOLD=${BM25_FALLBACK_TOKEN_THRESHOLD}
+      - UPSTREAM_OPENAI_URL=${UPSTREAM_OPENAI_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEMETRY_PATH=${TELEMETRY_PATH}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_OIDC_ISSUER=${GOOGLE_OIDC_ISSUER}
+      - ALLOWED_EMAIL_DOMAIN=${ALLOWED_EMAIL_DOMAIN}
+    volumes:
+      - ${TOPIC_BASE_DIR}:/topics:ro
+      - ${BM25_BASE_DIR}:/whoosh
+      - ./rag-api:/app
+      - ${QDRANT_STORAGE}:/qdrant_storage # opcional si quieres snapshot mgmt
+    ports:
+      - "8001:8001"
+    depends_on:
+      - vllm
+      - qdrant
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu] # para embeddings/reranker en GPU
+
+  ingestor:
+    build:
+      context: ./ingestor
+    container_name: ingestor
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - QDRANT_URL=${QDRANT_URL}
+      - TOPIC_LABELS=${TOPIC_LABELS}
+      - TOPIC_BASE_DIR=${TOPIC_BASE_DIR}
+      - BM25_BASE_DIR=${BM25_BASE_DIR}
+      - EMBED_MODEL_DEFAULT=${EMBED_MODEL_DEFAULT}
+      - EMBED_MODEL_PROGRAMMING=${EMBED_MODEL_PROGRAMMING}
+      - EMBED_MODEL_ELECTRONICS=${EMBED_MODEL_ELECTRONICS}
+      - EMBED_MODEL_CHEMISTRY=${EMBED_MODEL_CHEMISTRY}
+      - MAX_CHUNKS_PER_FILE=${MAX_CHUNKS_PER_FILE}
+    volumes:
+      - ${TOPIC_BASE_DIR}:/topics
+      - ${BM25_BASE_DIR}:/whoosh
+      - ./ingestor:/app
+    depends_on:
+      - qdrant
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - OAUTH_PROVIDER=${OPENWEBUI_AUTH_PROVIDER}
+      - OAUTH_CLIENT_ID=${OPENWEBUI_OIDC_CLIENT_ID}
+      - OAUTH_CLIENT_SECRET=${OPENWEBUI_OIDC_CLIENT_SECRET}
+      - OAUTH_ISSUER=${OPENWEBUI_OIDC_ISSUER}
+      - OAUTH_REDIRECT_URI=${OPENWEBUI_OIDC_REDIRECT_URI}
+      - OAUTH_SCOPES=${OPENWEBUI_OIDC_SCOPES}
+      - OPENAI_API_BASE_URL=http://rag-api:8001/v1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./openwebui/.env.openwebui:/app/.env
+    depends_on:
+      - rag-api
