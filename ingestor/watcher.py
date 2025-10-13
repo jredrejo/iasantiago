@@ -11,8 +11,8 @@ Para simplicidad hemos dejado solo `main.py` en `docker-compose`.
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import time, os
-from .main import index_pdf
-from .settings import TOPIC_LABELS, TOPIC_BASE_DIR
+from main import index_pdf
+from settings import TOPIC_LABELS, TOPIC_BASE_DIR
 
 
 class PDFHandler(FileSystemEventHandler):

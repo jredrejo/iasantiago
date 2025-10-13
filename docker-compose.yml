@@ -30,7 +30,8 @@ services:
       --tensor-parallel-size 1
       --max-model-len 8192
       --gpu-memory-utilization 0.85
-      --torch-dtype auto
+      --dtype auto
+      --enable-prefix-caching
       --enforce-eager
       --trust-remote-code
       --host 0.0.0.0

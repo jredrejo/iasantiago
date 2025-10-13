@@ -3,8 +3,14 @@ sudo apt update
 
 sudo apt install -y build-essential dkms linux-headers-$(uname -r) curl ca-certificates gnupg
 
+
 # instalación de python
 sudo apt install -y python-dev-is-python3 python3-pip
+
+
+# instalación de nginx
+sudo apt install -y nginx-full certbot python3-certbot-nginx
+
 
 # instalación de docker
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg

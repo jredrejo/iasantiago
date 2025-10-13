@@ -1,10 +1,10 @@
 from typing import List, Dict, Tuple
 import tiktoken
 from sentence_transformers import SentenceTransformer
-from .settings import *
-from .qdrant_utils import ensure_collection, upsert_points, search_dense
-from .bm25_utils import bm25_search
-from .rerank import CrossEncoderReranker
+from settings import *
+from qdrant_utils import ensure_collection, upsert_points, search_dense
+from bm25_utils import bm25_search
+from rerank import CrossEncoderReranker
 import os, json, time
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")

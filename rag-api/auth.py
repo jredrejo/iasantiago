@@ -1,6 +1,6 @@
 import time, json, httpx, jwt
 from fastapi import HTTPException, Request
-from .settings import GOOGLE_CLIENT_ID, GOOGLE_OIDC_ISSUER, ALLOWED_EMAIL_DOMAIN
+from settings import GOOGLE_CLIENT_ID, GOOGLE_OIDC_ISSUER, ALLOWED_EMAIL_DOMAIN
 
 JWKS_CACHE = {"keys": None, "exp": 0}
 

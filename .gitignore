@@ -1,0 +1,11 @@
+.env
+data/
+ingestor/__pycache__/
+nginx/certs/
+nginx/access.log
+nginx/error.log
+nginx/dhparam.pem
+models/
+rag-api/__pycache__/
+seeds/
+test/

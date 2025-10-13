@@ -1,8 +1,8 @@
 import os, glob
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient, models
-from .settings import *
-from .chunk import pdf_to_chunks
+from settings import *
+from chunk import pdf_to_chunks
 from pathlib import Path
 from whoosh import index
 from whoosh.fields import Schema, ID, TEXT, NUMERIC

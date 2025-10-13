@@ -3,17 +3,17 @@ from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
-from .settings import *
-from .retrieval import (
+from settings import *
+from retrieval import (
     choose_retrieval,
     attach_citations,
     soft_trim_context,
     rerank_passages,
     telemetry_log,
 )
-from .token_utils import extract_topic_from_model_name
-from .auth import auth_request, verify_bearer
-from .eval import aggregate_eval
+from token_utils import extract_topic_from_model_name
+from auth import auth_request, verify_bearer
+from eval import aggregate_eval
 
 app = FastAPI(title="IASantiago RAG API")
 
@@ -23,10 +23,10 @@ async def healthz():
     return {"ok": True, "topics": TOPIC_LABELS}
 
 
-@app.get("/auth")
-async def auth_guard(request: Request):
+# @app.get("/auth")
+#async def auth_guard(request: Request):
     # Para nginx auth_request
-    return await auth_request(request)
+#    return await auth_request(request)
 
 
 # ---------- OpenAI compat: /v1/models ----------
@@ -120,7 +120,7 @@ async def chat_completions(req: ChatRequest, request: Request):
     }
 
     async def stream():
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             async with client.stream(
                 "POST",
                 f"{UPSTREAM_OPENAI_URL}/chat/completions",

@@ -2,8 +2,6 @@
 set -euo pipefail
 
 BASE=/opt/iasantiago-rag
-sudo apt-get update
-sudo apt-get install -y docker.io docker-compose-plugin nginx curl jq python3-full python3-pip openssl
 
 # TLS self-signed (ajusta si tienes tu propia CA)
 mkdir -p $BASE/nginx/certs
@@ -39,12 +37,6 @@ async def main(n=10):
 asyncio.run(main())
 PY
 
-# Docker stack
-cd $BASE
-[ -f .env ] || cp .env.example .env
-docker compose pull
-docker compose build
-docker compose up -d
 
 # systemd units
 sudo ln -sf $BASE/systemd/iasantiago-rag.service /etc/systemd/system/iasantiago-rag.service
