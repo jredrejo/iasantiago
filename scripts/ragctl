@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+ragctl – Utilidad CLI para IASantiago RAG
+Comandos:
+  collections                   Lista colecciones de Qdrant con nº de puntos
+  topic-stats                   Muestra conteo por tema (Qdrant + BM25)
+  reindex-pdf  --topic T  PDF   Reindexa un único PDF en el tema dado
+  reindex-topic  --topic T      Reindexa TODOS los PDFs del tema (scan)
+  delete-pdf   --topic T  PDF   Elimina un PDF del índice (Qdrant + BM25)
+  verify       --topic T --query "..." [--k 10]
+                                Ejecuta una recuperación (vía API) y muestra top-k
+  tail-telemetry [--n 50]       Muestra últimas N líneas de retrieval.jsonl
+  head-telemetry [--n 50]       Muestra primeras N líneas de retrieval.jsonl
+  env                           Muestra variables relevantes del entorno RAG
+  whoosh-rebuild --topic T      Reconstruye índice BM25 del tema (desde PDFs)
+"""
+
+import os
+import sys
+import json
+import argparse
+from pathlib import Path
+
+# ---------- Config por defecto (se respeta .env si existe) ----------
+BASE = Path("/opt/iasantiago-rag")
+ENV_PATH = BASE / ".env"
+
+def load_env():
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.strip().startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+
+load_env()
+
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+TOPIC_BASE_DIR = Path(os.getenv("TOPIC_BASE_DIR", str(BASE / "topics")))
+BM25_BASE_DIR = Path(os.getenv("BM25_BASE_DIR", str(BASE / "data/whoosh")))
+TOPIC_LABELS = [t.strip() for t in os.getenv("TOPIC_LABELS", "Chemistry,Electronics,Programming").split(",")]
+TELEMETRY_PATH = Path(os.getenv("TELEMETRY_PATH", str(BASE / "rag-api/retrieval.jsonl")))
+RAG_API = os.getenv("RAG_API_URL", "http://127.0.0.1:8001")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY", "dummy-key")
+
+# Añadimos módulos internos al PATH (ingestor/rag-api)
+sys.path.insert(0, str(BASE / "ingestor"))
+sys.path.insert(0, str(BASE / "rag-api"))
+
+# Imports perezosos (fallan con mensaje claro si no están instalados)
+def _need(pkg):
+    try:
+        __import__(pkg)
+        return True
+    except Exception:
+        print(f"[ERROR] Falta el paquete Python '{pkg}'. Instala requisitos de 'ingestor' o 'rag-api'.", file=sys.stderr)
+        sys.exit(1)
+
+# ---------- Utilidades ----------
+def topic_collection(topic: str) -> str:
+    return f"rag_{topic.lower()}"
+
+def assert_topic(t: str):
+    if t not in TOPIC_LABELS:
+        print(f"[ERROR] Tema '{t}' no está en TOPIC_LABELS={TOPIC_LABELS}", file=sys.stderr)
+        sys.exit(2)
+
+def human_int(n):
+    return f"{n:,}".replace(",", ".")
+
+# ---------- Comandos ----------
+def cmd_collections(args):
+    _need("qdrant_client")
+    from qdrant_client import QdrantClient
+    from qdrant_client.http.models import CountRequest
+
+    cli = QdrantClient(url=QDRANT_URL)
+    cols = cli.get_collections().collections
+    print("Colecciones en Qdrant:")
+    for c in cols:
+        name = c.name
+        try:
+            cnt = cli.count(collection_name=name, count_request=CountRequest(exact=True)).count
+        except Exception:
+            cnt = "?"
+        print(f"  - {name:28s}  puntos={cnt}")
+
+def cmd_topic_stats(args):
+    _need("qdrant_client")
+    from qdrant_client import QdrantClient
+    from qdrant_client.http.models import CountRequest
+    from whoosh import index
+
+    cli = QdrantClient(url=QDRANT_URL)
+    print("Estadísticas por tema:")
+    for t in TOPIC_LABELS:
+        coll = topic_collection(t)
+        try:
+            cnt = cli.count(collection_name=coll, count_request=CountRequest(exact=True)).count
+        except Exception:
+            cnt = 0
+        # Whoosh
+        wdir = BM25_BASE_DIR / t
+        if wdir.exists():
+            try:
+                from whoosh import index
+                idx = index.open_dir(str(wdir))
+                with idx.searcher() as s:
+                    bm25_docs = s.doc_count()
+            except Exception:
+                bm25_docs = 0
+        else:
+            bm25_docs = 0
+        print(f"  * {t:14s}  Qdrant={human_int(cnt)}  BM25_docs={human_int(bm25_docs)}")
+
+def cmd_reindex_pdf(args):
+    assert_topic(args.topic)
+    pdf_path = Path(args.pdf).resolve()
+    if not pdf_path.exists():
+        print(f"[ERROR] No existe PDF: {pdf_path}", file=sys.stderr)
+        sys.exit(3)
+    _need("sentence_transformers")
+    _need("qdrant_client")
+    from main import index_pdf  # ingestor/main.py
+    print(f"[INFO] Reindexando '{pdf_path}' en tema '{args.topic}'…")
+    index_pdf(args.topic, str(pdf_path))
+    print("[OK] Reindexado")
+
+def cmd_reindex_topic(args):
+    assert_topic(args.topic)
+    _need("sentence_transformers")
+    _need("qdrant_client")
+    from main import index_pdf  # ingestor/main.py
+
+    tdir = (TOPIC_BASE_DIR / args.topic)
+    if not tdir.exists():
+        print(f"[ERROR] Carpeta del tema no existe: {tdir}", file=sys.stderr)
+        sys.exit(4)
+    pdfs = sorted(list(tdir.glob("*.pdf")))
+    if not pdfs:
+        print(f"[WARN] No hay PDFs en {tdir}")
+    for p in pdfs:
+        print(f"[INFO] {p.name}")
+        index_pdf(args.topic, str(p.resolve()))
+    print("[OK] Tema reindexado")
+
+def cmd_delete_pdf(args):
+    assert_topic(args.topic)
+    _need("qdrant_client")
+    from qdrant_client import QdrantClient, models
+    from whoosh import index
+
+    pdf_path = Path(args.pdf).resolve()
+    if not pdf_path.exists():
+        # Permitimos borrar aunque el fichero ya no esté (usamos ruta)
+        print(f"[WARN] El archivo no existe en disco, se intentará borrar del índice igualmente: {pdf_path}")
+
+    # Qdrant: delete por filtro file_path == path
+    cli = QdrantClient(url=QDRANT_URL)
+    coll = topic_collection(args.topic)
+    flt = models.Filter(must=[models.FieldCondition(key="file_path", match=models.MatchValue(value=str(pdf_path)))])
+    op = cli.delete(collection_name=coll, points_selector=models.FilterSelector(filter=flt), wait=True)
+    print(f"[OK] Qdrant delete status: {op.status}")
+
+    # Whoosh: borrar por término
+    wdir = BM25_BASE_DIR / args.topic
+    if wdir.exists():
+        try:
+            idx = index.open_dir(str(wdir))
+            writer = idx.writer(limitmb=512)
+            writer.delete_by_term("file_path", str(pdf_path))
+            writer.commit()
+            print("[OK] Whoosh delete realizado")
+        except Exception as e:
+            print(f"[ERROR] Whoosh delete: {e}", file=sys.stderr)
+    else:
+        print("[WARN] Índice Whoosh inexistente:", wdir)
+
+def cmd_verify(args):
+    import requests
+    topic = args.topic
+    assert_topic(topic)
+    query = args.query
+    k = args.k
+    url = f"{RAG_API}/v1/eval/offline"
+    payload = [{"query": query, "topic": topic, "relevant_files": []}]
+    try:
+        r = requests.post(url, json=payload, timeout=60)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] Llamando a {url}: {e}", file=sys.stderr)
+        sys.exit(5)
+    data = r.json()
+    details = data.get("details", [])
+    if not details:
+        print("[WARN] Sin detalles devueltos")
+        return
+    pred = details[0].get("pred_files", [])[:k]
+    print(f"Consulta: {query}\nTema: {topic}\nTop-{k} (archivos únicos):")
+    for i, f in enumerate(pred, 1):
+        print(f"  {i:2d}. {f}")
+
+def cmd_tail_telemetry(args):
+    n = args.n
+    p = TELEMETRY_PATH
+    if not p.exists():
+        print(f"[WARN] No existe {p}")
+        return
+    lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for line in lines[-n:]:
+        print(line)
+
+def cmd_head_telemetry(args):
+    n = args.n
+    p = TELEMETRY_PATH
+    if not p.exists():
+        print(f"[WARN] No existe {p}")
+        return
+    lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for line in lines[:n]:
+        print(line)
+
+def cmd_env(args):
+    show = {
+        "QDRANT_URL": QDRANT_URL,
+        "TOPIC_BASE_DIR": str(TOPIC_BASE_DIR),
+        "BM25_BASE_DIR": str(BM25_BASE_DIR),
+        "TOPIC_LABELS": TOPIC_LABELS,
+        "RAG_API": RAG_API,
+        "TELEMETRY_PATH": str(TELEMETRY_PATH),
+        "OPENAI_API_KEY": ("<set>" if os.getenv("OPENAI_API_KEY") else "<missing>"),
+    }
+    print(json.dumps(show, indent=2, ensure_ascii=False))
+
+def cmd_whoosh_rebuild(args):
+    """Reconstruye índice BM25 del tema leyendo todos los PDFs del tema."""
+    assert_topic(args.topic)
+    from whoosh import index
+    from whoosh.fields import Schema, ID, TEXT, NUMERIC
+    from pypdf import PdfReader
+
+    t = args.topic
+    wdir = BM25_BASE_DIR / t
+    wdir.mkdir(parents=True, exist_ok=True)
+    schema = Schema(file_path=ID(stored=True), page=NUMERIC(stored=True), chunk_id=NUMERIC(stored=True), text=TEXT(stored=True))
+
+    # recrear índice
+    if (wdir / "MAIN_WRITELOCK").exists():
+        (wdir / "MAIN_WRITELOCK").unlink(missing_ok=True)
+    try:
+        if index.exists_in(str(wdir)):
+            import shutil
+            for f in wdir.iterdir():
+                if f.is_file():
+                    f.unlink()
+        index.create_in(str(wdir), schema)
+    except Exception as e:
+        print(f"[ERROR] creando índice Whoosh: {e}", file=sys.stderr)
+        sys.exit(6)
+
+    def chunk_text(text, chunk_size=900, overlap=120):
+        text = " ".join((text or "").split())
+        i, idx = 0, 0
+        out = []
+        while i < len(text):
+            end = min(len(text), i + chunk_size)
+            seg = text[i:end]
+            out.append((idx, seg))
+            i = end - overlap if end - overlap > i else end
+            idx += 1
+        return out
+
+    tdir = TOPIC_BASE_DIR / t
+    pdfs = sorted(list(tdir.glob("*.pdf")))
+    if not pdfs:
+        print(f"[WARN] No hay PDFs en {tdir}")
+        return
+
+    idx = index.open_dir(str(wdir))
+    writer = idx.writer(limitmb=512, procs=0, multisegment=True)
+    total = 0
+    for pdf in pdfs:
+        try:
+            reader = PdfReader(str(pdf))
+            for pno, page in enumerate(reader.pages, start=1):
+                chunks = chunk_text(page.extract_text())
+                for cid, seg in chunks:
+                    writer.update_document(file_path=str(pdf.resolve()), page=pno, chunk_id=cid, text=seg)
+                    total += 1
+            print(f"[OK] {pdf.name}")
+        except Exception as e:
+            print(f"[ERROR] {pdf.name}: {e}", file=sys.stderr)
+    writer.commit()
+    print(f"[OK] Whoosh rebuild completado. Documentos indexados: {total}")
+
+# ---------- Main ----------
+def main():
+    ap = argparse.ArgumentParser(description="ragctl – CLI para IASantiago RAG", formatter_class=argparse.RawTextHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("collections", help="Lista colecciones de Qdrant con nº de puntos")
+    sub.add_parser("topic-stats", help="Muestra conteo por tema (Qdrant + BM25)")
+
+    p = sub.add_parser("reindex-pdf", help="Reindexa un PDF en un tema")
+    p.add_argument("--topic", required=True, choices=TOPIC_LABELS)
+    p.add_argument("pdf")
+
+    p = sub.add_parser("reindex-topic", help="Reindexa todos los PDFs del tema")
+    p.add_argument("--topic", required=True, choices=TOPIC_LABELS)
+
+    p = sub.add_parser("delete-pdf", help="Elimina un PDF del índice (Qdrant + BM25)")
+    p.add_argument("--topic", required=True, choices=TOPIC_LABELS)
+    p.add_argument("pdf")
+
+    p = sub.add_parser("verify", help="Consulta recuperación y lista top-k de archivos")
+    p.add_argument("--topic", required=True, choices=TOPIC_LABELS)
+    p.add_argument("--query", required=True)
+    p.add_argument("--k", type=int, default=10)
+
+    p = sub.add_parser("tail-telemetry", help="Últimas N líneas de retrieval.jsonl")
+    p.add_argument("--n", type=int, default=50)
+
+    p = sub.add_parser("head-telemetry", help="Primeras N líneas de retrieval.jsonl")
+    p.add_argument("--n", type=int, default=50)
+
+    sub.add_parser("env", help="Muestra variables relevantes del entorno RAG")
+
+    p = sub.add_parser("whoosh-rebuild", help="Reconstruye índice BM25 del tema a partir de PDFs")
+    p.add_argument("--topic", required=True, choices=TOPIC_LABELS)
+
+    args = ap.parse_args()
+    if args.cmd == "collections":
+        cmd_collections(args)
+    elif args.cmd == "topic-stats":
+        cmd_topic_stats(args)
+    elif args.cmd == "reindex-pdf":
+        cmd_reindex_pdf(args)
+    elif args.cmd == "reindex-topic":
+        cmd_reindex_topic(args)
+    elif args.cmd == "delete-pdf":
+        cmd_delete_pdf(args)
+    elif args.cmd == "verify":
+        cmd_verify(args)
+    elif args.cmd == "tail-telemetry":
+        cmd_tail_telemetry(args)
+    elif args.cmd == "head-telemetry":
+        cmd_head_telemetry(args)
+    elif args.cmd == "env":
+        cmd_env(args)
+    elif args.cmd == "whoosh-rebuild":
+        cmd_whoosh_rebuild(args)
+    else:
+        ap.print_help()
+
+if __name__ == "__main__":
+    main()
