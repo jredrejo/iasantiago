@@ -1,4 +1,5 @@
 import os, glob
+import torch
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient, models
 from settings import *
@@ -23,6 +24,7 @@ def ensure_qdrant(topic: str, d: int):
             vectors_config=models.VectorParams(size=d, distance=models.Distance.COSINE),
         )
 
+
 def ensure_whoosh(topic: str):
     path = os.path.join(BM25_BASE_DIR, topic)
     os.makedirs(path, exist_ok=True)
@@ -37,20 +39,44 @@ def ensure_whoosh(topic: str):
 
 
 def index_pdf(topic: str, pdf_path: str):
+    # Try CUDA with NVIDIA container's PyTorch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+
+    if device == "cuda":
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(
+            f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB"
+        )
+        print(f"CUDA version: {torch.version.cuda}")
+        print(f"PyTorch version: {torch.__version__}")
+
     embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     model = SentenceTransformer(
         embed_name,
         trust_remote_code=True,
-        device="cuda" if os.getenv("CUDA_VISIBLE_DEVICES", "") != "" else "cpu",
+        device=device,
     )
     dims = model.get_sentence_embedding_dimension()
     ensure_qdrant(topic, dims)
     ensure_whoosh(topic)
 
     chunks = pdf_to_chunks(pdf_path)
-    # limitar por archivo en Qdrant/BM25? lo aplicamos en retrieval; aquí indexamos todo
     texts = [c["text"] for c in chunks]
-    vecs = model.encode(texts, normalize_embeddings=True).tolist()
+
+    print(f"Encoding {len(texts)} chunks...")
+    vecs = model.encode(
+        texts,
+        normalize_embeddings=True,
+        batch_size=32 if device == "cuda" else 8,
+        show_progress_bar=True,
+        convert_to_tensor=True,
+    )
+    # Convert tensor to list for Qdrant
+    if torch.is_tensor(vecs):
+        vecs = vecs.cpu().tolist()
+    elif not isinstance(vecs, list):
+        vecs = vecs.tolist()
 
     # Qdrant upsert
     payloads = []
@@ -83,6 +109,14 @@ def index_pdf(topic: str, pdf_path: str):
 def initial_scan():
     print("Starting initial scan...")
     print(f"TOPIC_BASE_DIR: {TOPIC_BASE_DIR}")
+
+    # Check CUDA availability at startup
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"CUDA version: {torch.version.cuda}")
+        print(f"Number of GPUs: {torch.cuda.device_count()}")
+
     for t in TOPIC_LABELS:
         tdir = os.path.join(TOPIC_BASE_DIR, t)
         print(f"Topic directory: {tdir}")
@@ -90,6 +124,7 @@ def initial_scan():
         for pdf in glob.glob(os.path.join(tdir, "*.pdf")):
             print(f"Processing {pdf}")
             index_pdf(t, os.path.abspath(pdf))
+
 
 if __name__ == "__main__":
     initial_scan()

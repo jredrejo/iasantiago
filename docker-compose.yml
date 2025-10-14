@@ -21,6 +21,11 @@ services:
     image: vllm/vllm-openai:latest
     container_name: vllm
     restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    shm_size: 16gb
     environment:
       - TZ=${TZ}
     ports:
@@ -51,6 +56,11 @@ services:
       context: ./rag-api
     container_name: rag-api
     restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    shm_size: 8gb
     environment:
       - TZ=${TZ}
       - QDRANT_URL=${QDRANT_URL}
@@ -79,7 +89,7 @@ services:
       - ${TOPIC_BASE_DIR}:/topics:ro
       - ${BM25_BASE_DIR}:/whoosh
       - ./rag-api:/app
-      - ${QDRANT_STORAGE}:/qdrant_storage # opcional si quieres snapshot mgmt
+      - ${QDRANT_STORAGE}:/qdrant_storage
     ports:
       - "8001:8001"
     depends_on:
@@ -89,15 +99,21 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu] # para embeddings/reranker en GPU
+            - capabilities: [gpu]
 
   ingestor:
     build:
       context: ./ingestor
     container_name: ingestor
     restart: unless-stopped
+    ipc: host  # Critical for PyTorch performance
+    ulimits:
+      memlock: -1  # Unlimited memory locking
+      stack: 67108864  # 64MB stack size
+    shm_size: 16gb  # Shared memory for PyTorch dataloaders and multiprocessing
     environment:
       - TZ=${TZ}
+      - NVIDIA_VISIBLE_DEVICES=all
       - QDRANT_URL=${QDRANT_URL}
       - TOPIC_LABELS=${TOPIC_LABELS}
       - TOPIC_BASE_DIR=/topics
@@ -117,7 +133,9 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
