@@ -16,13 +16,12 @@ def topic_collection(topic: str) -> str:
 
 def ensure_qdrant(topic: str, d: int):
     coll = topic_collection(topic)
-    ex = [c.name for c in client.get_collections().collections]
-    if coll not in ex:
-        client.recreate_collection(
+
+    if not client.collection_exists(collection_name=coll):
+        client.create_collection(
             collection_name=coll,
             vectors_config=models.VectorParams(size=d, distance=models.Distance.COSINE),
         )
-
 
 def ensure_whoosh(topic: str):
     path = os.path.join(BM25_BASE_DIR, topic)
@@ -82,12 +81,15 @@ def index_pdf(topic: str, pdf_path: str):
 
 
 def initial_scan():
+    print("Starting initial scan...")
+    print(f"TOPIC_BASE_DIR: {TOPIC_BASE_DIR}")
     for t in TOPIC_LABELS:
         tdir = os.path.join(TOPIC_BASE_DIR, t)
+        print(f"Topic directory: {tdir}")
         os.makedirs(tdir, exist_ok=True)
         for pdf in glob.glob(os.path.join(tdir, "*.pdf")):
+            print(f"Processing {pdf}")
             index_pdf(t, os.path.abspath(pdf))
-
 
 if __name__ == "__main__":
     initial_scan()

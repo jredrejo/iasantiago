@@ -27,10 +27,9 @@ down:
 
 seed: gen-env
 	@echo "Creando carpetas de temas y copiando PDFs de ejemplo..."
-	@mkdir -p topics Chemistry Electronics Programming
 	@mkdir -p data/storage data/whoosh
 	@mkdir -p topics/Chemistry topics/Electronics topics/Programming
-	@cp -r seeds/* .
+	@cp -r seeds/* topics/
 	@echo "Lanzando ingestor para indexar..."
 	docker compose restart ingestor
 
