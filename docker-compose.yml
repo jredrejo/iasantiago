@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.10.0
+    image: qdrant/qdrant:v1.15.5-gpu-nvidia
     container_name: qdrant
     restart: unless-stopped
     environment:
@@ -151,6 +151,9 @@ services:
       - OAUTH_SCOPES=${OPENWEBUI_OIDC_SCOPES}
       - OPENAI_API_BASE_URL=http://rag-api:8001/v1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENABLE_OLLAMA_API=false
+      - OLLAMA_BASE_URL=""
+
     ports:
       - "8080:8080"
     volumes:

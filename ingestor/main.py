@@ -61,7 +61,12 @@ def index_pdf(topic: str, pdf_path: str):
     ensure_qdrant(topic, dims)
     ensure_whoosh(topic)
 
-    chunks = pdf_to_chunks(pdf_path)
+    try:
+        chunks = pdf_to_chunks(pdf_path)
+    except Exception as e:
+        print(f"[ERROR] Failed to extract text from PDF {pdf_path}: {e}")
+        print(f"[SKIP] Skipping this file and continuing...")
+        return
     texts = [c["text"] for c in chunks]
 
     print(f"Encoding {len(texts)} chunks...")
@@ -141,7 +146,14 @@ def initial_scan():
         os.makedirs(tdir, exist_ok=True)
         for pdf in glob.glob(os.path.join(tdir, "*.pdf")):
             print(f"Processing {pdf}")
-            index_pdf(t, os.path.abspath(pdf))
+            try:
+                index_pdf(t, os.path.abspath(pdf))
+            except Exception as e:
+                print(f"[ERROR] Unexpected error processing {pdf}: {e}")
+                import traceback
+
+                traceback.print_exc()
+                print("[SKIP] Continuing with next file...")
 
 
 if __name__ == "__main__":
