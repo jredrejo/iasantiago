@@ -23,16 +23,9 @@ async def healthz():
     return {"ok": True, "topics": TOPIC_LABELS}
 
 
-# @app.get("/auth")
-#async def auth_guard(request: Request):
-    # Para nginx auth_request
-#    return await auth_request(request)
-
-
 # ---------- OpenAI compat: /v1/models ----------
 @app.get("/v1/models")
 async def list_models(request: Request):
-    # Exponemos "topic:<Label>" para que Open WebUI lo muestre en el desplegable
     models = [
         {
             "id": f"topic:{t}",
@@ -73,15 +66,15 @@ async def chat_completions(req: ChatRequest, request: Request):
 
     # Retrieval
     retrieved, meta = choose_retrieval(topic, user_msg)
-    # Rerank
-    retrieved = rerank_passages(user_msg, retrieved)
+
+    # Rerank (only if we have results)
+    if retrieved:
+        retrieved = rerank_passages(user_msg, retrieved)
+        # Límite dinámico de tokens en contexto
+        retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
 
     # Contexto y citas embebidas
     context_text, cited = attach_citations(retrieved)
-    # Límite dinámico de tokens en contexto
-    context_chunks = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
-    # reconstruir context_text tras el trim
-    context_text, cited = attach_citations(context_chunks)
 
     # Prompt final
     prompt = f"{sys_prompt}\n\n[Contexto RAG]\n{context_text}\n\n[Pregunta]\n{user_msg}\n\n[Modo]={req.iasantiago_mode}"
@@ -119,28 +112,68 @@ async def chat_completions(req: ChatRequest, request: Request):
         "stream": req.stream,
     }
 
-    async def stream():
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            async with client.stream(
-                "POST",
-                f"{UPSTREAM_OPENAI_URL}/chat/completions",
-                headers=headers,
-                json=payload,
-            ) as r:
-                async for chunk in r.aiter_text():
-                    yield chunk
+    async def stream_generator():
+        """Generator that forwards SSE stream from vLLM to Open WebUI"""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{UPSTREAM_OPENAI_URL}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                ) as r:
+                    r.raise_for_status()
+                    # Forward raw bytes to preserve SSE formatting
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
+
+            except httpx.HTTPStatusError as e:
+                error_data = {
+                    "error": {
+                        "message": f"vLLM error: {str(e)}",
+                        "type": "upstream_error",
+                        "code": e.response.status_code,
+                    }
+                }
+                yield f"data: {json.dumps(error_data)}\n\n".encode()
+            except Exception as e:
+                error_data = {
+                    "error": {
+                        "message": f"Streaming error: {str(e)}",
+                        "type": "internal_error",
+                    }
+                }
+                yield f"data: {json.dumps(error_data)}\n\n".encode()
 
     if req.stream:
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            },
+        )
     else:
-        async with httpx.AsyncClient(timeout=None) as client:
-            resp = await client.post(
-                f"{UPSTREAM_OPENAI_URL}/chat/completions", headers=headers, json=payload
-            )
-            return Response(
-                content=resp.content,
-                media_type=resp.headers.get("Content-Type", "application/json"),
-            )
+        # Non-streaming response
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            try:
+                resp = await client.post(
+                    f"{UPSTREAM_OPENAI_URL}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return Response(
+                    content=resp.content,
+                    media_type=resp.headers.get("Content-Type", "application/json"),
+                )
+            except httpx.HTTPStatusError as e:
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=f"vLLM error: {e.response.text}",
+                )
 
 
 # ---------- Offline eval ----------

@@ -2,7 +2,7 @@ from typing import List, Dict, Tuple
 import tiktoken
 from sentence_transformers import SentenceTransformer
 from settings import *
-from qdrant_utils import ensure_collection, upsert_points, search_dense
+from qdrant_utils import search_dense
 from bm25_utils import bm25_search
 from rerank import CrossEncoderReranker
 import os, json, time
@@ -136,6 +136,9 @@ def bm25_only(topic: str, query: str):
 def attach_citations(chunks: List[Dict]) -> Tuple[str, List[Dict]]:
     # Construye el contexto y cita dentro del texto: [nombre.pdf, p.X]
     # También devuelve lista citada para UI clickable
+    if not chunks:
+        return "No se encontró información relevante en la base de datos.", []
+    
     context = []
     for c in chunks:
         name = os.path.basename(c["file_path"])
@@ -165,8 +168,17 @@ def choose_retrieval(topic: str, query: str):
 
 
 def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
+    # Handle empty passages
+    if not passages:
+        return []
+    
+    # If only one passage, no need to rerank
+    if len(passages) == 1:
+        return passages
+    
     reranker = get_reranker()
     order = reranker.rerank(
         query, [p["text"] for p in passages], topk=min(FINAL_TOPK, len(passages))
     )
     return [passages[i] for i in order]
+
