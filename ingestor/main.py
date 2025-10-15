@@ -78,7 +78,7 @@ def index_pdf(topic: str, pdf_path: str):
     elif not isinstance(vecs, list):
         vecs = vecs.tolist()
 
-    # Qdrant upsert
+    # Prepare payloads
     payloads = []
     for idx, c in enumerate(chunks):
         payloads.append(
@@ -89,11 +89,29 @@ def index_pdf(topic: str, pdf_path: str):
                 "text": c["text"],
             }
         )
-    ids = list(range(1, len(vecs) + 1))
-    client.upsert(
-        collection_name=topic_collection(topic),
-        points=models.Batch(ids=ids, vectors=vecs, payloads=payloads),
+
+    # Qdrant upsert in batches to avoid timeout
+    QDRANT_BATCH_SIZE = 100  # Adjust this if needed
+    total_chunks = len(vecs)
+    print(
+        f"Upserting {total_chunks} vectors to Qdrant in batches of {QDRANT_BATCH_SIZE}..."
     )
+
+    for batch_start in range(0, total_chunks, QDRANT_BATCH_SIZE):
+        batch_end = min(batch_start + QDRANT_BATCH_SIZE, total_chunks)
+        batch_ids = list(range(batch_start + 1, batch_end + 1))
+        batch_vecs = vecs[batch_start:batch_end]
+        batch_payloads = payloads[batch_start:batch_end]
+
+        client.upsert(
+            collection_name=topic_collection(topic),
+            points=models.Batch(
+                ids=batch_ids, vectors=batch_vecs, payloads=batch_payloads
+            ),
+        )
+        print(
+            f"  Uploaded batch {batch_start // QDRANT_BATCH_SIZE + 1}/{(total_chunks + QDRANT_BATCH_SIZE - 1) // QDRANT_BATCH_SIZE}"
+        )
 
     # Whoosh
     idx = index.open_dir(os.path.join(BM25_BASE_DIR, topic))
