@@ -1,0 +1,22 @@
+/* IA Santiago - Personalización */
+:root {
+  --primary: #1e8af7 !important;
+  --secondary: #c41e3a !important;
+}
+
+button[type="submit"],
+.bg-black {
+  background-color: #ff8142 !important;
+}
+
+button[type="submit"]:hover {
+  background-color: #ffb042 !important;
+}
+
+a {
+  color: #0355a6 !important;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #0355a6;
+}

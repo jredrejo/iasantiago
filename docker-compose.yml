@@ -160,5 +160,12 @@ services:
     volumes:
       - ./openwebui/.env.openwebui:/app/.env
       - ./openwebui/data:/app/backend/data
+      - ./openwebui/custom/apple-touch-icon.png:/app/backend/open_webui/static/apple-touch-icon.png:ro
+      - ./openwebui/custom/custom.css:/app/backend/open_webui/static/custom.css:ro
+      - ./openwebui/custom/favicon-96x96.png:/app/backend/open_webui/static/favicon-96x96.png:ro
+      - ./openwebui/custom/favicon.ico:/app/backend/open_webui/static/favicon.ico:ro
+      - ./openwebui/custom/favicon.png:/app/backend/open_webui/static/favicon.png:ro
+      - ./openwebui/custom/logo.png:/app/backend/open_webui/static/logo.png:ro
+      - ./openwebui/custom/splash.png:/app/backend/open_webui/static/splash.png:ro
     depends_on:
       - rag-api
