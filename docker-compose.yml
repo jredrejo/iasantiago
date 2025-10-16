@@ -153,10 +153,12 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ENABLE_OLLAMA_API=false
       - OLLAMA_BASE_URL=""
-
+      # Personalización
+      - WEBUI_NAME=IA del Santiago Apóstol
     ports:
       - "8080:8080"
     volumes:
       - ./openwebui/.env.openwebui:/app/.env
+      - ./openwebui/data:/app/backend/data
     depends_on:
       - rag-api
