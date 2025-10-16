@@ -3,7 +3,7 @@ ENV_FILE := .env
 BACKUP_DIR := /opt/iasantiago-rag/backups
 DATE := $(shell date +%F_%H%M%S)
 
-.PHONY: gen-env up down seed reset bench \
+.PHONY: gen-env up down stop seed reset bench \
         status logs tail rag-restart \
         backup backup-topics backup-qdrant backup-whoosh restore \
         watcher-on watcher-off \
@@ -24,6 +24,8 @@ up: gen-env
 
 down:
 	docker compose down
+stop:
+	docker compose stop
 
 seed: gen-env
 	@echo "Creando carpetas de temas y copiando PDFs de ejemplo..."
