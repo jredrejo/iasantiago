@@ -1,0 +1,19 @@
+network:
+  version: 2
+  ethernets:
+    enp131s0:
+      dhcp4: true
+      dhcp4-overrides:
+        use-routes: false
+      routes:
+        - to: 172.16.0.0/16  # solo para la intranet
+          scope: link
+  wifis:
+    wlp132s0:
+      dhcp4: true
+      access-points:
+        "el_que_sea":
+          auth:
+            key-management: "psk"
+            password: "tu clave"
+
