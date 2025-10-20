@@ -6,6 +6,10 @@ from qdrant_utils import search_dense
 from bm25_utils import bm25_search
 from rerank import CrossEncoderReranker
 import os, json, time
+import logging
+from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
@@ -34,7 +38,6 @@ def get_reranker():
 
 
 def count_tokens(text: str) -> int:
-    # aproximación genérica
     return len(_tokenizer.encode(text))
 
 
@@ -51,7 +54,6 @@ def soft_trim_context(chunks: List[Dict], token_limit: int) -> List[Dict]:
 
 
 def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
-    # denso
     embedder = get_embedder(topic)
     q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
     dense_hits = search_dense(topic, q_vec, HYBRID_DENSE_K)
@@ -67,10 +69,8 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
         for h in dense_hits
     ]
 
-    # BM25 (Whoosh)
     bm25 = bm25_search(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
 
-    # Combinar por (z-score) simple o suma ponderada; aquí suma min-max normalizada
     def norm(scores):
         if not scores:
             return []
@@ -79,7 +79,6 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
             return [1.0] * len(scores)
         return [(s - mi) / (ma - mi) for s in scores]
 
-    # index por (file_path, chunk_id)
     key = lambda d: (d["file_path"], d["chunk_id"])
     dense_map = {key(d): d for d in dense}
     for b in bm25:
@@ -102,7 +101,6 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
         m["score_hybrid"] = 0.6 * a + 0.4 * b
 
     merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
-    # límite por archivo
     file_counts = {}
     filtered = []
     for m in merged:
@@ -121,7 +119,6 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
 
 def bm25_only(topic: str, query: str):
     hits = bm25_search(BM25_BASE_DIR, topic, query, FINAL_TOPK * 3)
-    # aplicar límite por archivo
     file_counts, filtered = {}, []
     for h in hits:
         c = file_counts.get(h["file_path"], 0)
@@ -133,17 +130,47 @@ def bm25_only(topic: str, query: str):
     return filtered
 
 
-def attach_citations(chunks: List[Dict]) -> Tuple[str, List[Dict]]:
-    # Construye el contexto y cita dentro del texto: [nombre.pdf, p.X]
-    # También devuelve lista citada para UI clickable
+def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dict]]:
+    """
+    Construye el contexto con citas que incluyen enlaces a /docs/TOPIC/
+
+    Ejemplo:
+      Input: /topics/Programming/documento.pdf
+      Output: /docs/Programming/documento.pdf#page=5
+    """
     if not chunks:
         return "No se encontró información relevante en la base de datos.", []
-    
+
+    logger.info(
+        f"attach_citations: Processing {len(chunks)} chunks with topic='{topic}'"
+    )
+
     context = []
-    for c in chunks:
-        name = os.path.basename(c["file_path"])
-        context.append(f"{c['text']}\n— según [{name}, p.{c['page']}]")
-    return "\n\n".join(context), chunks
+    for i, c in enumerate(chunks):
+        filename = os.path.basename(c["file_path"])
+        page = c["page"]
+        text = c["text"]
+
+        # URL-encode el nombre del archivo (maneja espacios y caracteres especiales)
+        encoded_filename = quote(filename, safe=".")
+
+        # Generar URL a /docs/TOPIC/ con ancla de página
+        if topic:
+            doc_url = f"/docs/{topic}/{encoded_filename}#page={page}"
+        else:
+            doc_url = f"/docs/{encoded_filename}#page={page}"
+
+        # Formato Markdown: texto + cita con enlace
+        citation = f"{text}\n— según [{filename}, p.{page}]({doc_url})"
+        context.append(citation)
+
+        logger.info(f"  [{i}] Added citation: {filename}, p.{page}")
+        logger.debug(f"       URL: {doc_url}")
+
+    result = "\n\n".join(context)
+    logger.info(f"attach_citations: Final context length: {len(result)} chars")
+
+    return result, chunks
 
 
 def telemetry_log(entry: Dict):
@@ -168,17 +195,14 @@ def choose_retrieval(topic: str, query: str):
 
 
 def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
-    # Handle empty passages
     if not passages:
         return []
-    
-    # If only one passage, no need to rerank
+
     if len(passages) == 1:
         return passages
-    
+
     reranker = get_reranker()
     order = reranker.rerank(
         query, [p["text"] for p in passages], topk=min(FINAL_TOPK, len(passages))
     )
     return [passages[i] for i in order]
-

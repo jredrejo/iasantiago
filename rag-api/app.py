@@ -1,4 +1,4 @@
-import os, json, asyncio, httpx, time
+import os, json, asyncio, httpx, time, logging
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
@@ -14,6 +14,10 @@ from retrieval import (
 from token_utils import extract_topic_from_model_name
 from auth import auth_request, verify_bearer
 from eval import aggregate_eval
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="IASantiago RAG API")
 
@@ -66,6 +70,7 @@ async def chat_completions(req: ChatRequest, request: Request):
 
     # Retrieval
     retrieved, meta = choose_retrieval(topic, user_msg)
+    logger.info(f"Retrieved {len(retrieved)} chunks for topic '{topic}'")
 
     # Rerank (only if we have results)
     if retrieved:
@@ -73,11 +78,11 @@ async def chat_completions(req: ChatRequest, request: Request):
         # Límite dinámico de tokens en contexto
         retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
 
-    # Contexto y citas embebidas
-    context_text, cited = attach_citations(retrieved)
+    # Contexto y citas embebidas (incluye topic en URLs)
+    context_text, cited = attach_citations(retrieved, topic)
 
-    # Prompt final
-    prompt = f"{sys_prompt}\n\n[Contexto RAG]\n{context_text}\n\n[Pregunta]\n{user_msg}\n\n[Modo]={req.iasantiago_mode}"
+    # Prompt final - contexto RAG en el user message, system prompt separado
+    prompt = f"[Contexto RAG]\n{context_text}\n\n[Pregunta]\n{user_msg}"
 
     # Telemetría
     telemetry_log(
@@ -188,12 +193,15 @@ async def eval_offline(cases: List[EvalCase]):
     rows = []
     for c in cases:
         retrieved, meta = choose_retrieval(c.topic, c.query)
+        # Attach citations with topic for proper URLs
+        context_text, cited = attach_citations(retrieved, c.topic)
         rows.append(
             {
                 "query": c.query,
                 "topic": c.topic,
                 "relevant_files": c.relevant_files,
                 "retrieved": retrieved,
+                "context": context_text,
             }
         )
     agg = aggregate_eval(rows)
