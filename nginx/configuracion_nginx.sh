@@ -141,12 +141,12 @@ http {
   tcp_nodelay on;
   keepalive_timeout 65;
   types_hash_max_size 2048;
-  
+
   # Global settings for streaming/SSE
   proxy_buffering off;
   proxy_request_buffering off;
   proxy_http_version 1.1;
-  
+
   # Buffer sizes (keep small for streaming)
   proxy_buffer_size 4k;
   proxy_buffers 8 4k;
@@ -175,7 +175,7 @@ http {
     # Let's Encrypt certificates
     ssl_certificate     $LETSENCRYPT_PATH/fullchain.pem;
     ssl_certificate_key $LETSENCRYPT_PATH/privkey.pem;
-    
+
     # Include SSL parameters snippet
     include /etc/nginx/snippets/ssl-params.conf;
 
@@ -195,7 +195,7 @@ http {
     location /docs/ {
       autoindex on;
       alias /opt/iasantiago-rag/topics/;
-      
+
       # Security headers
       add_header X-Content-Type-Options nosniff;
       add_header X-Frame-Options DENY;
@@ -207,12 +207,12 @@ http {
     listen 80;
     listen [::]:80;
     server_name ia.santiagoapostol.net iasantiago.santiagoapostol.net ia.santiago;
-    
+
     # Allow Let's Encrypt ACME challenge
     location /.well-known/acme-challenge/ {
       root /var/www/certbot;
     }
-    
+
     # Redirect everything else to HTTPS
     location / {
       return 301 https://\$server_name\$request_uri;
@@ -288,4 +288,3 @@ echo -e "${YELLOW}Backup de configuración anterior:${NC}"
 echo "  - $NGINX_CONF.backup*"
 echo ""
 echo -e "${GREEN}¡Listo! HTTPS está activo en tus tres dominios${NC}"
-
