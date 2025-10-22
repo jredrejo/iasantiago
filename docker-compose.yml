@@ -45,7 +45,7 @@ services:
       --max-num-batched-tokens 8192
       --block-size 16
     volumes:
-      - huggingface_cache:/root/.cache/huggingface # ← Cachea entre reinicios
+      - huggingface_cache:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -87,10 +87,6 @@ services:
       - UPSTREAM_OPENAI_URL=${UPSTREAM_OPENAI_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TELEMETRY_PATH=${TELEMETRY_PATH}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_OIDC_ISSUER=${GOOGLE_OIDC_ISSUER}
-      - ALLOWED_EMAIL_DOMAIN=${ALLOWED_EMAIL_DOMAIN}
     volumes:
       - ${TOPIC_BASE_DIR}:/topics:ro
       - ${BM25_BASE_DIR}:/whoosh
@@ -112,11 +108,11 @@ services:
       context: ./ingestor
     container_name: ingestor
     restart: unless-stopped
-    ipc: host # Critical for PyTorch performance
+    ipc: host
     ulimits:
-      memlock: -1 # Unlimited memory locking
-      stack: 67108864 # 64MB stack size
-    shm_size: 16gb # Shared memory for PyTorch dataloaders and multiprocessing
+      memlock: -1
+      stack: 67108864
+    shm_size: 16gb
     environment:
       - TZ=${TZ}
       - NVIDIA_VISIBLE_DEVICES=all
@@ -149,22 +145,25 @@ services:
     restart: unless-stopped
     environment:
       - TZ=${TZ}
-      - OAUTH_PROVIDER=${OPENWEBUI_AUTH_PROVIDER}
-      - OAUTH_CLIENT_ID=${OPENWEBUI_OIDC_CLIENT_ID}
-      - OAUTH_CLIENT_SECRET=${OPENWEBUI_OIDC_CLIENT_SECRET}
-      - OAUTH_ISSUER=${OPENWEBUI_OIDC_ISSUER}
-      - OAUTH_REDIRECT_URI=${OPENWEBUI_OIDC_REDIRECT_URI}
-      - OAUTH_SCOPES=${OPENWEBUI_OIDC_SCOPES}
       - OPENAI_API_BASE_URL=http://rag-api:8001/v1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ENABLE_OLLAMA_API=false
       - OLLAMA_BASE_URL=""
-      # Personalización
       - WEBUI_NAME=IA del Santiago Apóstol
+      - WEBUI_URL=https://ia.santiagoapostol.net
+
+      # Confiar en los headers que envia oauth2-proxy
+      - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
+      - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-Forwarded-User
+
+      # Cookies “sanas” detrás de reverse proxy
+      - WEBUI_SESSION_COOKIE_SAME_SITE=lax
+      - WEBUI_AUTH_COOKIE_SAME_SITE=lax
+      - WEBUI_SESSION_COOKIE_SECURE=true
+      - WEBUI_AUTH_COOKIE_SECURE=true
     ports:
       - "8080:8080"
     volumes:
-      - ./openwebui/.env.openwebui:/app/.env
       - ./openwebui/data:/app/backend/data
       - ./openwebui/custom/apple-touch-icon.png:/app/backend/open_webui/static/apple-touch-icon.png:ro
       - ./openwebui/custom/custom.css:/app/backend/open_webui/static/custom.css:ro
@@ -175,6 +174,33 @@ services:
       - ./openwebui/custom/splash.png:/app/backend/open_webui/static/splash.png:ro
     depends_on:
       - rag-api
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: oauth2-proxy
+    restart: unless-stopped
+    ports:
+      - "4180:4180"
+    volumes:
+      - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
+      - ./oauth2-proxy/templates:/etc/oauth2-proxy/templates:ro
+    environment:
+      - TZ=${TZ}
+    command:
+      - --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+      - --cookie-secret=${OAUTH2_COOKIE_SECRET}
+      - --client-id=${OAUTH2_CLIENT_ID}
+      - --client-secret=${OAUTH2_CLIENT_SECRET}
+      - --redirect-url=${OAUTH2_REDIRECT_URL}
+      - --email-domain=${OAUTH2_EMAIL_DOMAINS}
+      - --code-challenge-method=S256
+      - --provider=oidc
+      - --oidc-issuer-url=https://accounts.google.com
+      - --http-address=0.0.0.0:4180
+      - --upstream=http://openwebui:8080
+      - --custom-templates-dir=/etc/oauth2-proxy/templates
+    depends_on:
+      - openwebui
 
 volumes:
   huggingface_cache:

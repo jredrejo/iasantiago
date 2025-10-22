@@ -1,5 +1,5 @@
 import os, json, asyncio, httpx, time, logging
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Header
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
@@ -12,7 +12,6 @@ from retrieval import (
     telemetry_log,
 )
 from token_utils import extract_topic_from_model_name
-from auth import auth_request, verify_bearer
 from eval import aggregate_eval
 
 # Setup logging
@@ -58,10 +57,10 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: ChatRequest, request: Request):
-    # Autenticación (si quieres endurecer, descomenta la siguiente línea)
-    # await verify_bearer(request)
-
+async def chat_completions(req: ChatRequest, request: Request, x_email: str = Header(None)):
+    # x_email viene desde oauth2-proxy (nginx)
+    logger.info(f"Usuario: {x_email}")
+    
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
     user_msg = next((m.content for m in req.messages[::-1] if m.role == "user"), "")
     sys_prompt = open(
