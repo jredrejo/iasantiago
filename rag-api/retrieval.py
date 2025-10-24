@@ -19,11 +19,18 @@ _embedder_cache = {}
 def get_embedder(topic: str):
     name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     if name not in _embedder_cache:
-        _embedder_cache[name] = SentenceTransformer(
-            name,
-            trust_remote_code=True,
-            device="cuda" if os.getenv("CUDA_VISIBLE_DEVICES", "") != "" else "cpu",
-        )
+        try:
+            logger.info(f"Loading embedder: {name}")
+            embedder = SentenceTransformer(
+                name,
+                trust_remote_code=True,
+                device="cuda" if os.getenv("CUDA_VISIBLE_DEVICES", "") != "" else "cpu",
+            )
+            _embedder_cache[name] = embedder
+            logger.info(f"✓ Embedder {name} loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load embedder {name}: {e}", exc_info=True)
+            raise RuntimeError(f"Cannot load embedding model {name}: {e}")
     return _embedder_cache[name]
 
 

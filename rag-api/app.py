@@ -18,7 +18,33 @@ from eval import aggregate_eval
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def ensure_models_loaded():
+    """Intenta cargar modelos al startup"""
+    logger.info("Checking if embedding models are available...")
+
+    try:
+        from settings import EMBED_PER_TOPIC, EMBED_DEFAULT, RERANK_MODEL
+        from retrieval import get_embedder, get_reranker
+
+        # Pre-load embedders
+        for topic in EMBED_PER_TOPIC.keys():
+            logger.info(f"Pre-loading embedder for {topic}...")
+            embedder = get_embedder(topic)
+            logger.info(f"✓ Embedder for {topic} loaded")
+
+        # Pre-load reranker
+        logger.info("Pre-loading reranker...")
+        reranker = get_reranker()
+        logger.info("✓ Reranker loaded")
+
+    except Exception as e:
+        logger.error(f"Error loading models at startup: {e}", exc_info=True)
+        raise
+
+
 app = FastAPI(title="IASantiago RAG API")
+ensure_models_loaded()
 
 
 @app.get("/healthz")
@@ -57,10 +83,12 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: ChatRequest, request: Request, x_email: str = Header(None)):
+async def chat_completions(
+    req: ChatRequest, request: Request, x_email: str = Header(None)
+):
     # x_email viene desde oauth2-proxy (nginx)
     logger.info(f"Usuario: {x_email}")
-    
+
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
     user_msg = next((m.content for m in req.messages[::-1] if m.role == "user"), "")
     sys_prompt = open(

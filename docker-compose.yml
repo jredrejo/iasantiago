@@ -57,6 +57,54 @@ services:
       timeout: 5s
       retries: 30
 
+  # ============================================================
+  # vLLM-LLaVA para análisis de imágenes/tablas
+  # Se pausa/arranca bajo demanda por ingestor/manage_gpu.sh
+  # ============================================================
+  vllm-llava:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-llava
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    shm_size: 16gb
+    environment:
+      - TZ=${TZ}
+      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
+    ports:
+      - "8002:8000"
+    expose:
+      - "8000"
+    command: >
+      --model llava-hf/llava-1.5-7b-hf
+      --tensor-parallel-size 1
+      --max-model-len 2048
+      --gpu-memory-utilization 0.5
+      --dtype float16
+      --quantization bitsandbytes
+      --load-format bitsandbytes
+      --enable-prefix-caching
+      --trust-remote-code false
+      --host 0.0.0.0
+      --port 8000
+      --max-num-seqs 128
+      --max-num-batched-tokens 4096
+      --block-size 16
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+
   rag-api:
     build:
       context: ./rag-api
@@ -90,6 +138,7 @@ services:
     volumes:
       - ${TOPIC_BASE_DIR}:/topics:ro
       - ${BM25_BASE_DIR}:/whoosh
+      - huggingface_cache:/root/.cache/huggingface
       - ./rag-api:/app
       - ${QDRANT_STORAGE}:/qdrant_storage
     ports:
@@ -106,8 +155,9 @@ services:
   ingestor:
     build:
       context: ./ingestor
+      dockerfile: Dockerfile
     container_name: ingestor
-    restart: unless-stopped
+    restart: "no"
     ipc: host
     ulimits:
       memlock: -1
@@ -115,29 +165,35 @@ services:
     shm_size: 16gb
     environment:
       - TZ=${TZ}
-      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_HOME=/models_cache
       - QDRANT_URL=${QDRANT_URL}
+      # Conecta a vLLM-LLaVA cuando está corriendo
+      - VLLM_URL=http://vllm-llava:8000
+      - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
       - TOPIC_LABELS=${TOPIC_LABELS}
       - TOPIC_BASE_DIR=/topics
       - BM25_BASE_DIR=/whoosh
       - EMBED_MODEL_DEFAULT=${EMBED_MODEL_DEFAULT}
-      - EMBED_MODEL_PROGRAMMING=${EMBED_MODEL_PROGRAMMING}
-      - EMBED_MODEL_ELECTRONICS=${EMBED_MODEL_ELECTRONICS}
-      - EMBED_MODEL_CHEMISTRY=${EMBED_MODEL_CHEMISTRY}
-      - MAX_CHUNKS_PER_FILE=${MAX_CHUNKS_PER_FILE}
+      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
+      - MIN_IMAGE_WIDTH=100
+      - MIN_IMAGE_HEIGHT=100
+      - LLM_ANALYSIS_TEMPERATURE=0.3
+      - TOKENIZERS_PARALLELISM=false
+      - OMP_NUM_THREADS=1
     volumes:
+      - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
       - ${BM25_BASE_DIR}:/whoosh
+      - llava_cache:/llava_cache
       - ./ingestor:/app
     depends_on:
       - qdrant
+      - vllm-llava
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+            - capabilities: [gpu]
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
@@ -151,12 +207,13 @@ services:
       - OLLAMA_BASE_URL=""
       - WEBUI_NAME=IA del Santiago Apóstol
       - WEBUI_URL=https://ia.santiagoapostol.net
-
+      - ENABLE_ARENA=false
+      - ENABLE_RAG=false
       # Confiar en los headers que envia oauth2-proxy
       - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
       - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-Forwarded-User
 
-      # Cookies “sanas” detrás de reverse proxy
+      # Cookies "sanas" detrás de reverse proxy
       - WEBUI_SESSION_COOKIE_SAME_SITE=lax
       - WEBUI_AUTH_COOKIE_SAME_SITE=lax
       - WEBUI_SESSION_COOKIE_SECURE=true
@@ -204,3 +261,5 @@ services:
 
 volumes:
   huggingface_cache:
+  llava_cache:
+  models_cache:

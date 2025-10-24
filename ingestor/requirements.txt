@@ -1,6 +1,55 @@
+# ============================================================
+# EXTRACTOR HÍBRIDO: Unstructured.io + MinerU
+# ============================================================
+
+# Unstructured.io (formatos variados + PDFs simples)
+unstructured==0.18.15
+unstructured[pdf,table-structure,image]==0.18.15
+unstructured-pytesseract==0.3.15
+pdf2image==1.17.0
+
+# MinerU (PDFs complejos - OPCIONAL, lazy loaded)
+# Instalar manualmente si necesitas: pip install mineru
+#mineru==2.6.2
+
+# PDF Analysis
+pdfplumber==0.11.7
+PyPDF2==3.0.1
+
+# Microsoft Office support
+python-docx>=1.2.0
+python-pptx>=1.0.2
+openpyxl>=3.1.5
+
+
+# Búsqueda y caché
 qdrant-client==1.15.1
-sentence-transformers==3.0.1
-pypdf==4.3.1
 whoosh==2.7.4
+
+# Embeddings
+sentence-transformers==5.1.2
+
+# Procesamiento de imágenes
+#pillow==12.0.0
+pillow-heif==1.1.1
+
+# OCR
+pytesseract==0.3.13
+
+# Detección de tipo MIME
+python-magic==0.4.27
+
+# Utilidades
 watchdog==4.0.1
-numpy==1.26.4
+
+# ============================================================
+# NOTAS:
+# ============================================================
+# - Unstructured.io: Instalado por defecto
+# - MinerU: Opcional, se carga dinámicamente si está instalado
+#   Para instalar MinerU: pip install mineru
+#
+# - Si solo necesitas PDFs simples, ignora MinerU
+# - Sistema detecta automáticamente qué usar
+# - Sin MinerU: usa solo Unstructured.io (fallback automático)
+# ============================================================
