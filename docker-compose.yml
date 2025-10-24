@@ -117,27 +117,28 @@ services:
       - TZ=${TZ}
       - NVIDIA_VISIBLE_DEVICES=all
       - QDRANT_URL=${QDRANT_URL}
+      - VLLM_URL=http://vllm:8000
+      - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
       - TOPIC_LABELS=${TOPIC_LABELS}
       - TOPIC_BASE_DIR=/topics
       - BM25_BASE_DIR=/whoosh
-      - EMBED_MODEL_DEFAULT=${EMBED_MODEL_DEFAULT}
-      - EMBED_MODEL_PROGRAMMING=${EMBED_MODEL_PROGRAMMING}
-      - EMBED_MODEL_ELECTRONICS=${EMBED_MODEL_ELECTRONICS}
-      - EMBED_MODEL_CHEMISTRY=${EMBED_MODEL_CHEMISTRY}
-      - MAX_CHUNKS_PER_FILE=${MAX_CHUNKS_PER_FILE}
+      - EMBED_MODEL_DEFAULT=intfloat/multilingual-e5-large-instruct
+      - MIN_IMAGE_WIDTH=100
+      - MIN_IMAGE_HEIGHT=100
+      - LLM_ANALYSIS_TEMPERATURE=0.3
     volumes:
       - ${TOPIC_BASE_DIR}:/topics
       - ${BM25_BASE_DIR}:/whoosh
+      - llava_cache:/llava_cache
       - ./ingestor:/app
     depends_on:
       - qdrant
+      - vllm
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+            - capabilities: [gpu]
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
@@ -204,3 +205,4 @@ services:
 
 volumes:
   huggingface_cache:
+  llava_cache:

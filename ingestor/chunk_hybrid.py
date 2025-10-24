@@ -1,7 +1,8 @@
 """
-chunk.py - VERSIÓN UNSTRUCTURED.IO LOCAL
-Extrae 50+ formatos (PDF, DOCX, PPTX, XLSX, etc.)
-Mantiene caché SQLite personalizado + LLaVA análisis
+chunk_hybrid.py - EXTRACTOR HÍBRIDO
+Usa Unstructured.io para formatos variados
+Usa MinerU para PDFs complejos
+Mantiene SQLite caché personalizado + LLaVA análisis
 """
 
 from unstructured.partition.auto import partition
@@ -9,23 +10,18 @@ from unstructured.partition.pdf import partition_pdf
 from unstructured.partition.docx import partition_docx
 from unstructured.partition.pptx import partition_pptx
 from unstructured.partition.xlsx import partition_xlsx
-from unstructured.partition.html import partition_html
-from unstructured.partition.markdown import partition_markdown
-from unstructured.partition.csv import partition_csv
-from unstructured.partition.json import partition_json
 
-from PIL import Image
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import hashlib
-import json
 import sqlite3
 import threading
 import logging
 import requests
 import base64
 from io import BytesIO
-from datetime import datetime
+from PIL import Image
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +77,35 @@ class SQLiteCacheManager:
                 """
                 )
 
+                # Nueva tabla: métricas de extracción
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS extraction_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_hash TEXT UNIQUE NOT NULL,
+                        file_path TEXT,
+                        extraction_method TEXT,
+                        complexity_score REAL,
+                        num_tables INTEGER,
+                        num_images INTEGER,
+                        extraction_time REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """
+                )
+
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_image_hash ON image_cache(image_hash)"
                 )
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_table_hash ON table_cache(table_hash)"
                 )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_file_hash ON extraction_metrics(file_hash)"
+                )
 
                 conn.commit()
-                logger.info("Cache database initialized")
+                logger.info("Cache database initialized (hybrid mode)")
         except Exception as e:
             logger.error(f"Error initializing cache DB: {e}")
 
@@ -130,7 +146,7 @@ class SQLiteCacheManager:
         return None
 
     def load_table_cache(self, table_hash: str) -> Optional[Dict[str, Any]]:
-        """Carga descripción en caché de tabla"""
+        """Carga análisis en caché de tabla"""
         try:
             with self.lock:
                 with self._get_connection() as conn:
@@ -193,81 +209,165 @@ class SQLiteCacheManager:
         except Exception as e:
             logger.error(f"Error saving table cache: {e}")
 
+    def save_extraction_metric(
+        self,
+        file_hash: str,
+        file_path: str,
+        method: str,
+        complexity: float,
+        num_tables: int,
+        num_images: int,
+        extraction_time: float,
+    ) -> None:
+        """Guarda métricas de extracción"""
+        try:
+            with self.lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """INSERT OR REPLACE INTO extraction_metrics
+                           (file_hash, file_path, extraction_method, complexity_score,
+                            num_tables, num_images, extraction_time)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            file_hash,
+                            file_path,
+                            method,
+                            complexity,
+                            num_tables,
+                            num_images,
+                            extraction_time,
+                        ),
+                    )
+                    conn.commit()
+                    logger.debug(f"Extraction metric saved: {file_path} ({method})")
+        except Exception as e:
+            logger.error(f"Error saving extraction metric: {e}")
+
 
 # ============================================================
-# UNSTRUCTURED EXTRACTOR (NUEVO)
+# COMPLEXITY ANALYZER (NUEVO)
+# ============================================================
+
+
+class PDFComplexityAnalyzer:
+    """Analiza la complejidad de un PDF para decidir qué extractor usar"""
+
+    def __init__(self):
+        self.complexity_threshold_mineru = 0.6  # 0.0-1.0
+
+    def analyze(self, file_path: str) -> Tuple[float, str]:
+        """
+        Analiza complejidad del PDF
+
+        Returns:
+            (complexity_score: 0.0-1.0, recommendation: "unstructured" | "mineru" | "hybrid")
+        """
+        try:
+            import PyPDF2
+
+            score = 0.0
+            details = []
+
+            with open(file_path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                num_pages = len(reader.pages)
+
+            # Factor 1: Número de páginas
+            if num_pages > 100:
+                score += 0.1
+                details.append(f"Muchas páginas: {num_pages}")
+            elif num_pages > 50:
+                score += 0.05
+
+            # Factor 2: Analizar primera página
+            try:
+                with open(file_path, "rb") as f:
+                    reader = PyPDF2.PdfReader(f)
+                    first_page = reader.pages[0]
+
+                    # Contar objetos
+                    text = first_page.extract_text() or ""
+                    text_length = len(text)
+
+                    # Heurística: PDFs con poco texto relativo tienen más gráficos/tablas
+                    if num_pages > 0:
+                        avg_text_per_page = text_length / num_pages
+
+                        # PDFs científicos/técnicos tienen menos texto (más figuras)
+                        if avg_text_per_page < 500:
+                            score += 0.3
+                            details.append(
+                                f"Bajo texto por página: {avg_text_per_page:.0f} chars"
+                            )
+                        elif avg_text_per_page < 1000:
+                            score += 0.15
+                            details.append(
+                                f"Texto medio: {avg_text_per_page:.0f} chars"
+                            )
+            except:
+                pass
+
+            # Factor 3: Detectar tablas (heurística)
+            try:
+                from pdfplumber import open as pdf_open
+
+                with pdf_open(file_path) as pdf:
+                    for page_num, page in enumerate(
+                        pdf.pages[:3]
+                    ):  # Check first 3 pages
+                        tables = page.find_table()
+                        if tables:
+                            score += 0.2
+                            details.append(f"Tabla detectada en página {page_num + 1}")
+            except:
+                pass
+
+            # Normalizar score a 0.0-1.0
+            score = min(score, 1.0)
+
+            # Decidir recomendación
+            if score >= self.complexity_threshold_mineru:
+                recommendation = "mineru"
+                logger.info(f"PDF complexity: {score:.2f} (COMPLEX) → Using MinerU")
+            else:
+                recommendation = "unstructured"
+                logger.info(
+                    f"PDF complexity: {score:.2f} (SIMPLE) → Using Unstructured.io"
+                )
+
+            if details:
+                logger.debug(f"Complexity factors: {', '.join(details)}")
+
+            return score, recommendation
+
+        except Exception as e:
+            logger.warning(
+                f"Error analyzing PDF complexity: {e}, using default (unstructured)"
+            )
+            return 0.5, "unstructured"
+
+
+# ============================================================
+# UNSTRUCTURED EXTRACTOR (MANTENEMOS)
 # ============================================================
 
 
 class UnstructuredExtractor:
-    """
-    Extrae contenido de 50+ formatos usando Unstructured.io LOCAL
-    Cachea descripciones de imágenes/tablas con LLaVA
-    """
+    """Extrae con Unstructured.io (generalista)"""
 
-    SUPPORTED_FORMATS = {
-        ".pdf": "PDF",
-        ".docx": "Word Document",
-        ".doc": "Word Document",
-        ".pptx": "PowerPoint Presentation",
-        ".ppt": "PowerPoint Presentation",
-        ".xlsx": "Excel Spreadsheet",
-        ".xls": "Excel Spreadsheet",
-        ".csv": "CSV",
-        ".tsv": "TSV",
-        ".html": "HTML",
-        ".htm": "HTML",
-        ".md": "Markdown",
-        ".markdown": "Markdown",
-        ".json": "JSON",
-        ".txt": "Text",
-        ".png": "Image",
-        ".jpg": "Image",
-        ".jpeg": "Image",
-        ".gif": "Image",
-        ".bmp": "Image",
-    }
-
-    def __init__(
-        self,
-        vllm_url: str = "http://vllm:8000",
-        cache_db: str = "/tmp/llava_cache/llava_cache.db",
-    ):
+    def __init__(self, vllm_url: str, cache: SQLiteCacheManager):
         self.vllm_url = vllm_url
-        self.cache = SQLiteCacheManager(cache_db=cache_db)
-        self.stats = {
-            "text_chunks": 0,
-            "tables_processed": 0,
-            "tables_cached": 0,
-            "images_processed": 0,
-            "images_cached": 0,
-            "format": None,
-        }
+        self.cache = cache
+        self.name = "unstructured"
 
-    def is_supported_format(self, file_path: str) -> bool:
-        """Verifica si el formato es soportado"""
-        ext = Path(file_path).suffix.lower()
-        return ext in self.SUPPORTED_FORMATS
-
-    def extract_document(self, file_path: str) -> List[Dict[str, Any]]:
-        """
-        Extrae CUALQUIER formato de documento soportado
-        """
-        file_path = str(file_path)
-        ext = Path(file_path).suffix.lower()
-
-        logger.info(
-            f"Extrayendo: {file_path} ({self.SUPPORTED_FORMATS.get(ext, 'Desconocido')})"
-        )
-
-        if not self.is_supported_format(file_path):
-            logger.warning(f"Formato no soportado: {ext}")
-            return []
-
-        self.stats["format"] = self.SUPPORTED_FORMATS.get(ext)
+    def extract(self, file_path: str) -> List[Dict[str, Any]]:
+        """Extrae documento con Unstructured.io"""
+        logger.info(f"Unstructured.io: Extrayendo {Path(file_path).name}")
 
         try:
-            # Unstructured detecta automáticamente el tipo
+            ext = Path(file_path).suffix.lower()
+
             if ext == ".pdf":
                 elements = partition_pdf(
                     file_path,
@@ -281,46 +381,231 @@ class UnstructuredExtractor:
                 elements = partition_pptx(file_path, infer_table_structure=True)
             elif ext in [".xlsx", ".xls"]:
                 elements = partition_xlsx(file_path, infer_table_structure=True)
-            elif ext == ".csv":
-                elements = partition_csv(file_path)
-            elif ext == ".tsv":
-                elements = partition_csv(file_path, delimiter="\t")
-            elif ext in [".html", ".htm"]:
-                elements = partition_html(file_path)
-            elif ext in [".md", ".markdown"]:
-                elements = partition_markdown(file_path)
-            elif ext == ".json":
-                elements = partition_json(file_path)
-            elif ext == ".txt":
-                # Para archivos de texto puro
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                    text = f.read()
-                elements = []
-                for para in text.split("\n\n"):
-                    if para.strip():
-                        from unstructured.documents.elements import Text
-
-                        elements.append(Text(text=para.strip()))
-            elif ext in [".png", ".jpg", ".jpeg", ".gif", ".bmp"]:
-                # Para imágenes
-                image = Image.open(file_path)
-                chunks = [{"type": "image", "image": image, "page": 1}]
-                return self._process_elements(chunks, file_path)
             else:
-                # Auto-detect
                 elements = partition(file_path, infer_table_structure=True)
 
+            logger.info(f"Unstructured.io: {len(elements)} elementos encontrados")
+            return elements
+
         except Exception as e:
-            logger.error(f"Error extrayendo {file_path}: {e}", exc_info=True)
+            logger.error(f"Error en Unstructured.io: {e}", exc_info=True)
             return []
 
-        logger.info(f"Unstructured encontró {len(elements)} elementos")
+
+# ============================================================
+# MINERU EXTRACTOR (NUEVO)
+# ============================================================
+
+
+class MinerUExtractor:
+    """Extrae PDFs complejos con MinerU"""
+
+    def __init__(self, vllm_url: str, cache: SQLiteCacheManager):
+        self.vllm_url = vllm_url
+        self.cache = cache
+        self.name = "mineru"
+        self._mineru = None
+
+    def _load_mineru(self):
+        """Lazy load MinerU (puede ser pesado)"""
+        if self._mineru is None:
+            try:
+                from mineru.pdf_extract import PDFExtractor
+
+                self._mineru = PDFExtractor()
+                logger.info("MinerU cargado exitosamente")
+            except ImportError:
+                logger.error("MinerU no instalado. Instala con: pip install mineru")
+                return None
+        return self._mineru
+
+    def extract(self, file_path: str) -> List[Dict[str, Any]]:
+        """Extrae PDF con MinerU"""
+        logger.info(f"MinerU: Extrayendo {Path(file_path).name}")
+
+        try:
+            mineru = self._load_mineru()
+            if not mineru:
+                logger.warning("MinerU no disponible, fallback a Unstructured.io")
+                return None
+
+            # MinerU retorna estructura compleja
+            content = mineru.extract(file_path)
+
+            # Convertir formato MinerU a nuestro formato
+            elements = self._convert_mineru_to_elements(content)
+
+            logger.info(f"MinerU: {len(elements)} elementos encontrados")
+            return elements
+
+        except Exception as e:
+            logger.error(f"Error en MinerU: {e}", exc_info=True)
+            logger.warning("Fallback a Unstructured.io")
+            return None
+
+    def _convert_mineru_to_elements(self, mineru_content) -> List[Dict]:
+        """Convierte formato MinerU a formato compatible"""
+        elements = []
+
+        try:
+            # MinerU retorna: {pages: [{blocks: [...]}]}
+            if isinstance(mineru_content, dict) and "pages" in mineru_content:
+                for page_num, page in enumerate(mineru_content["pages"], start=1):
+                    if "blocks" in page:
+                        for block in page["blocks"]:
+                            block_type = block.get("type", "text")
+
+                            if block_type == "text":
+                                elements.append(
+                                    {
+                                        "type": "Text",
+                                        "text": block.get("content", ""),
+                                        "page": page_num,
+                                    }
+                                )
+                            elif block_type == "table":
+                                elements.append(
+                                    {
+                                        "type": "Table",
+                                        "text": self._format_table(block),
+                                        "page": page_num,
+                                    }
+                                )
+                            elif block_type == "image":
+                                elements.append(
+                                    {
+                                        "type": "Image",
+                                        "text": block.get("content", ""),
+                                        "page": page_num,
+                                    }
+                                )
+        except Exception as e:
+            logger.error(f"Error convirtiendo formato MinerU: {e}")
+
+        return elements
+
+    def _format_table(self, table_block) -> str:
+        """Formatea tabla de MinerU a string"""
+        try:
+            if isinstance(table_block.get("content"), list):
+                rows = table_block["content"]
+                formatted = "\n".join(
+                    " | ".join(str(cell) for cell in row) for row in rows
+                )
+                return formatted
+        except:
+            pass
+
+        return str(table_block.get("content", ""))
+
+
+# ============================================================
+# HYBRID EXTRACTOR (CORE)
+# ============================================================
+
+
+class HybridExtractor:
+    """
+    Extractor híbrido que elige mejor extractor automáticamente
+    - Unstructured.io: Formatos variados + PDFs simples
+    - MinerU: PDFs complejos (papers, reportes)
+    """
+
+    def __init__(
+        self,
+        vllm_url: str = "http://vllm:8000",
+        cache_db: str = "/tmp/llava_cache/llava_cache.db",
+    ):
+        self.vllm_url = vllm_url
+        self.cache = SQLiteCacheManager(cache_db=cache_db)
+        self.analyzer = PDFComplexityAnalyzer()
+
+        self.unstructured = UnstructuredExtractor(vllm_url, self.cache)
+        self.mineru = MinerUExtractor(vllm_url, self.cache)
+
+        self.stats = {
+            "text_chunks": 0,
+            "tables_processed": 0,
+            "tables_cached": 0,
+            "images_processed": 0,
+            "images_cached": 0,
+            "extraction_method": None,
+        }
+
+    def extract_document(self, file_path: str) -> List[Dict[str, Any]]:
+        """Extrae documento eligiendo mejor método"""
+        import time
+
+        start_time = time.time()
+
+        file_path = str(file_path)
+        ext = Path(file_path).suffix.lower()
+
+        logger.info(f"Hybrid extraction: {Path(file_path).name}")
+
+        # Calcular hash del archivo
+        with open(file_path, "rb") as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()[:16]
+
+        # Decidir extractor
+        if ext == ".pdf":
+            complexity_score, recommendation = self.analyzer.analyze(file_path)
+
+            if recommendation == "mineru":
+                logger.info(f"Complejidad: {complexity_score:.2f} → MinerU")
+                elements = self.mineru.extract(file_path)
+
+                # Si MinerU falla, fallback a Unstructured
+                if elements is None:
+                    logger.warning("MinerU falló, fallback a Unstructured.io")
+                    elements = self.unstructured.extract(file_path)
+                    self.stats["extraction_method"] = "unstructured (fallback)"
+                else:
+                    self.stats["extraction_method"] = "mineru"
+            else:
+                logger.info(f"Complejidad: {complexity_score:.2f} → Unstructured.io")
+                elements = self.unstructured.extract(file_path)
+                self.stats["extraction_method"] = "unstructured"
+        else:
+            # No-PDF: Unstructured.io
+            elements = self.unstructured.extract(file_path)
+            self.stats["extraction_method"] = f"unstructured ({ext})"
+
+        if not elements:
+            logger.error(f"Extracción falló: {file_path}")
+            return []
 
         # Procesar elementos
+        chunks = self._process_elements(elements, file_path)
+
+        # Guardar métricas
+        extraction_time = time.time() - start_time
+        num_tables = sum(1 for c in chunks if c["type"] == "table")
+        num_images = sum(1 for c in chunks if c["type"] == "image")
+
+        self.cache.save_extraction_metric(
+            file_hash,
+            file_path,
+            self.stats["extraction_method"],
+            complexity_score if ext == ".pdf" else 0.0,
+            num_tables,
+            num_images,
+            extraction_time,
+        )
+
+        self._log_stats()
+        return chunks
+
+    def _process_elements(self, elements, file_path: str) -> List[Dict[str, Any]]:
+        """Procesa elementos según tipo"""
         chunks = []
+
         for element in elements:
-            element_type = element.__class__.__name__
-            logger.debug(f"Procesando: {element_type}")
+            element_type = (
+                element.__class__.__name__
+                if hasattr(element, "__class__")
+                else element.get("type", "Text")
+            )
 
             # TEXTO
             if element_type in [
@@ -330,7 +615,12 @@ class UnstructuredExtractor:
                 "Heading",
                 "Paragraph",
             ]:
-                if hasattr(element, "text") and element.text.strip():
+                text = (
+                    element.text
+                    if hasattr(element, "text")
+                    else element.get("text", "")
+                )
+                if text and text.strip():
                     chunks.append(
                         {
                             "page": (
@@ -338,9 +628,9 @@ class UnstructuredExtractor:
                                 if hasattr(element, "metadata")
                                 else 1
                             ),
-                            "text": element.text.strip(),
+                            "text": text.strip(),
                             "type": "text",
-                            "source": "unstructured",
+                            "source": "hybrid",
                             "chunk_id": len(chunks),
                         }
                     )
@@ -354,15 +644,14 @@ class UnstructuredExtractor:
 
             # IMÁGENES
             elif element_type in ["Image", "Picture"]:
-                chunk = self._process_image(element, file_path)
+                chunk = self._process_image(element)
                 if chunk:
                     chunks.append(chunk)
 
-        self._log_stats()
         return chunks
 
     def _process_table(self, element) -> Optional[Dict[str, Any]]:
-        """Procesa tabla: extrae estructura + análisis IA"""
+        """Procesa tabla con LLaVA + caché"""
         self.stats["tables_processed"] += 1
 
         try:
@@ -371,7 +660,6 @@ class UnstructuredExtractor:
             if not table_text.strip():
                 return None
 
-            # Hash para caché
             table_hash = hashlib.md5(table_text.encode()).hexdigest()[:16]
 
             # Verificar caché
@@ -380,10 +668,7 @@ class UnstructuredExtractor:
                 self.stats["tables_cached"] += 1
                 analysis = cached["analysis"]
             else:
-                # Analizar con LLaVA
                 analysis = self._analyze_table_with_llava(table_text)
-
-                # Guardar en caché
                 rows = len(table_text.split("\n"))
                 cols = max(
                     len(row.split("\t"))
@@ -402,7 +687,7 @@ class UnstructuredExtractor:
                 "page": page,
                 "text": analysis,
                 "type": "table",
-                "source": "unstructured+llava",
+                "source": "hybrid+llava",
                 "table_id": table_hash,
                 "chunk_id": len([]),
             }
@@ -410,43 +695,26 @@ class UnstructuredExtractor:
             logger.error(f"Error procesando tabla: {e}")
             return None
 
-    def _process_image(self, element, file_path: str) -> Optional[Dict[str, Any]]:
-        """Procesa imagen: extrae con LLaVA + caché"""
+    def _process_image(self, element) -> Optional[Dict[str, Any]]:
+        """Procesa imagen con LLaVA + caché"""
         self.stats["images_processed"] += 1
 
         try:
-            # Obtener imagen
             image = None
-
             if hasattr(element, "image"):
                 image = element.image
-            elif hasattr(element, "image_base64") and element.image_base64:
-                # Decodificar base64
+            elif hasattr(element, "image_base64"):
                 import base64
 
                 img_data = base64.b64decode(element.image_base64)
                 image = Image.open(BytesIO(img_data))
-            else:
-                # Intentar cargar del archivo
-                if Path(file_path).suffix.lower() in [
-                    ".png",
-                    ".jpg",
-                    ".jpeg",
-                    ".gif",
-                    ".bmp",
-                ]:
-                    image = Image.open(file_path)
 
             if not image:
                 return None
 
-            # Hash de imagen
-            if isinstance(image, Image.Image):
-                img_bytes = BytesIO()
-                image.save(img_bytes, format="PNG")
-                image_hash = hashlib.md5(img_bytes.getvalue()).hexdigest()[:16]
-            else:
-                image_hash = hashlib.md5(str(image).encode()).hexdigest()[:16]
+            img_bytes = BytesIO()
+            image.save(img_bytes, format="PNG")
+            image_hash = hashlib.md5(img_bytes.getvalue()).hexdigest()[:16]
 
             # Verificar caché
             cached = self.cache.load_image_cache(image_hash)
@@ -454,10 +722,7 @@ class UnstructuredExtractor:
                 self.stats["images_cached"] += 1
                 description = cached["description"]
             else:
-                # Describir con LLaVA
                 description = self._describe_image_with_llava(image)
-
-                # Guardar en caché
                 width = image.width if hasattr(image, "width") else 0
                 height = image.height if hasattr(image, "height") else 0
                 self.cache.save_image_cache(image_hash, description, width, height)
@@ -472,7 +737,7 @@ class UnstructuredExtractor:
                 "page": page,
                 "text": description,
                 "type": "image",
-                "source": "unstructured+llava",
+                "source": "hybrid+llava",
                 "image_id": image_hash,
                 "chunk_id": len([]),
             }
@@ -486,7 +751,6 @@ class UnstructuredExtractor:
 1. Qué datos contiene
 2. Relaciones entre columnas
 3. Insights o patrones importantes
-4. Contexto empresarial/técnico
 
 Tabla:
 {table_text[:1000]}
@@ -510,23 +774,21 @@ Responde de forma concisa."""
         except Exception as e:
             logger.error(f"Error con LLaVA (tabla): {e}")
 
-        return table_text[:500]  # Fallback
+        return table_text[:500]
 
     def _describe_image_with_llava(self, image: Image.Image) -> str:
         """Describe imagen con LLaVA"""
         try:
-            # Convertir a base64
             buffered = BytesIO()
             image.save(buffered, format="PNG")
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
 
             prompt = """Analiza esta imagen en detalle. Extrae:
-1. Texto visible (si hay)
-2. Elementos visuales principales (gráficos, diagramas, tablas)
-3. Relaciones entre elementos
-4. Contexto relevante
+1. Texto visible
+2. Elementos visuales principales
+3. Contexto relevante
 
-Responde de forma concisa pero completa."""
+Responde de forma concisa."""
 
             response = requests.post(
                 f"{self.vllm_url}/v1/chat/completions",
@@ -562,9 +824,9 @@ Responde de forma concisa pero completa."""
     def _log_stats(self):
         """Log estadísticas"""
         logger.info("\n" + "=" * 60)
-        logger.info("ESTADÍSTICAS EXTRACCIÓN")
+        logger.info("ESTADÍSTICAS EXTRACCIÓN (HÍBRIDA)")
         logger.info("=" * 60)
-        logger.info(f"Formato: {self.stats['format']}")
+        logger.info(f"Método: {self.stats['extraction_method']}")
         logger.info(f"Chunks de texto: {self.stats['text_chunks']}")
         logger.info(f"Tablas procesadas: {self.stats['tables_processed']}")
 
@@ -584,7 +846,7 @@ Responde de forma concisa pero completa."""
 
 
 # ============================================================
-# INTERFAZ PÚBLICA (COMPATIBLE CON VERSIÓN ANTERIOR)
+# INTERFAZ PÚBLICA (COMPATIBLE)
 # ============================================================
 
 
@@ -596,21 +858,23 @@ def pdf_to_chunks(
     cache_db: str = "/tmp/llava_cache/llava_cache.db",
 ) -> List[Dict[str, Any]]:
     """
-    Extrae chunks de documento usando Unstructured.io LOCAL
+    Extrae chunks usando extractor HÍBRIDO
 
-    Soporta: PDF, DOCX, PPTX, XLSX, CSV, HTML, Markdown, JSON, Imágenes, etc.
+    Automáticamente elige:
+    - MinerU para PDFs complejos
+    - Unstructured.io para PDFs simples + otros formatos
 
     Args:
         path: Ruta del documento
-        chunk_size: Tamaño máximo de chunks de texto
+        chunk_size: Tamaño máximo chunks
         overlap: Solapamiento entre chunks
-        vllm_url: URL del servicio vLLM
+        vllm_url: URL de vLLM
         cache_db: Ruta de base de datos SQLite
 
     Returns:
         Lista de chunks con metadatos
     """
-    extractor = UnstructuredExtractor(vllm_url=vllm_url, cache_db=cache_db)
+    extractor = HybridExtractor(vllm_url=vllm_url, cache_db=cache_db)
 
     chunks = extractor.extract_document(path)
 

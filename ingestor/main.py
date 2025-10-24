@@ -45,14 +45,16 @@ def ensure_whoosh(topic: str):
             page=NUMERIC(stored=True),
             chunk_id=NUMERIC(stored=True),
             text=TEXT(stored=True),
+            chunk_type=TEXT(stored=True),
+            source=TEXT(stored=True),
         )
         index.create_in(path, schema)
     else:
         logger.info(f"[WHOOSH] Index at {path} already exists")
 
 
-def index_pdf(topic: str, pdf_path: str):
-    """Index a single PDF file to both Qdrant and Whoosh"""
+def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = None):
+    """Index a single PDF file to both Qdrant and Whoosh with multimodal support"""
     logger.info(f"\n{'=' * 60}")
     logger.info(f"Starting indexing: {pdf_path}")
     logger.info(f"Topic: {topic}")
@@ -70,7 +72,7 @@ def index_pdf(topic: str, pdf_path: str):
         logger.info(f"CUDA version: {torch.version.cuda}")
         logger.info(f"PyTorch version: {torch.__version__}")
 
-    # Setup embedding model
+    # Setup embedding model (intfloat/multilingual-e5-large-instruct)
     embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     logger.info(f"Loading embedding model: {embed_name}")
 
@@ -90,11 +92,24 @@ def index_pdf(topic: str, pdf_path: str):
     ensure_qdrant(topic, dims)
     ensure_whoosh(topic)
 
-    # Extract text chunks from PDF
+    # Extract text chunks from PDF with multimodal support (LLaVA para tablas/imágenes)
     try:
-        logger.info(f"Extracting chunks from PDF...")
-        chunks = pdf_to_chunks(pdf_path)
+        logger.info(f"Extracting chunks from PDF (texto, tablas, imágenes)...")
+        vllm_url = vllm_url or os.getenv("VLLM_URL", "http://vllm:8000")
+        cache_db = cache_db or os.getenv(
+            "LLAVA_CACHE_DB", "/tmp/llava_cache/llava_cache.db"
+        )
+        chunks = pdf_to_chunks(pdf_path, vllm_url=vllm_url, cache_db=cache_db)
         logger.info(f"[OK] Extracted {len(chunks)} chunks")
+
+        # Resumen por tipo
+        text_count = sum(1 for c in chunks if c.get("type") == "text")
+        table_count = sum(1 for c in chunks if c.get("type") == "table")
+        image_count = sum(1 for c in chunks if c.get("type") == "image")
+        logger.info(f"  - Texto: {text_count}")
+        logger.info(f"  - Tablas: {table_count}")
+        logger.info(f"  - Imágenes: {image_count}")
+
     except Exception as e:
         logger.error(f"[ERROR] Failed to extract text from PDF: {e}", exc_info=True)
         logger.warning(f"[SKIP] Skipping this file and continuing...")
@@ -102,7 +117,7 @@ def index_pdf(topic: str, pdf_path: str):
 
     texts = [c["text"] for c in chunks]
 
-    # Encode chunks
+    # Encode chunks with intfloat/multilingual-e5-large-instruct
     logger.info(f"Encoding {len(texts)} chunks...")
     try:
         vecs = model.encode(
@@ -123,7 +138,7 @@ def index_pdf(topic: str, pdf_path: str):
         logger.error(f"[ERROR] Failed to encode chunks: {e}", exc_info=True)
         return
 
-    # Prepare payloads
+    # Prepare payloads with metadata
     payloads = []
     for idx, c in enumerate(chunks):
         payloads.append(
@@ -132,6 +147,9 @@ def index_pdf(topic: str, pdf_path: str):
                 "page": c["page"],
                 "chunk_id": idx,
                 "text": c["text"],
+                "chunk_type": c.get("type", "text"),
+                "source": c.get("source", "unknown"),
+                "content_id": c.get("image_id") or c.get("table_id") or str(idx),
             }
         )
 
@@ -172,7 +190,12 @@ def index_pdf(topic: str, pdf_path: str):
 
         for i, c in enumerate(chunks):
             writer.update_document(
-                file_path=pdf_path, page=c["page"], chunk_id=i, text=c["text"]
+                file_path=pdf_path,
+                page=c["page"],
+                chunk_id=i,
+                text=c["text"],
+                chunk_type=c.get("type", "text"),
+                source=c.get("source", "unknown"),
             )
 
         writer.commit()
@@ -183,7 +206,7 @@ def index_pdf(topic: str, pdf_path: str):
 
     logger.info(f"{'=' * 60}")
     logger.info(f"[SUCCESS] {pdf_path}")
-    logger.info(f"  - Chunks: {len(chunks)}")
+    logger.info(f"  - Total Chunks: {len(chunks)}")
     logger.info(f"  - Vectors: {len(vecs)}")
     logger.info(f"  - Topic: {topic}")
     logger.info(f"  - Collection: {topic_collection(topic)}")
@@ -199,7 +222,8 @@ def initial_scan():
     logger.info(f"BM25_BASE_DIR: {BM25_BASE_DIR}")
     logger.info(f"QDRANT_URL: {QDRANT_URL}")
 
-    # Check CUDA availability at startup
+    vllm_url = os.getenv("VLLM_URL", "http://vllm:8000")
+    logger.info(f"VLLM_URL: {vllm_url}")
     logger.info(f"\nPyTorch version: {torch.__version__}")
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
@@ -226,7 +250,7 @@ def initial_scan():
             abs_pdf = os.path.abspath(pdf)
             pdf_count += 1
             try:
-                index_pdf(t, abs_pdf)
+                index_pdf(t, abs_pdf, vllm_url=vllm_url, cache_db=cache_db)
             except Exception as e:
                 logger.error(
                     f"[ERROR] Unexpected error processing {abs_pdf}: {e}", exc_info=True
