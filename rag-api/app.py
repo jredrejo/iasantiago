@@ -86,11 +86,15 @@ class ChatRequest(BaseModel):
 async def chat_completions(
     req: ChatRequest, request: Request, x_email: str = Header(None)
 ):
-    # x_email viene desde oauth2-proxy (nginx)
     logger.info(f"Usuario: {x_email}")
+    logger.info(f"Mensajes recibidos: {len(req.messages)}")
 
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
+
+    # Obtener último mensaje del usuario para retrieval
     user_msg = next((m.content for m in req.messages[::-1] if m.role == "user"), "")
+
+    # System prompt
     sys_prompt = open(
         "/app/templates/system_prompts/default.txt", "r", encoding="utf-8"
     ).read()
@@ -99,17 +103,11 @@ async def chat_completions(
     retrieved, meta = choose_retrieval(topic, user_msg)
     logger.info(f"Retrieved {len(retrieved)} chunks for topic '{topic}'")
 
-    # Rerank (only if we have results)
     if retrieved:
         retrieved = rerank_passages(user_msg, retrieved)
-        # Límite dinámico de tokens en contexto
         retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
 
-    # Contexto y citas embebidas (incluye topic en URLs)
     context_text, cited = attach_citations(retrieved, topic)
-
-    # Prompt final - contexto RAG en el user message, system prompt separado
-    prompt = f"[Contexto RAG]\n{context_text}\n\n[Pregunta]\n{user_msg}"
 
     # Telemetría
     telemetry_log(
@@ -117,6 +115,7 @@ async def chat_completions(
             "query": user_msg,
             "topic": topic,
             "mode": meta.get("mode"),
+            "num_messages": len(req.messages),  # ← Añadido
             "dense_k": meta.get("dense_k"),
             "bm25_k": meta.get("bm25_k"),
             "final_topk": meta.get("final_topk"),
@@ -131,22 +130,54 @@ async def chat_completions(
         }
     )
 
-    # Llamada a vLLM (OpenAI compat)
+    # ============================================================
+    # CONSTRUCCIÓN DE MENSAJES CON HISTORIAL COMPLETO
+    # ============================================================
+
+    messages = []
+
+    # 1. System prompt enriquecido con contexto RAG
+    if (
+        context_text
+        and context_text != "No se encontró información relevante en la base de datos."
+    ):
+        enhanced_system = f"""{sys_prompt}
+
+[Contexto RAG - Información relevante de la base de datos]
+{context_text}
+
+Usa este contexto para responder las preguntas del usuario. Siempre cita las fuentes usando los enlaces proporcionados."""
+    else:
+        enhanced_system = sys_prompt
+
+    messages.append({"role": "system", "content": enhanced_system})
+
+    # 2. TODO el historial de conversación del usuario
+    for msg in req.messages:
+        # Filtrar system prompts que venga del cliente (Open WebUI)
+        if msg.role != "system":
+            messages.append({"role": msg.role, "content": msg.content})
+
+    logger.info(
+        f"Enviando a vLLM: {len(messages)} mensajes (system + {len(req.messages)} historial)"
+    )
+
+    # Payload para vLLM
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     payload = {
-        "model": os.getenv("VLLM_MODEL", ""),
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": prompt},
-        ],
+        "model": os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+        "messages": messages,
         "temperature": req.temperature,
         "top_p": req.top_p,
         "stream": req.stream,
+        "max_tokens": int(os.getenv("VLLM_MAX_TOKENS", "8192")),
     }
 
     async def stream_generator():
         """Generator that forwards SSE stream from vLLM to Open WebUI"""
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(180.0)
+        ) as client:  # ← Timeout aumentado
             try:
                 async with client.stream(
                     "POST",
@@ -155,11 +186,13 @@ async def chat_completions(
                     json=payload,
                 ) as r:
                     r.raise_for_status()
-                    # Forward raw bytes to preserve SSE formatting
                     async for chunk in r.aiter_bytes():
                         yield chunk
 
             except httpx.HTTPStatusError as e:
+                logger.error(
+                    f"vLLM HTTP error: {e.response.status_code} - {e.response.text}"
+                )
                 error_data = {
                     "error": {
                         "message": f"vLLM error: {str(e)}",
@@ -169,6 +202,7 @@ async def chat_completions(
                 }
                 yield f"data: {json.dumps(error_data)}\n\n".encode()
             except Exception as e:
+                logger.error(f"Streaming error: {str(e)}", exc_info=True)
                 error_data = {
                     "error": {
                         "message": f"Streaming error: {str(e)}",
@@ -184,12 +218,12 @@ async def chat_completions(
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Disable nginx buffering
+                "X-Accel-Buffering": "no",
             },
         )
     else:
         # Non-streaming response
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as client:
             try:
                 resp = await client.post(
                     f"{UPSTREAM_OPENAI_URL}/chat/completions",
@@ -202,6 +236,9 @@ async def chat_completions(
                     media_type=resp.headers.get("Content-Type", "application/json"),
                 )
             except httpx.HTTPStatusError as e:
+                logger.error(
+                    f"vLLM error: {e.response.status_code} - {e.response.text}"
+                )
                 raise HTTPException(
                     status_code=e.response.status_code,
                     detail=f"vLLM error: {e.response.text}",
