@@ -29,7 +29,8 @@ RERANK_MODEL = os.getenv("RERANK_MODEL", "jinaai/jina-reranker-v2-base-multiling
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
 BM25_BASE_DIR = os.getenv("BM25_BASE_DIR", "/whoosh")
 
-CTX_TOKENS_SOFT_LIMIT = int(os.getenv("CTX_TOKENS_SOFT_LIMIT", "6000"))
+# Contexto RAG reducido para dejar espacio al historial
+CTX_TOKENS_SOFT_LIMIT = int(os.getenv("CTX_TOKENS_SOFT_LIMIT", "4000"))  # ← Reducido
 MAX_CHUNKS_PER_FILE = int(os.getenv("MAX_CHUNKS_PER_FILE", "3"))
 HYBRID_DENSE_K = int(os.getenv("HYBRID_DENSE_K", "40"))
 HYBRID_BM25_K = int(os.getenv("HYBRID_BM25_K", "40"))

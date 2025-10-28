@@ -18,7 +18,9 @@ services:
       retries: 30
 
   vllm:
-    image: vllm/vllm-openai:latest
+  #  image: vllm/vllm-openai:latest
+#    image: vllm/vllm-openai:v0.5.4
+    image: vllm/vllm-openai:nightly
     container_name: vllm
     restart: unless-stopped
     ipc: host
@@ -27,23 +29,34 @@ services:
       stack: 67108864
     shm_size: 16gb
     environment:
-      - TZ=${TZ}
-      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
+    - TZ=${TZ}
+    - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
+    - VLLM_TORCH_COMPILE_LEVEL=0
+    - CUDA_LAUNCH_BLOCKING=0
+    - TORCH_CUDA_MEMORY_FRACTION=0.85
+    - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    - CUDA_VISIBLE_DEVICES=0
+    - VLLM_LOGGING_LEVEL=INFO
+    # Para latencia: enable prefill pipelining
+    - VLLM_ENABLE_PREFIX_CACHING=1
+    # Reduce overhead de comunicación
+    - VLLM_ALLOW_LONG_MAX_POSITION_EMBEDDINGS=1
     ports:
       - "8000:8000"
     command: >
-      --model ${VLLM_MODEL}
+      --serve ${VLLM_MODEL}
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len ${VLLM_MAX_MODEL_LEN}
       --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}
-      --dtype auto
-      --enable-prefix-caching
-      --trust-remote-code false
+      --dtype bfloat16
       --host 0.0.0.0
       --port 8000
-      --max-num-seqs 256
-      --max-num-batched-tokens 8192
-      --block-size 16
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS}
+      --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS}
+      --block-size ${VLLM_BLOCK_SIZE}
+      --kv-cache-dtype auto
+      --enable-prefix-caching
+      --enable-chunked-prefill
     volumes:
       - huggingface_cache:/root/.cache/huggingface
     deploy:
@@ -62,9 +75,10 @@ services:
   # Se pausa/arranca bajo demanda por ingestor/manage_gpu.sh
   # ============================================================
   vllm-llava:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:nightly
+#    image: vllm/vllm-openai:latest
     container_name: vllm-llava
-    restart: unless-stopped
+    restart: no
     ipc: host
     ulimits:
       memlock: -1
@@ -72,23 +86,34 @@ services:
     shm_size: 16gb
     environment:
       - TZ=${TZ}
-      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
+      - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
+      - VLLM_TORCH_COMPILE_LEVEL=0
+      - CUDA_LAUNCH_BLOCKING=1
+      - TORCH_CUDA_MEMORY_FRACTION=0.75
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_LOGGING_LEVEL=INFO
+      # Para latencia: enable prefill pipelining
+      - VLLM_ENABLE_PREFIX_CACHING=1
+      # Reduce overhead de comunicación
+      - VLLM_ALLOW_LONG_MAX_POSITION_EMBEDDINGS=1
     ports:
       - "8002:8000"
     expose:
       - "8000"
     command: >
-      --model llava-hf/llava-1.5-7b-hf
-      --tensor-parallel-size 1
+      --serve llava-hf/llava-1.5-7b-hf
+      --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len 2048
-      --gpu-memory-utilization 0.5
-      --dtype float16
-      --quantization bitsandbytes
-      --load-format bitsandbytes
-      --enable-prefix-caching
-      --trust-remote-code false
+      --gpu-memory-utilization 0.4
+      --dtype bfloat16
       --host 0.0.0.0
       --port 8000
+      --kv-cache-dtype auto
+      --enable-prefix-caching
+      --enable-chunked-prefill
+      --quantization bitsandbytes
+      --load-format bitsandbytes
       --max-num-seqs 128
       --max-num-batched-tokens 4096
       --block-size 16
