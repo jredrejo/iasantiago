@@ -1,5 +1,5 @@
 """
-chunk.py - VERSIÓN SIMPLIFICADA
+chunk.py
 Extrae: PDF, DOCX, PPTX (sin XLSX)
 Mantiene caché SQLite + LLaVA análisis
 Manejo defensivo de CUDA
@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 # DISABLE CUDA FOR UNSTRUCTURED ONLY (prevent OOM with vLLM)
 # No desactives para todo el proceso, solo para unstructured
 # ============================================================
-# os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "1"
 os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "false"
+# NO hagas esto: os.environ["CUDA_VISIBLE_DEVICES"] = ""
 logger.warning("[CONFIG] CUDA DISABLED for Unstructured (vLLM-LLaVA uses GPU)")
 
 

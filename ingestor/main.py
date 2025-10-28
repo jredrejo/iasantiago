@@ -3,6 +3,7 @@ import torch
 import logging
 import json
 import hashlib
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
@@ -182,6 +183,80 @@ class ProcessingState:
 
 # Instancia global de estado
 state = ProcessingState()
+
+
+# ============================================================
+# VECTOR VALIDATION: Asegurar vectores válidos para Qdrant
+# ============================================================
+def validate_and_fix_vectors(vecs, dims):
+    """
+    Valida y corrige vectores para Qdrant
+    - Elimina NaN, Inf
+    - Asegura tipo correcto (list of floats)
+    - Asegura dimensión correcta
+    """
+    if isinstance(vecs, torch.Tensor):
+        vecs = vecs.float().cpu().numpy()
+
+    if isinstance(vecs, np.ndarray):
+        vecs = vecs.tolist()
+
+    if not isinstance(vecs, list):
+        raise ValueError(f"Vectors must be list, got {type(vecs)}")
+
+    valid_vecs = []
+    invalid_count = 0
+
+    for i, vec in enumerate(vecs):
+        # Convertir a lista si es necesario
+        if isinstance(vec, np.ndarray):
+            vec = vec.tolist()
+        elif isinstance(vec, torch.Tensor):
+            vec = vec.float().cpu().numpy().tolist()
+
+        # Verificar dimensión
+        if len(vec) != dims:
+            logger.warning(f"Vector {i} has wrong dimension: {len(vec)} != {dims}")
+            invalid_count += 1
+            # Rellenar o truncar
+            if len(vec) < dims:
+                vec = vec + [0.0] * (dims - len(vec))
+            else:
+                vec = vec[:dims]
+
+        # Verificar y corregir valores inválidos
+        valid_vec = []
+        has_invalid = False
+        for val in vec:
+            if isinstance(val, (list, np.ndarray)):
+                val = float(val[0]) if len(val) > 0 else 0.0
+
+            # Convertir a float
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                val = 0.0
+                has_invalid = True
+
+            # Verificar NaN/Inf
+            if not np.isfinite(val):
+                val = 0.0
+                has_invalid = True
+
+            valid_vec.append(val)
+
+        if has_invalid:
+            invalid_count += 1
+            logger.warning(
+                f"Vector {i} contained invalid values (NaN/Inf), replaced with 0.0"
+            )
+
+        valid_vecs.append(valid_vec)
+
+    if invalid_count > 0:
+        logger.warning(f"Fixed {invalid_count}/{len(vecs)} invalid vectors")
+
+    return valid_vecs
 
 
 # ============================================================
@@ -463,19 +538,15 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             batch_size=32,
         )
 
-        # Asegúrate de que sean listas Python puras (no tensores)
-        if torch.is_tensor(vecs):
-            vecs = vecs.float().cpu().numpy().tolist()
-        elif isinstance(vecs, type(torch.tensor([]))):  # numpy array
-            vecs = vecs.tolist()
-        elif not isinstance(vecs, list):
-            vecs = vecs.tolist()
+        # CRÍTICO: Validar y corregir vectores antes de enviar a Qdrant
+        vecs = validate_and_fix_vectors(vecs, dims)
 
         # DEBUG: Verifica dimensión y tipo
         logger.info(f"[OK] Encoded {len(vecs)} vectors")
         logger.info(f"[DEBUG] Vector type: {type(vecs)}")
         logger.info(f"[DEBUG] First vector type: {type(vecs[0])}")
         logger.info(f"[DEBUG] Vector dimension: {len(vecs[0])}")
+        logger.info(f"[DEBUG] First value type: {type(vecs[0][0])}")
 
     except Exception as e:
         logger.error(f"[ERROR] Failed to encode chunks: {e}", exc_info=True)
@@ -509,11 +580,21 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             batch_vecs = vecs[batch_start:batch_end]
             batch_payloads = payloads[batch_start:batch_end]
 
+            # Crear lista de PointStruct válidos
+            points = [
+                models.PointStruct(
+                    id=batch_ids[i],
+                    vector=batch_vecs[i],
+                    payload=batch_payloads[i],
+                )
+                for i in range(len(batch_vecs))
+            ]
+
+            # Upsert moderno compatible con Qdrant >= 1.9
             client.upsert(
                 collection_name=topic_collection(topic),
-                points=models.Batch(
-                    ids=batch_ids, vectors=batch_vecs, payloads=batch_payloads
-                ),
+                points=points,
+                wait=True,
             )
             batch_num = batch_start // QDRANT_BATCH_SIZE + 1
             total_batches = (total_chunks + QDRANT_BATCH_SIZE - 1) // QDRANT_BATCH_SIZE
