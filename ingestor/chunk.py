@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 # DISABLE CUDA FOR UNSTRUCTURED ONLY (prevent OOM with vLLM)
 # No desactives para todo el proceso, solo para unstructured
 # ============================================================
-os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "1"
-# NO hagas esto: os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "1"
+os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "false"
 logger.warning("[CONFIG] CUDA DISABLED for Unstructured (vLLM-LLaVA uses GPU)")
 
 

@@ -1,583 +1,603 @@
-# IASantiago RAG 
+# IASantiago RAG
 
-## 1) ¿Qué es y qué puede hacer? (visión general)
+Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiago Apóstol que permite consultar documentos PDF organizados por temas mediante una interfaz de chat.
 
-**IASantiago RAG** es un stack de Recuperación Aumentada con Generación que monta un “ChatGPT interno” sobre PDFs organizados por **temas**. Arquitectura:
-
-```
-Open WebUI  ──>  RAG API (FastAPI, OpenAI-compatible)
-                  ├─ Hybrid Retrieval: Qdrant (denso) + BM25 (Whoosh)
-                  ├─ Re-ranker (Jina/BGE)
-                  ├─ Streaming + citas [archivo.pdf, p.X] + límites dinámicos
-                  ├─ /v1/models (selector de tema)  ──> colecciones por tema
-                  └─ /v1/eval/offline (Recall@k, MRR)
-Ingestor (PDF→chunks→embeddings→Qdrant + BM25)
-Qdrant (vectores)    vLLM (LLM servido en GPU)
-Nginx (TLS + OIDC Google Workspace)
-```
-
-### Funcionalidades clave
-
-* **Selector de tema** dentro de Open WebUI (usando `/v1/models`), p. ej. `topic:Chemistry / Electronics / Programming`.
-* **RAG híbrido**: búsqueda **densa** (embeddings `intfloat/multilingual-e5-large-instruct` por defecto; configurables por tema) + **BM25** (Whoosh).
-* **Heurísticas de calidad**:
-
-  * **Fallback BM25** si la consulta es muy corta (< 4 tokens).
-  * **Re-ranking** cruzado (Jina Reranker multilingüe por defecto).
-  * **Límite por archivo** (máx. N fragmentos por documento) para evitar monopolios.
-  * **Límite de contexto dinámico** por tokens.
-* **Citas embebidas y clicables** (texto marcado “[…]”; si publicas `/docs/` en Nginx, se vuelven enlaces).
-* **Streaming** de tokens desde vLLM.
-* **Telemetría**: `retrieval.jsonl` con consultas y resultados; **logrotate** incluido.
-* **Evaluación**: endpoint `/v1/eval/offline` y **cron nocturno** (Recall@k / MRR a `eval_summary.csv`).
-* **Seguridad**: autenticación **Google Workspace (OIDC)** y restricción por **dominio**; Nginx escucha en **443** (`iasantiago.santiagoapostol.net`) sobre **intranet** (`172.23.120.11`).
-
----
-
-## 2) Guía rápida para usuarios
-
-### Acceso y login
-
-1. Abre `https://iasantiago.santiagoapostol.net` (puede pedirte aceptar el certificado si es self-signed).
-2. Inicia sesión con tu cuenta de **Google Workspace** del dominio permitido (p. ej. `@santiagoapostol.net`).
-
-### Elegir el **tema**
-
-* En la barra superior de Open WebUI, abre el desplegable de **Modelos** y elige uno de la forma `topic:<Tema>` (ej.: `topic:Chemistry`).
-* Todo lo que preguntes en esa conversación **solo** buscará PDFs del tema seleccionado.
-
-### Subir PDFs (profesorado)
-
-* Copia tus PDFs a la carpeta del tema correspondiente en el servidor:
-
-  * `/opt/iasantiago-rag/topics/Chemistry/`
-  * `/opt/iasantiago-rag/topics/Electronics/`
-  * `/opt/iasantiago-rag/topics/Programming/`
-* El **ingestor** indexa en segundo plano; tras unos segundos/minutos los documentos quedarán disponibles.
-
-### Hacer preguntas y entender las citas
-
-* Formula tu pregunta con palabras clave (si es muy corta, el sistema usará BM25).
-* La respuesta incluye citas como: `[…/archivo.pdf, p.12]`.
-* Si el admin publicó `/docs/` en Nginx, esas citas serán **clicables** y abrirán el PDF en esa página/archivo.
-
-### Modos de respuesta (explica / guía / examen)
-
-* Verás referencias a “modo” en las respuestas. Puedes pedirlo en el primer mensaje (“modo: **explica**/**guía**/**examen**”) o el administrador puede publicar variantes del modelo (por ejemplo `topic:Chemistry [examen]`).
-
-### Consejos de consulta
-
-* Para **definiciones** o términos breves, añade **más contexto** (“definición + autor/tema/curso”) para mejorar el ranking.
-* Para **preguntas amplias**, incluye **palabras clave** concretas (títulos de secciones, leyes, fechas, etc.).
-* Si la respuesta parece “genérica”, pide **citas más específicas** o reformula con más detalles.
-
----
-
-## 3) Para desarrolladores y admins (montar y operar el sistema)
-
-### Requisitos
-
-* **Ubuntu Server 24.04**, GPU NVIDIA (ej.: RTX 5090), drivers + CUDA instalados.
-* Docker + Docker Compose plugin, Nginx, Python 3.
-* Acceso a Internet saliente (para JWKS de Google y descarga de modelos en el primer arranque).
-
-### Estructura de proyecto
+## Arquitectura
 
 ```
-/opt/iasantiago-rag/
-├─ docker-compose.yml              ── vLLM, Qdrant, RAG API, Ingestor, Open WebUI
-├─ Makefile                        ── make up / seed / reset / bench
-├─ .env.example  → .env            ── configuración
-├─ topics/                         ── PDFs por tema (montado read-only en RAG API)
-├─ data/storage                    ── datos Qdrant
-├─ data/whoosh                     ── índices BM25 por tema
-├─ rag-api/ …                      ── FastAPI (OpenAI-compatible)
-├─ ingestor/ …                     ── indexación PDF→Qdrant+BM25
-├─ openwebui/.env.openwebui
-├─ nginx/nginx.conf (+certs, dhparam.pem)
-├─ systemd/*.service|*.timer|logrotate-telemetry
-└─ scripts/deploy_all.sh
+┌─────────────────┐
+│   Open WebUI    │ ← Interfaz de usuario (puerto 8080)
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│  oauth2-proxy   │ ← Autenticación Google Workspace (puerto 4180)
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│    RAG API      │ ← FastAPI - OpenAI compatible (puerto 8001)
+│                 │   • Hybrid Retrieval (Qdrant + BM25/Whoosh)
+│                 │   • Re-ranking (Jina/BGE)
+│                 │   • Streaming + citas con enlaces
+│                 │   • Límites dinámicos de contexto
+└─┬───┬───┬───┬───┘
+  │   │   │   │
+  │   │   │   └─────► vLLM (puerto 8000)
+  │   │   │           Generación de texto (LLM en GPU)
+  │   │   │
+  │   │   └─────────► vLLM-LLaVA (puerto 8002)
+  │   │               Análisis de imágenes/tablas
+  │   │
+  │   └─────────────► Whoosh (BM25)
+  │                   Búsqueda léxica (índices locales)
+  │
+  └─────────────────► Qdrant (puertos 6333/6334)
+                      Base de datos vectorial
+
+┌─────────────────┐
+│    Ingestor     │ ← Indexación de PDFs (ejecución única)
+│                 │   • Extracción con Unstructured.io
+│                 │   • Análisis LLaVA (imágenes/tablas)
+│                 │   • Cache SQLite (70x speedup)
+│                 │   • Embeddings a Qdrant + BM25
+└─────────────────┘
 ```
 
-### Variables clave en `.env`
+## Funcionalidades Principales
 
-* **Temas**: `TOPIC_LABELS=Chemistry,Electronics,Programming`
-* **Carpetas**: `TOPIC_BASE_DIR=/opt/iasantiago-rag/topics`
-* **Embeddings** (por tema):
+### Para Usuarios
 
-  * `EMBED_MODEL_DEFAULT=intfloat/multilingual-e5-large-instruct`
-  * `EMBED_MODEL_PROGRAMMING=thenlper/gte-large` (ejemplo)
-* **Re-ranker**: `RERANK_MODEL=jinaai/jina-reranker-v2-base-multilingual`
-* **Límites**: `CTX_TOKENS_SOFT_LIMIT`, `MAX_CHUNKS_PER_FILE`, `HYBRID_*_K`, `FINAL_TOPK`
-* **Auth**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAIL_DOMAIN=@santiagoapostol.net`
-* **Rutas**: `QDRANT_URL`, `BM25_BASE_DIR`, `TELEMETRY_PATH`
+- **Selector de temas**: Elige entre Chemistry, Electronics, Programming
+- **Búsqueda híbrida**: Combina embeddings densos + BM25 léxico
+- **Citas clicables**: Enlaces directos a PDFs con número de página
+- **Streaming**: Respuestas en tiempo real
+- **Autenticación Google**: Login con cuentas @santiagoapostol.net
 
-### Despliegue rápido
+### Características Técnicas
+
+- **Retrieval inteligente**: Fallback automático a BM25 para consultas cortas (<4 tokens)
+- **Re-ranking**: Jina Reranker multilingüe mejora relevancia
+- **Límites por archivo**: Máximo N fragmentos por documento (evita monopolios)
+- **Límite de contexto dinámico**: Control por tokens (6000 default)
+- **Cache LLaVA**: SQLite para análisis de imágenes/tablas (70x speedup)
+- **Telemetría**: Logs en `retrieval.jsonl` con rotación automática
+- **Estado persistente**: Tracking de archivos procesados (evita reindexación)
+
+## Requisitos del Sistema
+
+- **Sistema Operativo**: Ubuntu Server 24.04
+- **GPU**: NVIDIA con soporte CUDA (ej: RTX 5090)
+- **Software**: Docker + Docker Compose, Nginx, Python 3
+- **Conectividad**: Acceso a Internet para descarga de modelos
+- **Almacenamiento**: ~50GB para modelos + datos
+
+## Instalación Rápida
+
+### 1. Preparar el entorno
 
 ```bash
-sudo mkdir -p /opt/iasantiago-rag && cd /opt/iasantiago-rag
-# Copia dentro todos los archivos del proyecto (los de este README).
-cp .env.example .env   # y rellena OIDC si procede
-make up                # build + up -d
-```
-
-* **Nginx (bare-metal)**: usa `nginx/nginx.conf`, certificado en `nginx/certs/`.
-* **Systemd**:
-
-  ```bash
-  sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag.service /etc/systemd/system/
-  sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag-eval.service /etc/systemd/system/
-  sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag-eval.timer /etc/systemd/system/
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now iasantiago-rag.service
-  sudo systemctl enable --now iasantiago-rag-eval.timer
-  ```
-* **Logrotate**:
-
-  ```bash
-  sudo ln -sf /opt/iasantiago-rag/systemd/logrotate-telemetry /etc/logrotate.d/iasantiago-rag
-  ```
-
-### Seeds y reindexado
-
-```bash
-make seed   # crea carpetas/ejemplos y reinicia ingestor
-make reset  # borra Qdrant + Whoosh y reindexa desde cero
-```
-
-### Open WebUI — selector por tema
-
-* La RAG API expone `/v1/models` con entradas `topic:<Tema>`.
-* Open WebUI mostrará esas opciones en su desplegable de modelos.
-* Todo chat que use ese “modelo” queda **limitado** a la colección Qdrant + índice BM25 del **tema**.
-
-### Endpoints de la RAG API (OpenAI-compat)
-
-* `/v1/models` → lista de “modelos” (temas).
-* `/v1/chat/completions` → streaming permitido (`stream=true`).
-
-  * Añade **citas** tipo `[archivo.pdf, p.X]` en el texto.
-  * Respeta **límite dinámico** de tokens y **límite por archivo**.
-* `/v1/eval/offline` → `POST` con `[{query, topic, relevant_files:[…]}]` → `{aggregate, details}`.
-
-### Evaluación y telemetría
-
-* **Cron (systemd timer)** nocturno ejecuta evaluación “toy” y guarda `eval_summary.csv`.
-* **Telemetría de retrieval** a `rag-api/retrieval.jsonl` (rotado diariamente).
-
-### Seguridad (intranet + OIDC Google)
-
-* **Open WebUI** usa OIDC para login (redirect a Google y vuelta).
-* **Nginx** protege `/` con `auth_request` hacia `/auth` de la RAG API, que valida el **ID Token** y **dominio permitido**.
-* Asegúrate de permitir **salida** a `https://accounts.google.com` para JWKS.
-
-### Rendimiento y GPU
-
-* vLLM corre con `--gpu-memory-utilization 0.85` (ajusta según VRAM).
-* `rag-api` puede usar GPU para embeddings y re-ranker. Si necesitas aislar GPUs:
-
-  * Exporta `CUDA_VISIBLE_DEVICES` por servicio en `docker-compose.yml`.
-
-### Publicar PDFs como **clicables**
-
-* Opción rápida (opcional): en Nginx, sirve `/opt/iasantiago-rag/topics` como `/docs/`:
-
-  ```nginx
-  location /docs/ {
-    autoindex on;
-    alias /opt/iasantiago-rag/topics/;
-  }
-  ```
-* En la RAG API, convierte `file_path` → URL `/docs/<Tema>/<archivo.pdf>` para que Open WebUI los muestre como enlaces (el ejemplo actual deja el texto marcado listo para enlazar).
-
-### Operación diaria
-
-* **Añadir PDFs**: ponlos en `/opt/iasantiago-rag/topics/<Tema>/`.
-* **Ver estado**:
-
-  * Qdrant: `http://<host>:6333/dashboard` (si lo expones a la LAN).
-  * RAG API: `http://<host>:8001/healthz`.
-  * vLLM: `http://<host>:8000/v1/models`.
-* **Logs**:
-
-  ```bash
-  docker logs -f rag-api
-  docker logs -f ingestor
-  docker logs -f vllm
-  ```
-
-### Troubleshooting rápido
-
-* **No sale el tema en Open WebUI** → comprueba `/v1/models` en `rag-api` y variables `TOPIC_LABELS`.
-* **No hay resultados** → revisa que el PDF esté en la carpeta correcta, que el **ingestor** lo haya indexado y que Qdrant/Woosh tengan datos en `data/`.
-* **Auth falla** → revisa `GOOGLE_CLIENT_ID/SECRET`, redirect URI en GCP (`/_auth/callback`), y conectividad a `accounts.google.com`.
-* **VRAM insuficiente** → prueba un modelo de LLM más pequeño o baja `--max-model-len`/`--gpu-memory-utilization`.
-
-
-## 4) Operación & Mantenimiento (recetas rápidas)
-
-### Estado y logs
-
-```bash
+# Crear directorio del proyecto
+sudo mkdir -p /opt/iasantiago-rag
 cd /opt/iasantiago-rag
+
+# Descargar código
+wget https://github.com/jredrejo/iasantiago/archive/refs/heads/main.zip
+unzip main.zip
+mv iasantiago-main/* .
+rm -rf iasantiago-main main.zip
+
+# Configurar variables de entorno
+cp .env.example .env
+nano .env  # Editar configuración
+```
+
+### 2. Configurar `.env`
+
+Variables esenciales:
+
+```bash
+# Temas
+TOPIC_LABELS=Chemistry,Electronics,Programming
+TOPIC_BASE_DIR=/opt/iasantiago-rag/topics
+
+# Google OAuth
+OAUTH2_CLIENT_ID=tu-client-id.apps.googleusercontent.com
+OAUTH2_CLIENT_SECRET=tu-secret
+OAUTH2_REDIRECT_URL=https://iasantiago.santiagoapostol.net/oauth2/callback
+OAUTH2_EMAIL_DOMAINS=santiagoapostol.net
+OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32)
+
+# Modelos (configurables por tema)
+EMBED_MODEL_DEFAULT=intfloat/multilingual-e5-large-instruct
+RERANK_MODEL=jinaai/jina-reranker-v2-base-multilingual
+VLLM_MODEL=meta-llama/Meta-Llama-3.1-8B-Instruct
+
+# Límites
+CTX_TOKENS_SOFT_LIMIT=6000
+MAX_CHUNKS_PER_FILE=3
+FINAL_TOPK=12
+```
+
+### 3. Configurar Google OAuth
+
+1. Ir a [Google Cloud Console](https://console.cloud.google.com)
+2. Crear proyecto nuevo o usar existente
+3. Activar **Google+ API**
+4. Crear credenciales OAuth 2.0:
+   - Tipo: Web application
+   - URIs autorizados: `https://iasantiago.santiagoapostol.net`
+   - URIs de redirección: `https://iasantiago.santiagoapostol.net/oauth2/callback`
+5. Copiar Client ID y Secret al `.env`
+
+### 4. Iniciar servicios
+
+```bash
+# Construir e iniciar contenedores
+make up
+
+# Ver estado
 docker compose ps
+
+# Ver logs
 docker compose logs -f rag-api
-docker compose logs -f ingestor
-docker compose logs -f vllm
-docker compose logs -f qdrant
 ```
 
-### Ciclo de vida de la pila
+### 5. Configurar Nginx (opcional)
+
+Si deseas exponer el servicio públicamente:
 
 ```bash
-make up            # build + up -d
-make down          # docker compose down
-make reset         # borra Qdrant+Whoosh y reindexa
-make seed          # crea carpetas y PDFs de ejemplo e indexa
-```
-
-### Servicios del sistema (arranque automático)
-
-```bash
-sudo systemctl status iasantiago-rag.service
-sudo systemctl restart iasantiago-rag.service
-
-# Evaluación nocturna
-sudo systemctl list-timers | grep iasantiago
-sudo systemctl start iasantiago-rag-eval.service   # ejecutar ahora
-sudo systemctl restart iasantiago-rag-eval.timer
-```
-
-### Nginx + TLS
-
-```bash
+# Copiar configuración
+cd nginx/nginx.conf
+sudo ./configuracion_nginx.sh
+# Probar y recargar
 sudo nginx -t
 sudo systemctl reload nginx
-# Cert & clave en: /opt/iasantiago-rag/nginx/certs/
 ```
 
-### Logrotate de telemetría
+### 6. Configurar servicios systemd (arranque automático)
 
 ```bash
-sudo logrotate -d /etc/logrotate.d/iasantiago-rag     # dry-run (ver plan)
-sudo logrotate -f /etc/logrotate.d/iasantiago-rag     # forzar rotación
-# Archivo: /opt/iasantiago-rag/rag-api/retrieval.jsonl
+# Enlazar servicios
+sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag.service /etc/systemd/system/
+sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag-eval.service /etc/systemd/system/
+sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag-eval.timer /etc/systemd/system/
+
+# Activar
+sudo systemctl daemon-reload
+sudo systemctl enable --now iasantiago-rag.service
+sudo systemctl enable --now iasantiago-rag-eval.timer
+
+# Configurar logrotate
+sudo ln -sf /opt/iasantiago-rag/systemd/logrotate-telemetry /etc/logrotate.d/iasantiago-rag
 ```
 
----
+## Uso del Sistema
 
-## 5) Backups, Snapshots y Migraciones
+### Añadir Documentos
 
-> Recomendado programar una tarea (cron/systemd timer) diaria fuera del horario lectivo.
-
-### 5.1 Qdrant — snapshots
-
-**Crear snapshot** (detiene escrituras unos instantes; seguro para lecturas):
+1. Copiar PDFs a la carpeta del tema:
 
 ```bash
-# Dentro de Qdrant (o vía API). Con Docker:
-docker exec -it qdrant bash -lc 'curl -X POST http://localhost:6333/snapshots -s'
-# Listar snapshots:
-docker exec -it qdrant bash -lc 'curl http://localhost:6333/snapshots -s | jq'
-# Copiar a host (si usa el volumen bind /opt/iasantiago-rag/data/storage ya persiste)
-# opcional: rsync a almacenamiento externo
-sudo rsync -av --delete /opt/iasantiago-rag/data/storage/ /backups/qdrant/storage-$(date +%F)/
+sudo cp documento.pdf /opt/iasantiago-rag/topics/Chemistry/
 ```
 
-**Restaurar snapshot** (ventana de mantenimiento):
+2. Ejecutar ingestor:
 
 ```bash
-docker compose down
-# Restituir carpeta de almacenamiento
-sudo rsync -av /backups/qdrant/storage-YYYY-MM-DD/ /opt/iasantiago-rag/data/storage/
-docker compose up -d
+cd ingestor
+./manage_gpu.sh ingest
 ```
 
-> Alternativa: **export/import por colección** usando la API de Qdrant si prefieres granularidad (collections: `rag_chemistry`, `rag_electronics`, `rag_programming`).
+El ingestor:
+- Solo procesa archivos nuevos o modificados (tracking con hash MD5)
+- Guarda estado en `/whoosh/.processing_state.json`
+- Cachea análisis de imágenes/tablas en SQLite
 
-### 5.2 Whoosh (BM25) — backup simple
+### Hacer Consultas
 
-Los índices Whoosh son ficheros en disco:
+1. Sólo accesible desde la LAN del centro: acceder a `https://ia.santiagoapostol.net`
+2. Login con Google Workspace
+3. Seleccionar tema en el desplegable de modelos (ej: `Química`)
+4. Escribir pregunta
+5. Las respuestas incluyen citas clicables: `[documento.pdf, p.5](/docs/Chemistry/documento.pdf#page=5)`
+
+
+
+## Operación y Mantenimiento
+
+### Comandos Útiles
 
 ```bash
-sudo rsync -av --delete /opt/iasantiago-rag/data/whoosh/ /backups/whoosh/$(date +%F)/
+# Ver estado
+make status                    # Docker compose ps
+docker compose logs -f rag-api # Logs en tiempo real
+
+# Gestión de contenedores
+make up                        # Iniciar todo
+make down                      # Detener todo
+make restart                   # Reiniciar
+
+# Reindexación
+make reset                     # Borra todo y reindexa
+make seed                      # Crea ejemplos
+
+# Ver estado del ingestor
+docker compose logs ingestor
+cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq
 ```
 
-**Re-construir** (si hay corrupción o tras migración):
+### Backups
 
 ```bash
-make reset                 # borra Qdrant+Whoosh
-docker compose restart ingestor
+# Backup completo
+sudo rsync -av /opt/iasantiago-rag/data/ /backups/iasantiago-$(date +%F)/
+sudo rsync -av /opt/iasantiago-rag/topics/ /backups/topics-$(date +%F)/
+
+# Solo Qdrant
+sudo rsync -av /opt/iasantiago-rag/data/storage/ /backups/qdrant-$(date +%F)/
+
+# Solo Whoosh
+sudo rsync -av /opt/iasantiago-rag/data/whoosh/ /backups/whoosh-$(date +%F)/
 ```
 
-### 5.3 PDFs fuente
+### Monitoreo
 
-Respaldar los documentos originales (la **verdad** del sistema):
+**Salud de servicios:**
 
 ```bash
-sudo rsync -av --delete /opt/iasantiago-rag/topics/ /backups/topics/$(date +%F)/
+curl http://localhost:8001/healthz  # RAG API
+curl http://localhost:8000/v1/models # vLLM
+curl http://localhost:6333/        # Qdrant
 ```
 
-### 5.4 Exportar/importar por tema (migración a otro servidor)
+**Telemetría:**
 
-1. Copiar **topics/**, **data/storage/** (Qdrant) y **data/whoosh/** a la nueva máquina.
-2. Replicar `.env` y el repo.
-3. `make up` en el destino.
-4. Verificar `/healthz` y `/v1/models`.
+```bash
+# Ver últimas consultas
+tail -f /opt/iasantiago-rag/rag-api/retrieval.jsonl | jq
 
----
+# Estadísticas
+cat retrieval.jsonl | jq '.topic' | sort | uniq -c
+```
 
-## 6) Variantes y Extensiones
+**Estado de indexación:**
 
-### 6.1 Cambiar el **re-ranker** (Jina ↔ BGE)
+```bash
+# Ver archivos procesados
+cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.processed | length'
+
+# Ver archivos fallidos
+cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.failed'
+```
+
+## Configuración Avanzada
+
+### Cambiar Modelo de Embeddings por Tema
 
 En `.env`:
 
-```
-RERANK_MODEL=jinaai/jina-reranker-v2-base-multilingual
-# o
-RERANK_MODEL=BAAI/bge-reranker-large
-```
-
-Recrea el contenedor de `rag-api`:
-
 ```bash
-docker compose up -d --build rag-api
-```
-
-### 6.2 Embeddings **por tema** (p. ej. uno para código)
-
-En `.env`:
-
-```
 EMBED_MODEL_DEFAULT=intfloat/multilingual-e5-large-instruct
 EMBED_MODEL_PROGRAMMING=thenlper/gte-large
 EMBED_MODEL_ELECTRONICS=intfloat/multilingual-e5-large-instruct
 EMBED_MODEL_CHEMISTRY=intfloat/multilingual-e5-large-instruct
 ```
 
-Reindexa solo si cambias embeddings (para reflejar vectores nuevos):
+**Importante**: Tras cambiar embeddings, reiniciar y reindexar:
 
 ```bash
-make reset   # borra Qdrant+Whoosh y reindexa todo
+make reset
 ```
 
-### 6.3 Límite por archivo y contexto
+### Cambiar Re-ranker
 
-Ajusta en `.env`:
-
-```
-MAX_CHUNKS_PER_FILE=3
-CTX_TOKENS_SOFT_LIMIT=6000
-HYBRID_DENSE_K=40
-HYBRID_BM25_K=40
-FINAL_TOPK=12
-BM25_FALLBACK_TOKEN_THRESHOLD=4
+```bash
+RERANK_MODEL=jinaai/jina-reranker-v2-base-multilingual
+# o
+RERANK_MODEL=BAAI/bge-reranker-large
 ```
 
-Reinicia `rag-api`:
+Reiniciar RAG API:
 
 ```bash
 docker compose restart rag-api
 ```
 
-### 6.4 Activar “**watcher**” de PDFs en caliente
-
-Si quieres indexación automática al **crear** ficheros:
-
-1. Cambia `ingestor` para que ejecute `watcher.py` (en `docker-compose.yml`):
-
-```yaml
-  ingestor:
-    build: ./ingestor
-    command: ["python", "-u", "watcher.py"]
-```
-
-2. Recomiendo mantener un **scan inicial** al arranque (llamando a `main.py`) o ejecutarlo manualmente:
+### Ajustar Límites de Recuperación
 
 ```bash
-docker compose run --rm ingestor python -u main.py
+# Contexto máximo (tokens)
+CTX_TOKENS_SOFT_LIMIT=6000
+
+# Máximo de fragmentos por archivo
+MAX_CHUNKS_PER_FILE=3
+
+# Recuperación híbrida
+HYBRID_DENSE_K=40      # Top-K búsqueda densa
+HYBRID_BM25_K=40       # Top-K búsqueda BM25
+FINAL_TOPK=12          # Fragmentos finales tras fusión
+
+# Umbral para fallback BM25
+BM25_FALLBACK_TOKEN_THRESHOLD=4
 ```
 
-### 6.5 “Modelos por modo” (explica/guía/examen) visibles en Open WebUI
+### Cambiar Modelo LLM
 
-Opción rápida: **duplicar** modelos en `/v1/models` con sufijos y parsearlos:
-
-* Edita `rag-api/app.py` en `list_models` para publicar:
-
-  * `topic:Chemistry [explica]`, `topic:Chemistry [guía]`, `topic:Chemistry [examen]`, etc.
-* Ajusta `extract_topic_from_model_name` para extraer **tema** y **modo** (y propágalo como `iasantiago_mode`).
-
-### 6.6 Hacer **citas clicables** hacia PDFs
-
-1. Publica `/docs/` en Nginx:
-
-```nginx
-location /docs/ {
-  autoindex on;
-  alias /opt/iasantiago-rag/topics/;
-}
-```
-
-2. En `rag-api/retrieval.py`, al construir citas, convierte `file_path` → URL:
-
-```python
-base_url = os.getenv("DOCS_BASE_URL", "https://iasantiago.santiagoapostol.net/docs")
-name = os.path.basename(c["file_path"])
-topic = os.path.basename(os.path.dirname(c["file_path"]))
-url = f"{base_url}/{topic}/{name}"
-context.append(f'{c["text"]}\n— según <{url}> [{name}, p.{c["page"]}]')
-```
-
-> Open WebUI renderiza enlaces de texto plano. También puedes añadir un **campo `sources`** en la respuesta si construyes una capa UI (no estándar OpenAI).
-
-### 6.7 Cambiar el **LLM** en vLLM
-
-En `.env`:
-
-```
+```bash
 VLLM_MODEL=meta-llama/Meta-Llama-3.1-8B-Instruct
-# ejemplos alternativos (según licencia/VRAM):
-# VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
-# VLLM_MODEL=mistralai/Mistral-Nemo-Instruct-2407
+# o
+VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+# o
+VLLM_MODEL=mistralai/Mistral-Nemo-Instruct-2407
 ```
 
-Recrear `vllm`:
+Ajustar memoria GPU:
+
+```bash
+VLLM_MAX_MODEL_LEN=8192
+VLLM_GPU_MEMORY_UTILIZATION=0.85
+VLLM_TENSOR_PARALLEL_SIZE=1
+```
+
+Reconstruir:
 
 ```bash
 docker compose up -d --build vllm
 ```
 
-#### Quantización y memoria
+### Multi-GPU
 
-* vLLM soporta cuantización (AWQ/GPTQ en algunos modelos). Si el modelo elegido la admite:
-
-  * Añade flags de vLLM (según doc del modelo) o usa un **checkpoint ya cuantizado**.
-* Ajusta:
-
-```
---gpu-memory-utilization 0.85
---max-model-len 8192
---tensor-parallel-size 1
-```
-
-para encajar en tu VRAM.
-
-### 6.8 Multi-GPU (aislar GPU para cada servicio)
-
-En `docker-compose.yml`, por servicio:
+Editar `docker-compose.yml`:
 
 ```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-        - capabilities: [gpu]
-          device_ids: ["0"]   # o ["1"] etc.
+services:
+  vllm:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              device_ids: ["0"]  # GPU 0
+  
+  rag-api:
+    environment:
+      - CUDA_VISIBLE_DEVICES=1  # GPU 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              device_ids: ["1"]
 ```
 
-Y en `rag-api`/`ingestor` puedes exportar:
+## Evaluación Offline
 
-```yaml
-environment:
-  - CUDA_VISIBLE_DEVICES=0
-```
-
----
-
-## 7) Benchmarks y Métricas
-
-### 7.1 Latencia de vLLM (simple)
+### Ejecutar Evaluación Manual
 
 ```bash
-make bench
-# Usa scripts/bench_vllm.py (p50/avg/max).
-```
-
-### 7.2 Evaluación offline manual (Recall@k / MRR)
-
-```bash
-cat <<'JSON' > /tmp/cases.json
+cat > /tmp/eval_cases.json <<'EOF'
 [
-  {"query": "definición de ley de Ohm", "topic": "Electronics", "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]},
-  {"query": "ácidos y bases", "topic": "Chemistry", "relevant_files": ["/opt/iasantiago-rag/topics/Chemistry/sample1.pdf"]}
+  {
+    "query": "definición de ley de Ohm",
+    "topic": "Electronics",
+    "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]
+  },
+  {
+    "query": "ácidos y bases",
+    "topic": "Chemistry",
+    "relevant_files": ["/opt/iasantiago-rag/topics/Chemistry/sample1.pdf"]
+  }
 ]
-JSON
+EOF
 
-curl -s http://127.0.0.1:8001/v1/eval/offline \
+curl -X POST http://localhost:8001/v1/eval/offline \
   -H 'Content-Type: application/json' \
-  --data-binary @/tmp/cases.json | jq
+  -d @/tmp/eval_cases.json | jq
 ```
 
-### 7.3 Telemetría de recuperación
+Métricas:
+- **Recall@k**: Proporción de documentos relevantes recuperados
+- **MRR (Mean Reciprocal Rank)**: Posición del primer documento relevante
 
-* Archivo JSONL: `/opt/iasantiago-rag/rag-api/retrieval.jsonl`
-* Formato por línea:
+### Evaluación Automática (Cron)
 
-```json
-{"ts": 1733920000000, "query": "ohm", "topic": "Electronics", "mode": "hybrid", "...": "..."}
-```
-
-* Analízalo con tu herramienta favorita (pandas, jq, etc.).
-
----
-
-## 8) Seguridad y Red
-
-* El servidor vive en **intranet** (`172.23.120.11`) y expone **443**.
-* **OIDC Google**:
-
-  * `GOOGLE_CLIENT_ID/SECRET` en `.env`.
-  * Redirect URI: `https://iasantiago.santiagoapostol.net/_auth/callback`.
-  * Dominio permitido: `ALLOWED_EMAIL_DOMAIN=@santiagoapostol.net`.
-* **Salida a Internet** necesaria para:
-
-  * Validar JWKS (`accounts.google.com`).
-  * Descargar modelos en primer arranque (Hugging Face).
-
-> Si no hay salida a Internet, **pre-cacha** modelos en un mirror interno y desactiva OIDC (o usa un IdP local).
-
----
-
-## 9) Resolución de Problemas (checklist)
-
-* **Open WebUI no muestra temas**
-
-  * `curl http://127.0.0.1:8001/v1/models | jq`
-  * Revisa `TOPIC_LABELS` y reinicia `rag-api`.
-* **No recupera nada**
-
-  * ¿PDF en la carpeta correcta? (`/opt/iasantiago-rag/topics/<Tema>/`).
-  * `docker compose logs ingestor` para ver si se indexó.
-  * ¿Colecciones existen? (`rag_<tema>` en Qdrant).
-* **Errores de memoria GPU**
-
-  * Cambia LLM por uno más pequeño o reduce `--max-model-len`, `--gpu-memory-utilization`.
-  * Separa GPUs con `CUDA_VISIBLE_DEVICES`.
-* **Auth 401/403**
-
-  * Comprueba `GOOGLE_CLIENT_ID/SECRET`, redirect URI en GCP, reloj del servidor (NTP), conectividad a `accounts.google.com`.
-
----
-
-## 10) Checklist de Actualización del Sistema
-
-1. **Parar stack** (opcional en actualizaciones mayores):
+El timer systemd ejecuta evaluación nocturna:
 
 ```bash
-docker compose down
+# Ver próxima ejecución
+sudo systemctl list-timers | grep iasantiago
+
+# Ejecutar ahora
+sudo systemctl start iasantiago-rag-eval.service
+
+# Ver resultados
+cat /opt/iasantiago-rag/eval_summary.csv
 ```
 
-2. **Pull/build** imágenes y servicios:
+## Estructura del Proyecto
+
+```
+/opt/iasantiago-rag/
+├── docker-compose.yml          # Orquestación de servicios
+├── Makefile                    # Comandos útiles
+├── .env                        # Configuración
+│
+├── topics/                     # PDFs por tema (entrada)
+│   ├── Chemistry/
+│   ├── Electronics/
+│   └── Programming/
+│
+├── data/                       # Datos persistentes
+│   ├── storage/               # Base de datos Qdrant
+│   └── whoosh/                # Índices BM25 + estado
+│       └── .processing_state.json
+│
+├── rag-api/                    # FastAPI
+│   ├── app.py                 # Endpoints OpenAI-compatible
+│   ├── retrieval.py           # Lógica de búsqueda
+│   ├── rerank.py              # Re-ranking
+│   ├── settings.py            # Configuración
+│   └── requirements.txt
+│
+├── ingestor/                   # Indexador de PDFs
+│   ├── main.py                # Loop principal
+│   ├── chunk.py               # Extracción con Unstructured + LLaVA
+│   ├── settings.py
+│   └── requirements.txt
+│
+├── openwebui/                  # Frontend
+│   ├── data/                  # BD SQLite de Open WebUI
+│   └── custom/                # Logos personalizados
+│
+├── oauth2-proxy/               # Autenticación
+│   ├── oauth2-proxy.cfg
+│   └── templates/
+│
+├── nginx/                      # Reverse proxy (opcional)
+│   ├── nginx.conf
+│   └── certs/
+│
+└── systemd/                    # Servicios del sistema
+    ├── iasantiago-rag.service
+    ├── iasantiago-rag-eval.service
+    ├── iasantiago-rag-eval.timer
+    └── logrotate-telemetry
+```
+
+## Resolución de Problemas
+
+### Open WebUI no muestra temas
 
 ```bash
+# Verificar endpoint
+curl http://localhost:8001/v1/models | jq
+
+# Verificar variables
+docker compose exec rag-api env | grep TOPIC
+
+# Reiniciar
+docker compose restart rag-api openwebui
+```
+
+### No recupera resultados
+
+```bash
+# ¿Archivos indexados?
+ls -lh /opt/iasantiago-rag/topics/Chemistry/
+
+# ¿Ingestor ejecutado?
+docker compose logs ingestor | tail -50
+
+# ¿Estado del ingestor?
+cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq
+
+# ¿Colecciones en Qdrant?
+curl http://localhost:6333/collections | jq
+
+# Forzar reindexación
+make reset
+```
+
+### Error de memoria GPU
+
+```bash
+# Ver uso actual
+nvidia-smi
+
+# Reducir modelo o memoria
+nano .env
+# VLLM_MODEL=meta-llama/Llama-3.2-3B-Instruct  # Modelo más pequeño
+# VLLM_GPU_MEMORY_UTILIZATION=0.7
+# VLLM_MAX_MODEL_LEN=4096
+
+# Reiniciar
+docker compose up -d --build vllm
+```
+
+### Error de autenticación 401/403
+
+```bash
+# Verificar OAuth
+docker compose logs oauth2-proxy | tail -50
+
+# Verificar redirect URI en Google Cloud Console
+# Debe ser: https://iasantiago.santiagoapostol.net/oauth2/callback
+
+# Verificar reloj del servidor (NTP)
+timedatectl status
+
+# Verificar conectividad a Google
+curl -I https://accounts.google.com
+```
+
+### Ingestor falla con archivos grandes
+
+```bash
+# Ver errores
+docker compose logs ingestor | grep ERROR
+
+# Ver archivos fallidos
+cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.failed'
+
+# Aumentar memoria del contenedor
+nano docker-compose.yml
+# shm_size: 32gb  # En servicio ingestor
+
+# Reiniciar
+docker compose up -d --build ingestor
+docker compose run --rm ingestor
+```
+
+## Seguridad
+
+### Acceso a la Red
+
+- **Intranet**: Servidor expuesto solo en red interna (172.23.120.11)
+- **Puerto**: HTTPS 443
+- **Autenticación**: Google Workspace OAuth2
+- **Restricción**: Solo emails del dominio configurado
+
+### Salida a Internet Necesaria
+
+- Validación de tokens (accounts.google.com)
+- Descarga de modelos en primer arranque (huggingface.co)
+
+### Sin Internet
+
+Si no hay salida a Internet:
+
+1. Pre-cachear modelos en un servidor con acceso
+2. Copiar `/root/.cache/huggingface` al servidor destino
+3. Desactivar OAuth o usar IdP local (Keycloak, etc.)
+
+## Actualizaciones
+
+```bash
+cd /opt/iasantiago-rag
+
+# Backup
+sudo rsync -av data/ /backups/data-$(date +%F)/
+
+# Pull código nuevo
+git pull  # o descargar ZIP
+
+# Actualizar imágenes
 docker compose pull
 docker compose build
+
+# Reiniciar
 docker compose up -d
+
+# Si cambian embeddings
+make reset
 ```
 
-3. **Migraciones**:
+## Licencia
 
-   * Si cambias **embeddings**, ejecuta `make reset` para reindexar.
-   * Si solo cambias **reranker** o **knobs**, basta con reiniciar `rag-api`.
+Proyecto interno del IES Santiago Apóstol.
+GNU GENERAL PUBLIC LICENSE V3
 
+## Soporte
+
+Para problemas o preguntas:
+- Issues: https://github.com/jredrejo/iasantiago/issues
