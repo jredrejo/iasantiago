@@ -40,4 +40,3 @@ UPSTREAM_OPENAI_URL = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "dummy-key")
 
 TELEMETRY_PATH = os.getenv("TELEMETRY_PATH", "/app/retrieval.jsonl")
-

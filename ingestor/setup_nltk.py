@@ -26,21 +26,21 @@ else:
 
 def setup_nltk_data():
     """Descarga todos los datos necesarios de NLTK"""
-    
+
     logger.info("Setting up NLTK data...")
-    
+
     # Datos necesarios para Unstructured
     required_data = [
-        'punkt',
-        'averaged_perceptron_tagger',
-        'averaged_perceptron_tagger_eng',
-        'universal_tagset',
-        'wordnet',
-        'omw-1.4',
+        "punkt",
+        "averaged_perceptron_tagger",
+        "averaged_perceptron_tagger_eng",
+        "universal_tagset",
+        "wordnet",
+        "omw-1.4",
     ]
-    
+
     failed = []
-    
+
     for data_name in required_data:
         try:
             logger.info(f"Downloading: {data_name}...")
@@ -49,27 +49,29 @@ def setup_nltk_data():
         except Exception as e:
             logger.error(f"✗ Failed to download {data_name}: {e}")
             failed.append(data_name)
-    
+
     # Verificar que los datos existan
     logger.info("\nVerifying NLTK data...")
     try:
         # Test punkt tokenizer
         from nltk.tokenize import sent_tokenize
+
         test_text = "This is a test. It has two sentences."
         result = sent_tokenize(test_text)
         logger.info(f"✓ Punkt tokenizer works: {len(result)} sentences detected")
-        
+
         # Test POS tagger
         from nltk.tag import pos_tag
         from nltk.tokenize import word_tokenize
+
         tokens = word_tokenize("This is a test")
         tagged = pos_tag(tokens)
         logger.info(f"✓ POS tagger works: {tagged}")
-        
+
     except Exception as e:
         logger.error(f"✗ Verification failed: {e}")
         failed.append("verification")
-    
+
     if failed:
         logger.warning(f"\nFailed downloads: {', '.join(failed)}")
         logger.warning("This may cause issues during PDF extraction")
@@ -84,4 +86,3 @@ def setup_nltk_data():
 if __name__ == "__main__":
     success = setup_nltk_data()
     sys.exit(0 if success else 1)
-

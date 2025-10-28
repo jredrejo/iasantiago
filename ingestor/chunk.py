@@ -298,7 +298,7 @@ class SimpleExtractor:
 
         for element in elements:
             element_type = element.__class__.__name__
-            
+
             # Extrae el número de página del metadata
             page = 1
             if hasattr(element, "metadata") and element.metadata:
