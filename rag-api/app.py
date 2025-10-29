@@ -10,12 +10,15 @@ from retrieval import (
     soft_trim_context,
     rerank_passages,
     telemetry_log,
+    count_tokens,
 )
 from token_utils import extract_topic_from_model_name
 from eval import aggregate_eval
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -82,12 +85,75 @@ class ChatRequest(BaseModel):
     iasantiago_mode: Optional[str] = "explica"  # "explica" | "guia" | "examen"
 
 
+async def check_vllm_health(max_retries=3) -> bool:
+    """Verifica si vLLM está disponible antes de enviar requests"""
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                resp = await client.get(
+                    f"{UPSTREAM_OPENAI_URL.replace('/v1', '')}/health"
+                )
+                if resp.status_code == 200:
+                    return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(
+                    f"vLLM health check failed (attempt {attempt+1}/{max_retries}): {e}"
+                )
+                await asyncio.sleep(2**attempt)
+            else:
+                logger.error(f"vLLM is not responding after {max_retries} attempts")
+                return False
+    return False
+
+
+async def call_vllm_with_retry(
+    payload: dict, headers: dict, max_retries=3, timeout=300.0
+):
+    """Llamar a vLLM con reintentos exponenciales para requests no-streaming"""
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+                resp = await client.post(
+                    f"{UPSTREAM_OPENAI_URL}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return resp
+
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as e:
+            if attempt == max_retries - 1:
+                logger.error(
+                    f"vLLM connection failed after {max_retries} attempts: {e}"
+                )
+                raise HTTPException(
+                    status_code=503, detail=f"vLLM service unavailable: {str(e)}"
+                )
+
+            wait_time = 2**attempt  # Backoff exponencial: 1s, 2s, 4s
+            logger.warning(
+                f"vLLM connection failed (attempt {attempt+1}/{max_retries}), "
+                f"retrying in {wait_time}s... Error: {type(e).__name__}: {e}"
+            )
+            await asyncio.sleep(wait_time)
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"vLLM HTTP error: {e.response.status_code} - {e.response.text}"
+            )
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"vLLM error: {e.response.text}",
+            )
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     req: ChatRequest, request: Request, x_email: str = Header(None)
 ):
-    logger.info(f"Usuario: {x_email}")
-    logger.info(f"Mensajes recibidos: {len(req.messages)}")
+    logger.info(f"👤 Usuario: {x_email}")
+    logger.info(f"📨 Mensajes recibidos: {len(req.messages)}")
 
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
 
@@ -101,7 +167,7 @@ async def chat_completions(
 
     # Retrieval
     retrieved, meta = choose_retrieval(topic, user_msg)
-    logger.info(f"Retrieved {len(retrieved)} chunks for topic '{topic}'")
+    logger.info(f"📚 Retrieved {len(retrieved)} chunks for topic '{topic}'")
 
     if retrieved:
         retrieved = rerank_passages(user_msg, retrieved)
@@ -115,7 +181,7 @@ async def chat_completions(
             "query": user_msg,
             "topic": topic,
             "mode": meta.get("mode"),
-            "num_messages": len(req.messages),  # ← Añadido
+            "num_messages": len(req.messages),
             "dense_k": meta.get("dense_k"),
             "bm25_k": meta.get("bm25_k"),
             "final_topk": meta.get("final_topk"),
@@ -158,9 +224,41 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
         if msg.role != "system":
             messages.append({"role": msg.role, "content": msg.content})
 
-    logger.info(
-        f"Enviando a vLLM: {len(messages)} mensajes (system + {len(req.messages)} historial)"
+    # ============================================================
+    # ANÁLISIS DE TOKENS Y WARNINGS
+    # ============================================================
+    system_tokens = count_tokens(enhanced_system)
+    context_tokens = count_tokens(context_text)
+    history_tokens = sum(
+        count_tokens(m["content"]) for m in messages if m["role"] != "system"
     )
+    total_input_tokens = system_tokens + history_tokens
+
+    logger.info(f"📊 Token breakdown:")
+    logger.info(f"   - System prompt: ~{system_tokens} tokens")
+    logger.info(f"   - RAG context: ~{context_tokens} tokens")
+    logger.info(f"   - Conversation history: ~{history_tokens} tokens")
+    logger.info(f"   - TOTAL INPUT: ~{total_input_tokens} tokens")
+
+    max_model_len = int(os.getenv("VLLM_MAX_MODEL_LEN", "8192"))
+    if total_input_tokens > max_model_len * 0.7:
+        logger.warning(
+            f"⚠️  Input muy largo ({total_input_tokens} tokens, "
+            f"{(total_input_tokens/max_model_len)*100:.1f}% del límite), "
+            f"podría causar OOM o respuestas truncadas"
+        )
+
+    logger.info(
+        f"🚀 Enviando a vLLM: {len(messages)} mensajes "
+        f"(system + {len(req.messages)} historial)"
+    )
+
+    # Verificar salud de vLLM antes de enviar
+    if not await check_vllm_health():
+        raise HTTPException(
+            status_code=503,
+            detail="vLLM service is not responding. Please try again in a few moments.",
+        )
 
     # Payload para vLLM
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
@@ -173,25 +271,63 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
         "max_tokens": int(os.getenv("VLLM_MAX_TOKENS", "8192")),
     }
 
+    # Log del tamaño del payload
+    payload_size = len(json.dumps(payload))
+    logger.info(f"📦 Payload size: {payload_size:,} bytes ({payload_size/1024:.1f} KB)")
+
     async def stream_generator():
-        """Generator that forwards SSE stream from vLLM to Open WebUI"""
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(180.0)
-        ) as client:  # ← Timeout aumentado
+        """Generator que reenvía el stream SSE de vLLM con reintentos"""
+        max_retries = 3
+
+        for attempt in range(max_retries):
             try:
-                async with client.stream(
-                    "POST",
-                    f"{UPSTREAM_OPENAI_URL}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                ) as r:
-                    r.raise_for_status()
-                    async for chunk in r.aiter_bytes():
-                        yield chunk
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{UPSTREAM_OPENAI_URL}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    ) as r:
+                        r.raise_for_status()
+                        logger.info(
+                            f"✓ Stream establecido con vLLM (attempt {attempt+1})"
+                        )
+
+                        async for chunk in r.aiter_bytes():
+                            yield chunk
+
+                        logger.info("✓ Stream completado exitosamente")
+                        return  # Éxito, salir
+
+            except (
+                httpx.ConnectError,
+                httpx.ReadTimeout,
+                httpx.RemoteProtocolError,
+            ) as e:
+                if attempt == max_retries - 1:
+                    logger.error(
+                        f"❌ Stream falló después de {max_retries} intentos: {e}"
+                    )
+                    error_data = {
+                        "error": {
+                            "message": f"vLLM connection failed after {max_retries} retries: {str(e)}",
+                            "type": "connection_error",
+                            "code": 503,
+                        }
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n".encode()
+                    return
+
+                wait_time = 2**attempt
+                logger.warning(
+                    f"⚠️  Stream interrupted (attempt {attempt+1}/{max_retries}), "
+                    f"retrying in {wait_time}s... Error: {type(e).__name__}"
+                )
+                await asyncio.sleep(wait_time)
 
             except httpx.HTTPStatusError as e:
                 logger.error(
-                    f"vLLM HTTP error: {e.response.status_code} - {e.response.text}"
+                    f"❌ vLLM HTTP error: {e.response.status_code} - {e.response.text}"
                 )
                 error_data = {
                     "error": {
@@ -201,8 +337,10 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
                     }
                 }
                 yield f"data: {json.dumps(error_data)}\n\n".encode()
+                return
+
             except Exception as e:
-                logger.error(f"Streaming error: {str(e)}", exc_info=True)
+                logger.error(f"❌ Streaming error inesperado: {str(e)}", exc_info=True)
                 error_data = {
                     "error": {
                         "message": f"Streaming error: {str(e)}",
@@ -210,6 +348,7 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
                     }
                 }
                 yield f"data: {json.dumps(error_data)}\n\n".encode()
+                return
 
     if req.stream:
         return StreamingResponse(
@@ -222,27 +361,12 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
             },
         )
     else:
-        # Non-streaming response
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as client:
-            try:
-                resp = await client.post(
-                    f"{UPSTREAM_OPENAI_URL}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-                resp.raise_for_status()
-                return Response(
-                    content=resp.content,
-                    media_type=resp.headers.get("Content-Type", "application/json"),
-                )
-            except httpx.HTTPStatusError as e:
-                logger.error(
-                    f"vLLM error: {e.response.status_code} - {e.response.text}"
-                )
-                raise HTTPException(
-                    status_code=e.response.status_code,
-                    detail=f"vLLM error: {e.response.text}",
-                )
+        # Non-streaming response con reintentos
+        resp = await call_vllm_with_retry(payload, headers)
+        return Response(
+            content=resp.content,
+            media_type=resp.headers.get("Content-Type", "application/json"),
+        )
 
 
 # ---------- Offline eval ----------
