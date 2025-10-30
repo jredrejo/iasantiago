@@ -31,6 +31,12 @@ services:
       - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
       - VLLM_TORCH_COMPILE_LEVEL=0
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      # Add these for better stability
+      - CUDA_LAUNCH_BLOCKING=0
+      - TORCH_CUDA_MEMORY_FRACTION=0.9
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_LOGGING_LEVEL=DEBUG
     ports:
       - "8000:8000"
     command: >
