@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__GPU__INDEXING=1
       - TZ=${TZ}
     volumes:
       - ${QDRANT_STORAGE}:/qdrant/storage
@@ -105,7 +106,7 @@ services:
       --serve llava-hf/llava-1.5-7b-hf
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len 2048
-      --gpu-memory-utilization 0.4
+      --gpu-memory-utilization 0.6
       --dtype bfloat16
       --host 0.0.0.0
       --port 8000

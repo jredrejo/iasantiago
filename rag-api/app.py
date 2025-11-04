@@ -98,7 +98,7 @@ async def check_vllm_health(max_retries=3) -> bool:
         except Exception as e:
             if attempt < max_retries - 1:
                 logger.warning(
-                    f"vLLM health check failed (attempt {attempt+1}/{max_retries}): {e}"
+                    f"vLLM health check failed (attempt {attempt + 1}/{max_retries}): {e}"
                 )
                 await asyncio.sleep(2**attempt)
             else:
@@ -133,7 +133,7 @@ async def call_vllm_with_retry(
 
             wait_time = 2**attempt  # Backoff exponencial: 1s, 2s, 4s
             logger.warning(
-                f"vLLM connection failed (attempt {attempt+1}/{max_retries}), "
+                f"vLLM connection failed (attempt {attempt + 1}/{max_retries}), "
                 f"retrying in {wait_time}s... Error: {type(e).__name__}: {e}"
             )
             await asyncio.sleep(wait_time)
@@ -168,12 +168,33 @@ async def chat_completions(
     # Retrieval
     retrieved, meta = choose_retrieval(topic, user_msg)
     logger.info(f"📚 Retrieved {len(retrieved)} chunks for topic '{topic}'")
-
     if retrieved:
+        logger.info(
+            f"Before rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
+        )
         retrieved = rerank_passages(user_msg, retrieved)
+        logger.info(
+            f"After rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
+        )
         retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
 
     context_text, cited = attach_citations(retrieved, topic)
+
+    if (
+        not retrieved
+        or context_text == "No se encontró información relevante en la base de datos."
+    ):
+        logger.warning("⚠️  NO context found - modelo está en riesgo de alucinar")
+
+    # Verificar que el contexto no sea vacío
+    if (
+        context_text
+        and context_text != "No se encontró información relevante en la base de datos."
+    ):
+        logger.info(f"✅ Context provided: {len(retrieved)} chunks")
+        logger.debug(f"Context preview: {context_text[:200]}...")
+    else:
+        logger.warning("⚠️  NO RAG context available - must answer 'No encontré...'")
 
     # Telemetría
     telemetry_log(
@@ -244,7 +265,7 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
     if total_input_tokens > max_model_len * 0.7:
         logger.warning(
             f"⚠️  Input muy largo ({total_input_tokens} tokens, "
-            f"{(total_input_tokens/max_model_len)*100:.1f}% del límite), "
+            f"{(total_input_tokens / max_model_len) * 100:.1f}% del límite), "
             f"podría causar OOM o respuestas truncadas"
         )
 
@@ -273,7 +294,9 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
 
     # Log del tamaño del payload
     payload_size = len(json.dumps(payload))
-    logger.info(f"📦 Payload size: {payload_size:,} bytes ({payload_size/1024:.1f} KB)")
+    logger.info(
+        f"📦 Payload size: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)"
+    )
 
     async def stream_generator():
         """Generator que reenvía el stream SSE de vLLM con reintentos"""
@@ -290,7 +313,7 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
                     ) as r:
                         r.raise_for_status()
                         logger.info(
-                            f"✓ Stream establecido con vLLM (attempt {attempt+1})"
+                            f"✓ Stream establecido con vLLM (attempt {attempt + 1})"
                         )
 
                         async for chunk in r.aiter_bytes():
@@ -320,7 +343,7 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
 
                 wait_time = 2**attempt
                 logger.warning(
-                    f"⚠️  Stream interrupted (attempt {attempt+1}/{max_retries}), "
+                    f"⚠️  Stream interrupted (attempt {attempt + 1}/{max_retries}), "
                     f"retrying in {wait_time}s... Error: {type(e).__name__}"
                 )
                 await asyncio.sleep(wait_time)

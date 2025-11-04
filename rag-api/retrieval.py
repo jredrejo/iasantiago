@@ -16,6 +16,19 @@ _tokenizer = tiktoken.get_encoding("cl100k_base")
 _embedder_cache = {}
 
 
+def deduplicate_chunks(chunks: List[Dict]) -> List[Dict]:
+    """Remove duplicate chunks (same file_path + chunk_id)"""
+    seen = set()
+    dedup = []
+    for c in chunks:
+        key = (c["file_path"], c["chunk_id"])
+        if key not in seen:
+            seen.add(key)
+            dedup.append(c)
+    logger.info(f"Deduplication: {len(chunks)} → {len(dedup)} chunks")
+    return dedup
+
+
 def get_embedder(topic: str):
     name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     if name not in _embedder_cache:
@@ -108,6 +121,10 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
         m["score_hybrid"] = 0.6 * a + 0.4 * b
 
     merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
+
+    # ✅ DEDUPLICAR AQUÍ
+    merged = deduplicate_chunks(merged)
+
     file_counts = {}
     filtered = []
     for m in merged:
@@ -139,44 +156,63 @@ def bm25_only(topic: str, query: str):
 
 def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dict]]:
     """
-    Construye el contexto con citas que incluyen enlaces a /docs/TOPIC/
-
-    Ejemplo:
-      Input: /topics/Programming/documento.pdf
-      Output: /docs/Programming/documento.pdf#page=5
+    Versión mejorada: contexto RAG con citas OBLIGATORIAS y fáciles de copiar
     """
     if not chunks:
-        return "No se encontró información relevante en la base de datos.", []
+        return "No se encontró información relevante.", []
 
-    logger.info(
-        f"attach_citations: Processing {len(chunks)} chunks with topic='{topic}'"
-    )
+    context_parts = []
 
-    context = []
-    for i, c in enumerate(chunks):
+    for i, c in enumerate(chunks, start=1):
         filename = os.path.basename(c["file_path"])
         page = c["page"]
         text = c["text"]
-
-        # URL-encode el nombre del archivo (maneja espacios y caracteres especiales)
         encoded_filename = quote(filename, safe=".")
 
-        # Generar URL a /docs/TOPIC/ con ancla de página
         if topic:
             doc_url = f"/docs/{topic}/{encoded_filename}#page={page}"
         else:
             doc_url = f"/docs/{encoded_filename}#page={page}"
 
-        # Formato Markdown: texto + cita con enlace
-        citation = f"{text}\n— según [{filename}, p.{page}]({doc_url})"
-        context.append(citation)
+        # FORMATO MEJORADO: Markdown inline citation
+        chunk_with_citation = f"""{text}
 
-        logger.info(f"  [{i}] Added citation: {filename}, p.{page}")
-        logger.debug(f"       URL: {doc_url}")
+**Cita:** [{filename}, p.{page}]({doc_url})"""
 
-    result = "\n\n".join(context)
-    logger.info(f"attach_citations: Final context length: {len(result)} chars")
+        context_parts.append(chunk_with_citation)
+        logger.info(f"[{i}] {filename}, p.{page}")
 
+    # Separador MUY claro
+    context_body = (
+        "\n\n" + "─" * 70 + "\n\n".join(["FRAGMENTO DE CONTEXTO RAG:"] + context_parts)
+    )
+
+    # Instrucciones REFORZADAS para el LLM
+    instructions = f"""
+
+{"─" * 70}
+⚠️  INSTRUCCIONES DE CITACIÓN (CRÍTICO)
+{"─" * 70}
+
+REGLA 1: SIEMPRE cita las fuentes del contexto anterior.
+REGLA 2: Las citas DEBEN estar en formato markdown: [archivo.pdf, p.N](/ruta/completa)
+REGLA 3: COPIA EXACTAMENTE el formato de las citas del contexto.
+REGLA 4: NO INVENTES información que no esté en el contexto.
+REGLA 5: Si NO está en el contexto, di: "No encontré información sobre esto"
+
+FORMATO CORRECTO:
+"...información relevante [archivo.pdf, p.13](/docs/TOPIC/archivo.pdf#page=13)"
+
+FORMATOS INCORRECTOS:
+❌ "...información [FUENTE 1]" ← falta URL
+❌ "...información [archivo.pdf]" ← falta página y URL
+❌ "...información" ← falta cita completamente
+❌ "Según el archivo:" ← vago, sin número de página
+
+{"─" * 70}
+"""
+
+    result = context_body + instructions
     return result, chunks
 
 

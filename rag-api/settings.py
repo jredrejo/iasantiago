@@ -34,7 +34,7 @@ CTX_TOKENS_SOFT_LIMIT = int(os.getenv("CTX_TOKENS_SOFT_LIMIT", "4000"))  # ← R
 MAX_CHUNKS_PER_FILE = int(os.getenv("MAX_CHUNKS_PER_FILE", "3"))
 HYBRID_DENSE_K = int(os.getenv("HYBRID_DENSE_K", "40"))
 HYBRID_BM25_K = int(os.getenv("HYBRID_BM25_K", "40"))
-FINAL_TOPK = int(os.getenv("FINAL_TOPK", "12"))
+FINAL_TOPK = int(os.getenv("FINAL_TOPK", "5"))
 BM25_FALLBACK_TOKEN_THRESHOLD = int(os.getenv("BM25_FALLBACK_TOKEN_THRESHOLD", "4"))
 
 UPSTREAM_OPENAI_URL = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
