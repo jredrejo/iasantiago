@@ -155,7 +155,7 @@ services:
     expose:
       - "8000"
     command: >
-      --serve llava-hf/llava-1.5-7b-hf
+      --serve Marwan02/llava-1.5-7b-hf-Q4_K_M-GGUF
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len 2048
       --gpu-memory-utilization 0.6
@@ -268,8 +268,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ENABLE_OLLAMA_API=false
       - OLLAMA_BASE_URL=""
-      - WEBUI_NAME=IA del Santiago Apóstol
-      - WEBUI_URL=https://ia.santiagoapostol.net
+      - WEBUI_NAME=IA del Sáenz de Buruaga
+      - WEBUI_URL=https://ia.iessaenzdeburuaga.es
       - ENABLE_ARENA=false
       - ENABLE_RAG=false
       # Confiar en los headers que envia oauth2-proxy
