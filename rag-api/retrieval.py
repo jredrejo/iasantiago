@@ -16,6 +16,19 @@ _tokenizer = tiktoken.get_encoding("cl100k_base")
 _embedder_cache = {}
 
 
+def deduplicate_chunks(chunks: List[Dict]) -> List[Dict]:
+    """Remove duplicate chunks (same file_path + chunk_id)"""
+    seen = set()
+    dedup = []
+    for c in chunks:
+        key = (c["file_path"], c["chunk_id"])
+        if key not in seen:
+            seen.add(key)
+            dedup.append(c)
+    logger.info(f"Deduplication: {len(chunks)} → {len(dedup)} chunks")
+    return dedup
+
+
 def get_embedder(topic: str):
     name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     if name not in _embedder_cache:
@@ -108,6 +121,10 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
         m["score_hybrid"] = 0.6 * a + 0.4 * b
 
     merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
+
+    # ✅ DEDUPLICAR AQUÍ
+    merged = deduplicate_chunks(merged)
+
     file_counts = {}
     filtered = []
     for m in merged:
@@ -139,44 +156,63 @@ def bm25_only(topic: str, query: str):
 
 def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dict]]:
     """
-    Construye el contexto con citas que incluyen enlaces a /docs/TOPIC/
-
-    Ejemplo:
-      Input: /topics/Programming/documento.pdf
-      Output: /docs/Programming/documento.pdf#page=5
+    Versión mejorada: contexto RAG con citas OBLIGATORIAS y fáciles de copiar
     """
     if not chunks:
-        return "No se encontró información relevante en la base de datos.", []
+        return "No se encontró información relevante.", []
 
-    logger.info(
-        f"attach_citations: Processing {len(chunks)} chunks with topic='{topic}'"
-    )
+    context_parts = []
 
-    context = []
-    for i, c in enumerate(chunks):
+    for i, c in enumerate(chunks, start=1):
         filename = os.path.basename(c["file_path"])
         page = c["page"]
         text = c["text"]
-
-        # URL-encode el nombre del archivo (maneja espacios y caracteres especiales)
         encoded_filename = quote(filename, safe=".")
 
-        # Generar URL a /docs/TOPIC/ con ancla de página
         if topic:
             doc_url = f"/docs/{topic}/{encoded_filename}#page={page}"
         else:
             doc_url = f"/docs/{encoded_filename}#page={page}"
 
-        # Formato Markdown: texto + cita con enlace
-        citation = f"{text}\n— según [{filename}, p.{page}]({doc_url})"
-        context.append(citation)
+        # FORMATO MEJORADO: Markdown inline citation
+        chunk_with_citation = f"""{text}
 
-        logger.info(f"  [{i}] Added citation: {filename}, p.{page}")
-        logger.debug(f"       URL: {doc_url}")
+**Cita:** [{filename}, p.{page}]({doc_url})"""
 
-    result = "\n\n".join(context)
-    logger.info(f"attach_citations: Final context length: {len(result)} chars")
+        context_parts.append(chunk_with_citation)
+        logger.info(f"[{i}] {filename}, p.{page}")
 
+    # Separador MUY claro
+    context_body = (
+        "\n\n" + "─" * 70 + "\n\n".join(["FRAGMENTO DE CONTEXTO RAG:"] + context_parts)
+    )
+
+    # Instrucciones REFORZADAS para el LLM
+    instructions = f"""
+
+{"─" * 70}
+⚠️  INSTRUCCIONES DE CITACIÓN (CRÍTICO)
+{"─" * 70}
+
+REGLA 1: SIEMPRE cita las fuentes del contexto anterior.
+REGLA 2: Las citas DEBEN estar en formato markdown: [archivo.pdf, p.N](/ruta/completa)
+REGLA 3: COPIA EXACTAMENTE el formato de las citas del contexto.
+REGLA 4: NO INVENTES información que no esté en el contexto.
+REGLA 5: Si NO está en el contexto, di: "No encontré información sobre esto"
+
+FORMATO CORRECTO:
+"...información relevante [archivo.pdf, p.13](/docs/TOPIC/archivo.pdf#page=13)"
+
+FORMATOS INCORRECTOS:
+❌ "...información [FUENTE 1]" ← falta URL
+❌ "...información [archivo.pdf]" ← falta página y URL
+❌ "...información" ← falta cita completamente
+❌ "Según el archivo:" ← vago, sin número de página
+
+{"─" * 70}
+"""
+
+    result = context_body + instructions
     return result, chunks
 
 
@@ -213,3 +249,213 @@ def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
         query, [p["text"] for p in passages], topk=min(FINAL_TOPK, len(passages))
     )
     return [passages[i] for i in order]
+
+
+def attach_citations_explicit(
+    chunks: List[Dict], topic: str = ""
+) -> Tuple[str, List[Dict]]:
+    """
+    Formatea contexto RAG de forma MÁS EXPLÍCITA para que el modelo lo vea claro.
+    """
+    if not chunks:
+        empty_msg = "No se encontró información relevante en la base de datos."
+        logger.warning(f"attach_citations_explicit: {empty_msg}")
+        return empty_msg, []
+
+    logger.info(
+        f"attach_citations_explicit: Processing {len(chunks)} chunks with topic='{topic}'"
+    )
+
+    context_parts = []
+
+    for i, c in enumerate(chunks, start=1):
+        filename = os.path.basename(c["file_path"])
+        page = c["page"]
+        text = c["text"]
+
+        encoded_filename = quote(filename, safe=".")
+
+        if topic:
+            doc_url = f"/docs/{topic}/{encoded_filename}#page={page}"
+        else:
+            doc_url = f"/docs/{encoded_filename}#page={page}"
+
+        fragment = f"""[{i}] {text}
+
+**Fuente:** [{filename}, p.{page}]({doc_url})"""
+
+        context_parts.append(fragment)
+        logger.info(f"  [{i}] {filename}, p.{page}")
+
+    result = f"""
+╔════════════════════════════════════════════════════════════════╗
+║            CONTEXTO RAG - INFORMACIÓN DE DOCUMENTOS             ║
+╚════════════════════════════════════════════════════════════════╝
+
+{chr(10).join([""] + context_parts)}
+
+╔════════════════════════════════════════════════════════════════╗
+║                    FIN DE CONTEXTO RAG                          ║
+╚════════════════════════════════════════════════════════════════╝
+
+INSTRUCCIONES CRÍTICAS:
+- DEBES usar la información anterior para responder
+- Si la respuesta está en los fragmentos [1] a [{len(chunks)}], úsala y cita correctamente
+- Si NO está en los fragmentos, responde: "No encontré información sobre esto en los documentos"
+- NUNCA inventes información fuera de estos fragmentos
+- Las citas DEBEN estar en formato: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
+"""
+
+    logger.info(f"attach_citations_explicit: Final context length: {len(result)} chars")
+    return result, chunks
+
+
+def validate_context_usage(retrieved_chunks: List[Dict], model_response: str) -> Dict:
+    """Valida si el modelo usó el contexto o alucinó"""
+    import re
+
+    context_files = set(c["file_path"] for c in retrieved_chunks)
+    citations = re.findall(r"\[([^]]+\.pdf),\s*p\.(\d+)\]", model_response)
+    cited_files = set(filename for filename, _ in citations)
+
+    coverage = len(cited_files & context_files) / max(len(context_files), 1)
+    has_no_found = "No encontré información" in model_response
+
+    result = {
+        "context_files": list(context_files),
+        "cited_files": list(cited_files),
+        "coverage": round(coverage, 2),
+        "said_not_found": has_no_found,
+        "citation_count": len(citations),
+    }
+
+    logger.info(f"📊 Context validation: {result}")
+    return result
+
+
+def debug_retrieval(topic: str, query: str) -> dict:
+    """
+    Función de debugging completa - muestra TODO lo que pasa en el retrieval
+    Útil para diagnosticar por qué solo trae de un archivo
+    """
+    import os
+    from qdrant_utils import get_collection_stats
+
+    logger.info("\n" + "=" * 80)
+    logger.info("🔍 DEBUG RETRIEVAL - ANÁLISIS COMPLETO")
+    logger.info("=" * 80)
+
+    # 1. Verificar colección
+    logger.info("\n📦 Colección Qdrant:")
+    stats = get_collection_stats(topic)
+    if stats:
+        logger.info(f"   - Nombre: {stats['collection']}")
+        logger.info(f"   - Total puntos: {stats['points_count']}")
+        logger.info(f"   - Tamaño vector: {stats['vector_size']}")
+        logger.info(f"   - Distancia: {stats['distance']}")
+    else:
+        logger.error("   ❌ No se pudo obtener stats - ¿colección existe?")
+
+    # 2. Obtener embeddings del query
+    logger.info("\n📝 Query:")
+    logger.info(f"   - Texto: {query[:100]}...")
+    logger.info(f"   - Tokens: ~{count_tokens(query)}")
+
+    embedder = get_embedder(topic)
+    q_vec = embedder.encode([query], normalize_embeddings=True)[0]
+    logger.info(f"   - Embedding model: {type(embedder).__name__}")
+    logger.info(f"   - Vector shape: {len(q_vec)}")
+    logger.info(f"   - Vector norm: {(q_vec**2).sum() ** 0.5:.4f} (should be ~1.0)")
+
+    # 3. Búsqueda densa
+    logger.info("\n🔎 Búsqueda Densa (Dense Vector Search):")
+    logger.info(f"   - K: {HYBRID_DENSE_K}")
+    q_vec_list = q_vec.tolist()
+    dense_hits = search_dense(topic, q_vec_list, HYBRID_DENSE_K)
+    logger.info(f"   - Resultados: {len(dense_hits)}")
+
+    if dense_hits:
+        # Analizar diversidad de archivos
+        files = {}
+        for i, h in enumerate(dense_hits):
+            file_path = h.payload["file_path"]
+            if file_path not in files:
+                files[file_path] = []
+            files[file_path].append((i, h.score, h.id))
+
+        logger.info(f"   - Archivos únicos: {len(files)}")
+        for file_path, hits_list in sorted(files.items(), key=lambda x: -len(x[1]))[:5]:
+            filename = os.path.basename(file_path)
+            logger.info(f"       • {filename}: {len(hits_list)} hits")
+            for idx, score, point_id in hits_list[:2]:
+                logger.info(f"         - score={score:.4f}, id={point_id}")
+    else:
+        logger.error("   ❌ NO HAY RESULTADOS - PROBLEMA GRAVE")
+
+    # 4. Búsqueda BM25
+    logger.info("\n📚 Búsqueda BM25 (Keyword Search):")
+    logger.info(f"   - K: {HYBRID_BM25_K}")
+    bm25_hits = bm25_search(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
+    logger.info(f"   - Resultados: {len(bm25_hits)}")
+
+    if bm25_hits:
+        files_bm25 = {}
+        for h in bm25_hits:
+            file_path = h["file_path"]
+            if file_path not in files_bm25:
+                files_bm25[file_path] = 0
+            files_bm25[file_path] += 1
+
+        logger.info(f"   - Archivos únicos: {len(files_bm25)}")
+        for file_path, count in sorted(files_bm25.items(), key=lambda x: -x[1])[:5]:
+            filename = os.path.basename(file_path)
+            logger.info(f"       • {filename}: {count} hits")
+
+    # 5. Después del merge
+    logger.info("\n🔀 Después del Merge (Hybrid):")
+
+    merged, meta = hybrid_retrieve(topic, query)
+
+    files_merged = {}
+    for c in merged:
+        file_path = c["file_path"]
+        if file_path not in files_merged:
+            files_merged[file_path] = 0
+        files_merged[file_path] += 1
+
+    logger.info(f"   - Total chunks: {len(merged)}")
+    logger.info(f"   - Archivos únicos: {len(files_merged)}")
+    for file_path, count in sorted(files_merged.items(), key=lambda x: -x[1]):
+        filename = os.path.basename(file_path)
+        chunks_info = [c for c in merged if c["file_path"] == file_path]
+        avg_score = sum(c.get("score_hybrid", 0) for c in chunks_info) / len(
+            chunks_info
+        )
+        logger.info(f"       • {filename}: {count} chunks (avg_score={avg_score:.4f})")
+
+    logger.info("=" * 80 + "\n")
+
+    return {
+        "collection_stats": stats,
+        "dense_hits": len(dense_hits),
+        "bm25_hits": len(bm25_hits),
+        "merged_results": len(merged),
+        "unique_files": len(files_merged),
+        "results": merged,
+    }
+
+
+# ============================================================
+# CÓMO USAR EN app.py:
+# ============================================================
+# En app.py, en la función chat_completions(), reemplaza:
+#
+#     retrieved, meta = choose_retrieval(topic, user_msg)
+#
+# CON (temporalmente para debugging):
+#
+#     debug_info = debug_retrieval(topic, user_msg)
+#     retrieved = debug_info["results"]
+#     meta = {"mode": "debug"}
+#
+# Verás todos los detalles en los logs

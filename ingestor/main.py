@@ -532,9 +532,22 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     logger.info(f"Encoding {len(texts)} chunks...")
     try:
         # Usa GPU inference si está disponible
+        # ✅ IMPORTANTE: intfloat/multilingual-e5-large-instruct requiere prefixes específicos
+        embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
+
+        if "e5" in embed_name.lower():
+            # Usa prefix de documento para indexación
+            texts_to_encode = [
+                f"Represent this document for retrieval: {text}" for text in texts
+            ]
+            logger.info("[E5] Using 'Represent this document for retrieval:' prefix")
+        else:
+            texts_to_encode = texts
+            logger.info(f"[EMBED] No prefix needed for {embed_name}")
+
         vecs = model_cache.encode_with_gpu(
             model,
-            texts,
+            texts_to_encode,  # ← CON PREFIXES
             batch_size=32,
         )
 
@@ -576,7 +589,10 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     try:
         for batch_start in range(0, total_chunks, QDRANT_BATCH_SIZE):
             batch_end = min(batch_start + QDRANT_BATCH_SIZE, total_chunks)
-            batch_ids = list(range(batch_start + 1, batch_end + 1))
+            batch_ids = [
+                abs(hash(f"{pdf_path}:{i}")) % (2**31)
+                for i in range(batch_start, batch_end)
+            ]
             batch_vecs = vecs[batch_start:batch_end]
             batch_payloads = payloads[batch_start:batch_end]
 
@@ -725,5 +741,120 @@ def initial_scan():
     logger.info("=" * 60 + "\n")
 
 
+def delete_pdf_from_indexes(topic: str, pdf_path: str):
+    """
+    Borra un PDF específico de Qdrant y Whoosh
+    """
+    pdf_path = str(pdf_path)
+    logger.info(f"\n{'=' * 60}")
+    logger.info("DELETING PDF FROM INDEXES")
+    logger.info(f"PDF: {Path(pdf_path).name}")
+    logger.info(f"Topic: {topic}")
+    logger.info(f"{'=' * 60}")
+
+    # ============================================================
+    # BORRAR DE QDRANT
+    # ============================================================
+    coll = topic_collection(topic)
+
+    try:
+        logger.info(
+            f"Querying Qdrant collection '{coll}' for points with file_path={pdf_path}"
+        )
+
+        # Busca TODOS los puntos con este file_path
+        points_result = client.scroll(
+            collection_name=coll,
+            limit=10000,  # Asumir máx 10k puntos por archivo
+            with_payload=True,
+        )
+
+        points = points_result[0]  # scroll retorna (points, next_page_offset)
+
+        point_ids_to_delete = []
+        for point in points:
+            if point.payload.get("file_path") == pdf_path:
+                point_ids_to_delete.append(point.id)
+
+        if point_ids_to_delete:
+            logger.info(f"Found {len(point_ids_to_delete)} points in Qdrant")
+            client.delete(
+                collection_name=coll,
+                points_selector=point_ids_to_delete,
+            )
+            logger.info(f"✅ Deleted {len(point_ids_to_delete)} points from Qdrant")
+        else:
+            logger.warning(f"No points found in Qdrant for {Path(pdf_path).name}")
+
+    except Exception as e:
+        logger.error(f"Error deleting from Qdrant: {e}", exc_info=True)
+        return False
+
+    # ============================================================
+    # BORRAR DE WHOOSH
+    # ============================================================
+    try:
+        logger.info(f"Querying Whoosh index for file_path={pdf_path}")
+
+        idx_path = os.path.join(BM25_BASE_DIR, topic)
+        idx = index.open_dir(idx_path)
+        writer = idx.writer()
+
+        # Borra todos los documentos con este file_path
+        deleted_count = writer.delete_by_term("file_path", pdf_path)
+
+        writer.commit()
+
+        logger.info(f"✅ Deleted {deleted_count} documents from Whoosh")
+
+    except Exception as e:
+        logger.error(f"Error deleting from Whoosh: {e}", exc_info=True)
+        return False
+
+    # ============================================================
+    # ACTUALIZAR ESTADO
+    # ============================================================
+    try:
+        state.state["processed"].pop(pdf_path, None)
+        state._save_state()
+        logger.info(f"✅ Reset processing state for {Path(pdf_path).name}")
+    except Exception as e:
+        logger.error(f"Error updating state: {e}")
+
+    logger.info(f"{'=' * 60}")
+    logger.info("[SUCCESS] PDF deleted from all indexes")
+    logger.info(f"{'=' * 60}\n")
+
+    return True
+
+
+# ============================================================
+# CLI: Para ejecutar manualmente
+# ============================================================
+"""
+Para borrar manualmente un archivo ya indexado:
+docker exec -it ingestor python /app/main.py delete Modelo "/topics/Modelo/nombre_archivo.pdf"
+Por ejemplo:
+docker exec -it ingestor python /app/main.py delete Electricidad "/topics/Electricidad/Normas de Construcción de cuadros de automatización.pdf"
+"""
 if __name__ == "__main__":
-    initial_scan()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "delete":
+        # Uso: python main.py delete "Electricidad" "/topics/Electricidad/archivo.pdf"
+        if len(sys.argv) < 4:
+            print("Usage: python main.py delete <topic> <pdf_path>")
+            print(
+                "Example: python main.py delete Electricidad /topics/Electricidad/Step7.pdf"
+            )
+            sys.exit(1)
+
+        topic = sys.argv[2]
+        pdf_path = sys.argv[3]
+
+        success = delete_pdf_from_indexes(topic, pdf_path)
+        sys.exit(0 if success else 1)
+
+    else:
+        # Default: scan y indexa
+        initial_scan()
