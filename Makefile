@@ -37,13 +37,13 @@ seed: gen-env
 
 reset: gen-env
 	@echo "Reseteando Qdrant y Whoosh..."
-	@docker stop ingestor
+	@docker compose down
 	@sudo rm -rf data/whoosh/.processing_state.json
 	@sudo rm -rf data/storage/*
 	@sudo rm -rf data/whoosh/*
 
 	@docker volume rm iasantiago-rag_llava_cache
-	@docker compose restart qdrant
+	@docker compose up -d ingestor
 
 bench:
 	@echo "Benchmark de vLLM /chat/completions"
