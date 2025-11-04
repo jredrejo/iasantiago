@@ -176,8 +176,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ENABLE_OLLAMA_API=false
       - OLLAMA_BASE_URL=""
-      - WEBUI_NAME=IA del Santiago Apóstol
-      - WEBUI_URL=https://ia.santiagoapostol.net
+      - WEBUI_NAME=IA del Sáenz de Buruaga
+      - WEBUI_URL=https://ia.iessaenzdeburuaga.es
       - ENABLE_ARENA=false
       - ENABLE_RAG=false
       # Confiar en los headers que envia oauth2-proxy
