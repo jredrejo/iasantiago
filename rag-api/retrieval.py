@@ -249,3 +249,201 @@ def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
         query, [p["text"] for p in passages], topk=min(FINAL_TOPK, len(passages))
     )
     return [passages[i] for i in order]
+
+
+def attach_citations_explicit(
+    chunks: List[Dict], topic: str = ""
+) -> Tuple[str, List[Dict]]:
+    """
+    Formatea contexto RAG de forma MÁS EXPLÍCITA para que el modelo lo vea claro.
+    """
+    if not chunks:
+        empty_msg = "No se encontró información relevante en la base de datos."
+        logger.warning(f"attach_citations_explicit: {empty_msg}")
+        return empty_msg, []
+
+    logger.info(
+        f"attach_citations_explicit: Processing {len(chunks)} chunks with topic='{topic}'"
+    )
+
+    context_parts = []
+
+    for i, c in enumerate(chunks, start=1):
+        filename = os.path.basename(c["file_path"])
+        page = c["page"]
+        text = c["text"]
+
+        encoded_filename = quote(filename, safe=".")
+
+        if topic:
+            doc_url = f"/docs/{topic}/{encoded_filename}#page={page}"
+        else:
+            doc_url = f"/docs/{encoded_filename}#page={page}"
+
+        fragment = f"""[{i}] {text}
+
+**Fuente:** [{filename}, p.{page}]({doc_url})"""
+
+        context_parts.append(fragment)
+        logger.info(f"  [{i}] {filename}, p.{page}")
+
+    result = f"""
+╔════════════════════════════════════════════════════════════════╗
+║            CONTEXTO RAG - INFORMACIÓN DE DOCUMENTOS             ║
+╚════════════════════════════════════════════════════════════════╝
+
+{chr(10).join([""] + context_parts)}
+
+╔════════════════════════════════════════════════════════════════╗
+║                    FIN DE CONTEXTO RAG                          ║
+╚════════════════════════════════════════════════════════════════╝
+
+INSTRUCCIONES CRÍTICAS:
+- DEBES usar la información anterior para responder
+- Si la respuesta está en los fragmentos [1] a [{len(chunks)}], úsala y cita correctamente
+- Si NO está en los fragmentos, responde: "No encontré información sobre esto en los documentos"
+- NUNCA inventes información fuera de estos fragmentos
+- Las citas DEBEN estar en formato: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
+"""
+
+    logger.info(f"attach_citations_explicit: Final context length: {len(result)} chars")
+    return result, chunks
+
+
+def validate_context_usage(retrieved_chunks: List[Dict], model_response: str) -> Dict:
+    """Valida si el modelo usó el contexto o alucinó"""
+    import re
+
+    context_files = set(c["file_path"] for c in retrieved_chunks)
+    citations = re.findall(r"\[([^]]+\.pdf),\s*p\.(\d+)\]", model_response)
+    cited_files = set(filename for filename, _ in citations)
+
+    coverage = len(cited_files & context_files) / max(len(context_files), 1)
+    has_no_found = "No encontré información" in model_response
+
+    result = {
+        "context_files": list(context_files),
+        "cited_files": list(cited_files),
+        "coverage": round(coverage, 2),
+        "said_not_found": has_no_found,
+        "citation_count": len(citations),
+    }
+
+    logger.info(f"📊 Context validation: {result}")
+    return result
+
+
+# En retrieval.py, modifica hybrid_retrieve para añadir logging detallado
+
+def hybrid_retrieve_debug(topic: str, query: str) -> Tuple[List[Dict], Dict]:
+    logger.info("=" * 80)
+    logger.info(f"🔍 HYBRID RETRIEVAL DEBUG")
+    logger.info("=" * 80)
+    logger.info(f"Query: {query}\n")
+    
+    embedder = get_embedder(topic)
+    q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
+    
+    logger.info("📌 DENSE SEARCH (Qdrant):")
+    dense_hits = search_dense(topic, q_vec, HYBRID_DENSE_K)
+    
+    logger.info(f"  Retornó {len(dense_hits)} hits")
+    for i, h in enumerate(dense_hits[:5], 1):  # Top 5
+        filename = os.path.basename(h.payload["file_path"])
+        score = h.score
+        text_preview = h.payload["text"][:100].replace("\n", " ")
+        logger.info(f"  [{i}] {filename}, p.{h.payload['page']}, score={score:.4f}")
+        logger.info(f"       Text: {text_preview}...")
+    
+    dense = [
+        {
+            "file_path": h.payload["file_path"],
+            "page": h.payload["page"],
+            "chunk_id": h.payload["chunk_id"],
+            "text": h.payload["text"],
+            "score_dense": float(h.score),
+            "score_bm25": 0.0,
+        }
+        for h in dense_hits
+    ]
+
+    logger.info("\n📌 BM25 SEARCH (Whoosh):")
+    bm25 = bm25_search(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
+    
+    logger.info(f"  Retornó {len(bm25)} hits")
+    for i, b in enumerate(bm25[:5], 1):  # Top 5
+        filename = os.path.basename(b["file_path"])
+        score = b["score"]
+        text_preview = b["text"][:100].replace("\n", " ")
+        logger.info(f"  [{i}] {filename}, p.{b['page']}, score={score:.4f}")
+        logger.info(f"       Text: {text_preview}...")
+
+    def norm(scores):
+        if not scores:
+            return []
+        mi, ma = min(scores), max(scores)
+        if ma - mi < 1e-6:
+            return [1.0] * len(scores)
+        return [(s - mi) / (ma - mi) for s in scores]
+
+    key = lambda d: (d["file_path"], d["chunk_id"])
+    dense_map = {key(d): d for d in dense}
+    for b in bm25:
+        k = (b["file_path"], b["chunk_id"])
+        if k in dense_map:
+            dense_map[k]["score_bm25"] = b["score"]
+        else:
+            dense_map[k] = {
+                "file_path": b["file_path"],
+                "page": b["page"],
+                "chunk_id": b["chunk_id"],
+                "text": b["text"],
+                "score_dense": 0.0,
+                "score_bm25": b["score"],
+            }
+    
+    merged = list(dense_map.values())
+    nd = norm([m["score_dense"] for m in merged])
+    nb = norm([m["score_bm25"] for m in merged])
+    for m, a, b in zip(merged, nd, nb):
+        m["score_hybrid"] = 0.6 * a + 0.4 * b
+
+    merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
+    
+    logger.info("\n📌 DESPUÉS DE MERGE Y NORMALIZACIÓN (Top 10):")
+    for i, m in enumerate(merged[:10], 1):
+        filename = os.path.basename(m["file_path"])
+        logger.info(f"  [{i}] {filename}, p.{m['page']}")
+        logger.info(f"       Dense: {m['score_dense']:.4f}, BM25: {m['score_bm25']:.4f}, Hybrid: {m['score_hybrid']:.4f}")
+        logger.info(f"       Text: {m['text'][:80].replace(chr(10), ' ')}...")
+    
+    merged = deduplicate_chunks(merged)
+    
+    file_counts = {}
+    filtered = []
+    for m in merged:
+        cnt = file_counts.get(m["file_path"], 0)
+        if cnt < MAX_CHUNKS_PER_FILE:
+            filtered.append(m)
+            file_counts[m["file_path"]] = cnt + 1
+        if len(filtered) >= FINAL_TOPK:
+            break
+    
+    logger.info(f"\n✅ FINAL FILTERED (después MAX_CHUNKS_PER_FILE={MAX_CHUNKS_PER_FILE}, FINAL_TOPK={FINAL_TOPK}):")
+    for i, f in enumerate(filtered, 1):
+        filename = os.path.basename(f["file_path"])
+        logger.info(f"  [{i}] {filename}, p.{f['page']}, hybrid_score={f['score_hybrid']:.4f}")
+    
+    logger.info("=" * 80)
+    
+    return filtered, {
+        "dense_k": HYBRID_DENSE_K,
+        "bm25_k": HYBRID_BM25_K,
+        "final_topk": FINAL_TOPK,
+    }
+
+
+# En app.py, reemplaza:
+# retrieved, meta = choose_retrieval(topic, user_msg)
+# CON:
+# retrieved, meta = hybrid_retrieve_debug(topic, user_msg)  # Temporal para debug
