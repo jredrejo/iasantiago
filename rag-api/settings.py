@@ -1,5 +1,6 @@
 import os
 
+
 # Helper para leer variables de entorno de forma segura
 def get_int_env(key: str, default: int) -> int:
     """Lee una variable de entorno como int, manejando casos de cadena vacía"""
@@ -54,3 +55,6 @@ UPSTREAM_OPENAI_URL = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "dummy-key")
 
 TELEMETRY_PATH = os.getenv("TELEMETRY_PATH", "/app/retrieval.jsonl")
+VLLM_HEALTH_CHECK_TIMEOUT = get_int_env("VLLM_HEALTH_CHECK_TIMEOUT", 15)  # segundos
+VLLM_CONNECT_TIMEOUT = get_int_env("VLLM_CONNECT_TIMEOUT", 20)  # segundos
+VLLM_STREAM_TIMEOUT = get_int_env("VLLM_STREAM_TIMEOUT", 600)

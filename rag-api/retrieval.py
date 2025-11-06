@@ -141,6 +141,121 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
     }
 
 
+def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
+    """Versión con topk configurable"""
+    embedder = get_embedder(topic)
+    q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
+
+    # Recuperar MÁS en búsqueda inicial
+    dense_k = HYBRID_DENSE_K * 2  # 40 * 2 = 80
+    bm25_k = HYBRID_BM25_K * 2  # 40 * 2 = 80
+
+    dense_hits = search_dense(topic, q_vec, dense_k)
+    dense = [
+        {
+            "file_path": h.payload["file_path"],
+            "page": h.payload["page"],
+            "chunk_id": h.payload["chunk_id"],
+            "text": h.payload["text"],
+            "score_dense": float(h.score),
+            "score_bm25": 0.0,
+        }
+        for h in dense_hits
+    ]
+
+    bm25 = bm25_search(BM25_BASE_DIR, topic, query, bm25_k)
+
+    # ... (mismo código de normalización y merge) ...
+
+    def norm(scores):
+        if not scores:
+            return []
+        mi, ma = min(scores), max(scores)
+        if ma - mi < 1e-6:
+            return [1.0] * len(scores)
+        return [(s - mi) / (ma - mi) for s in scores]
+
+    key = lambda d: (d["file_path"], d["chunk_id"])
+    dense_map = {key(d): d for d in dense}
+    for b in bm25:
+        k = (b["file_path"], b["chunk_id"])
+        if k in dense_map:
+            dense_map[k]["score_bm25"] = b["score"]
+        else:
+            dense_map[k] = {
+                "file_path": b["file_path"],
+                "page": b["page"],
+                "chunk_id": b["chunk_id"],
+                "text": b["text"],
+                "score_dense": 0.0,
+                "score_bm25": b["score"],
+            }
+    merged = list(dense_map.values())
+    nd = norm([m["score_dense"] for m in merged])
+    nb = norm([m["score_bm25"] for m in merged])
+    for m, a, b in zip(merged, nd, nb):
+        m["score_hybrid"] = 0.6 * a + 0.4 * b
+
+    merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
+    merged = deduplicate_chunks(merged)
+
+    file_counts = {}
+    filtered = []
+    for m in merged:
+        cnt = file_counts.get(m["file_path"], 0)
+        if cnt < MAX_CHUNKS_PER_FILE:
+            filtered.append(m)
+            file_counts[m["file_path"]] = cnt + 1
+        if len(filtered) >= final_topk:
+            break
+
+    return filtered, {
+        "dense_k": dense_k,
+        "bm25_k": bm25_k,
+        "final_topk": final_topk,
+    }
+
+
+def bm25_only_enhanced(topic: str, query: str, final_topk: int):
+    """Versión con topk configurable"""
+    hits = bm25_search(BM25_BASE_DIR, topic, query, final_topk * 3)
+    file_counts, filtered = {}, []
+    for h in hits:
+        c = file_counts.get(h["file_path"], 0)
+        if c < MAX_CHUNKS_PER_FILE:
+            filtered.append(h)
+            file_counts[h["file_path"]] = c + 1
+        if len(filtered) >= final_topk:
+            break
+    return filtered
+
+
+def choose_retrieval_enhanced(topic: str, query: str, is_generative: bool = False):
+    """
+    Versión mejorada de choose_retrieval que ajusta parámetros según el modo
+    """
+    q_tokens = len(query.strip().split())
+
+    # AJUSTAR TOPK según el modo
+    if is_generative:
+        # Para generación, necesitamos MÁS chunks (más diversidad)
+        final_topk = FINAL_TOPK * 3  # 5 * 3 = 15 chunks
+        logger.info(f"🎯 Modo GENERATIVO: recuperando {final_topk} chunks")
+    else:
+        # Para respuestas, el normal está bien
+        final_topk = FINAL_TOPK  # 5 chunks
+        logger.info(f"💬 Modo RESPUESTA: recuperando {final_topk} chunks")
+
+    if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
+        results = bm25_only_enhanced(topic, query, final_topk)
+        return results, {"mode": "bm25", "topk": final_topk}
+    else:
+        results, meta = hybrid_retrieve_enhanced(topic, query, final_topk)
+        meta["mode"] = "hybrid"
+        meta["topk"] = final_topk
+        return results, meta
+
+
 def bm25_only(topic: str, query: str):
     hits = bm25_search(BM25_BASE_DIR, topic, query, FINAL_TOPK * 3)
     file_counts, filtered = {}, []
