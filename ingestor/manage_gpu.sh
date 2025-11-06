@@ -40,23 +40,23 @@ EOF
 show_status() {
     echo -e "${BLUE}GPU Memory Status${NC}"
     echo "======================================"
-    
+
     # Check containers
     vllm_running=$(docker ps --format '{{.Names}}' | grep -q "^${VLLM_CONTAINER}$" && echo "[OK] Running" || echo "[STOP] Stopped")
     vllm_llava_running=$(docker ps --format '{{.Names}}' | grep -q "^${VLLM_LLAVA_CONTAINER}$" && echo "[OK] Running" || echo "[STOP] Stopped")
     ingestor_running=$(docker ps --format '{{.Names}}' | grep -q "^${INGESTOR_CONTAINER}$" && echo "[OK] Running" || echo "[STOP] Stopped")
-    
+
     echo "vLLM (Qwen): $vllm_running"
     echo "vLLM-LLaVA: $vllm_llava_running"
     echo "Ingestor: $ingestor_running"
     echo ""
-    
+
     # GPU usage
     echo -e "${BLUE}GPU Memory Usage${NC}"
     echo "======================================"
     nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu \
         --format=csv,noheader,nounits 2>/dev/null || echo "nvidia-smi not available"
-    
+
     echo ""
     echo -e "${BLUE}GPU Processes${NC}"
     echo "======================================"
@@ -65,11 +65,11 @@ show_status() {
 
 check_containers() {
     echo "Checking container status..."
-    
+
     vllm_running=$(docker ps --format '{{.Names}}' | grep -q "^${VLLM_CONTAINER}$" && echo "true" || echo "false")
     vllm_llava_running=$(docker ps --format '{{.Names}}' | grep -q "^${VLLM_LLAVA_CONTAINER}$" && echo "true" || echo "false")
     ingestor_running=$(docker ps --format '{{.Names}}' | grep -q "^${INGESTOR_CONTAINER}$" && echo "true" || echo "false")
-    
+
     echo "vLLM (Qwen): $vllm_running"
     echo "vLLM-LLaVA: $vllm_llava_running"
     echo "Ingestor: $ingestor_running"
@@ -77,12 +77,12 @@ check_containers() {
 
 pause_vllm() {
     echo -e "${YELLOW}Pausing vLLM (Qwen) to free GPU memory...${NC}"
-    
+
     if ! docker ps --format '{{.Names}}' | grep -q "^${VLLM_CONTAINER}$"; then
         echo "vLLM is not running"
         return 0
     fi
-    
+
     docker stop "$VLLM_CONTAINER" 2>/dev/null || true
     echo -e "${GREEN}[OK] vLLM stopped${NC}"
     sleep 3
@@ -91,9 +91,9 @@ pause_vllm() {
 
 resume_vllm() {
     echo -e "${YELLOW}Resuming vLLM (Qwen)...${NC}"
-    
+
     docker start "$VLLM_CONTAINER"
-    
+
     # Wait for vLLM to be ready
     for i in {1..60}; do
         if docker exec "$VLLM_CONTAINER" curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
@@ -103,7 +103,7 @@ resume_vllm() {
         echo -n "."
         sleep 1
     done
-    
+
     echo -e "${RED}[ERROR] vLLM failed to start${NC}"
     return 1
 }
@@ -111,14 +111,14 @@ resume_vllm() {
 start_vllm_llava() {
     pause_vllm
     echo -e "${YELLOW}Starting vLLM-LLaVA...${NC}"
-    
+
     if docker ps --format '{{.Names}}' | grep -q "^${VLLM_LLAVA_CONTAINER}$"; then
         echo "vLLM-LLaVA already running"
         return 0
     fi
-    
+
     docker start "$VLLM_LLAVA_CONTAINER"
-    
+
     # Wait 2 minutos for vLLM-LLaVA to be ready
     for i in {1..120}; do
         if docker exec "$VLLM_LLAVA_CONTAINER" curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
@@ -128,19 +128,19 @@ start_vllm_llava() {
         echo -n "."
         sleep 1
     done
-    
+
     echo -e "${RED}[ERROR] vLLM-LLaVA failed to start${NC}"
     return 1
 }
 
 stop_vllm_llava() {
     echo -e "${YELLOW}Stopping vLLM-LLaVA...${NC}"
-    
+
     if ! docker ps --format '{{.Names}}' | grep -q "^${VLLM_LLAVA_CONTAINER}$"; then
         echo "vLLM-LLaVA is not running"
         return 0
     fi
-    
+
     docker stop "$VLLM_LLAVA_CONTAINER" 2>/dev/null || true
     echo -e "${GREEN}[OK] vLLM-LLaVA stopped${NC}"
     sleep 3
@@ -156,7 +156,7 @@ ingest_with_llava() {
     echo "  2. Run ingestor"
     echo "  3. Stop vLLM-LLaVA"
     echo ""
-    
+
     # 1. Start vLLM-LLaVA
     echo "[1/3] Starting vLLM-LLaVA..."
     start_vllm_llava
@@ -164,12 +164,12 @@ ingest_with_llava() {
         echo -e "${RED}[ERROR] Failed to start vLLM-LLaVA${NC}"
         return 1
     fi
-    
+
     # 2. Show GPU memory
     echo ""
     echo "[2/3] GPU memory with vLLM-LLaVA running:"
     nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || echo "GPU info unavailable"
-    
+
     # 3. Run ingestor
     echo ""
     echo -e "${BLUE}[3/3] Running ingestor scan WITH LLaVA...${NC}"
@@ -177,7 +177,7 @@ ingest_with_llava() {
     docker start "$INGESTOR_CONTAINER" 2>/dev/null || true
     docker exec "$INGESTOR_CONTAINER" python main.py
     INGEST_STATUS=$?
-    
+
     # Stop vLLM-LLaVA regardless of ingest status
     echo ""
     echo "Stopping vLLM-LLaVA..."
@@ -193,6 +193,8 @@ ingest_with_llava() {
         echo -e "${RED}[ERROR] Ingest failed${NC}"
         return 1
     fi
+    # Restart RAG web
+    docker compose up -d oauth2-proxy
 }
 
 # ============================================================

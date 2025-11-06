@@ -589,7 +589,10 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     try:
         for batch_start in range(0, total_chunks, QDRANT_BATCH_SIZE):
             batch_end = min(batch_start + QDRANT_BATCH_SIZE, total_chunks)
-            batch_ids = list(range(batch_start + 1, batch_end + 1))
+            batch_ids = [
+                abs(hash(f"{pdf_path}:{i}")) % (2**31)
+                for i in range(batch_start, batch_end)
+            ]
             batch_vecs = vecs[batch_start:batch_end]
             batch_payloads = payloads[batch_start:batch_end]
 
@@ -828,7 +831,12 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
 # ============================================================
 # CLI: Para ejecutar manualmente
 # ============================================================
-
+"""
+Para borrar manualmente un archivo ya indexado:
+docker exec -it ingestor python /app/main.py delete Modelo "/topics/Modelo/nombre_archivo.pdf"
+Por ejemplo:
+docker exec -it ingestor python /app/main.py delete Electricidad "/topics/Electricidad/Normas de Construcción de cuadros de automatización.pdf"
+"""
 if __name__ == "__main__":
     import sys
 

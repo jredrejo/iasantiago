@@ -333,117 +333,129 @@ def validate_context_usage(retrieved_chunks: List[Dict], model_response: str) ->
     return result
 
 
-# En retrieval.py, modifica hybrid_retrieve para añadir logging detallado
+def debug_retrieval(topic: str, query: str) -> dict:
+    """
+    Función de debugging completa - muestra TODO lo que pasa en el retrieval
+    Útil para diagnosticar por qué solo trae de un archivo
+    """
+    import os
+    from qdrant_utils import get_collection_stats
 
-def hybrid_retrieve_debug(topic: str, query: str) -> Tuple[List[Dict], Dict]:
+    logger.info("\n" + "=" * 80)
+    logger.info("🔍 DEBUG RETRIEVAL - ANÁLISIS COMPLETO")
     logger.info("=" * 80)
-    logger.info(f"🔍 HYBRID RETRIEVAL DEBUG")
-    logger.info("=" * 80)
-    logger.info(f"Query: {query}\n")
-    
+
+    # 1. Verificar colección
+    logger.info("\n📦 Colección Qdrant:")
+    stats = get_collection_stats(topic)
+    if stats:
+        logger.info(f"   - Nombre: {stats['collection']}")
+        logger.info(f"   - Total puntos: {stats['points_count']}")
+        logger.info(f"   - Tamaño vector: {stats['vector_size']}")
+        logger.info(f"   - Distancia: {stats['distance']}")
+    else:
+        logger.error("   ❌ No se pudo obtener stats - ¿colección existe?")
+
+    # 2. Obtener embeddings del query
+    logger.info("\n📝 Query:")
+    logger.info(f"   - Texto: {query[:100]}...")
+    logger.info(f"   - Tokens: ~{count_tokens(query)}")
+
     embedder = get_embedder(topic)
-    q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
-    
-    logger.info("📌 DENSE SEARCH (Qdrant):")
-    dense_hits = search_dense(topic, q_vec, HYBRID_DENSE_K)
-    
-    logger.info(f"  Retornó {len(dense_hits)} hits")
-    for i, h in enumerate(dense_hits[:5], 1):  # Top 5
-        filename = os.path.basename(h.payload["file_path"])
-        score = h.score
-        text_preview = h.payload["text"][:100].replace("\n", " ")
-        logger.info(f"  [{i}] {filename}, p.{h.payload['page']}, score={score:.4f}")
-        logger.info(f"       Text: {text_preview}...")
-    
-    dense = [
-        {
-            "file_path": h.payload["file_path"],
-            "page": h.payload["page"],
-            "chunk_id": h.payload["chunk_id"],
-            "text": h.payload["text"],
-            "score_dense": float(h.score),
-            "score_bm25": 0.0,
-        }
-        for h in dense_hits
-    ]
+    q_vec = embedder.encode([query], normalize_embeddings=True)[0]
+    logger.info(f"   - Embedding model: {type(embedder).__name__}")
+    logger.info(f"   - Vector shape: {len(q_vec)}")
+    logger.info(f"   - Vector norm: {(q_vec**2).sum() ** 0.5:.4f} (should be ~1.0)")
 
-    logger.info("\n📌 BM25 SEARCH (Whoosh):")
-    bm25 = bm25_search(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
-    
-    logger.info(f"  Retornó {len(bm25)} hits")
-    for i, b in enumerate(bm25[:5], 1):  # Top 5
-        filename = os.path.basename(b["file_path"])
-        score = b["score"]
-        text_preview = b["text"][:100].replace("\n", " ")
-        logger.info(f"  [{i}] {filename}, p.{b['page']}, score={score:.4f}")
-        logger.info(f"       Text: {text_preview}...")
+    # 3. Búsqueda densa
+    logger.info("\n🔎 Búsqueda Densa (Dense Vector Search):")
+    logger.info(f"   - K: {HYBRID_DENSE_K}")
+    q_vec_list = q_vec.tolist()
+    dense_hits = search_dense(topic, q_vec_list, HYBRID_DENSE_K)
+    logger.info(f"   - Resultados: {len(dense_hits)}")
 
-    def norm(scores):
-        if not scores:
-            return []
-        mi, ma = min(scores), max(scores)
-        if ma - mi < 1e-6:
-            return [1.0] * len(scores)
-        return [(s - mi) / (ma - mi) for s in scores]
+    if dense_hits:
+        # Analizar diversidad de archivos
+        files = {}
+        for i, h in enumerate(dense_hits):
+            file_path = h.payload["file_path"]
+            if file_path not in files:
+                files[file_path] = []
+            files[file_path].append((i, h.score, h.id))
 
-    key = lambda d: (d["file_path"], d["chunk_id"])
-    dense_map = {key(d): d for d in dense}
-    for b in bm25:
-        k = (b["file_path"], b["chunk_id"])
-        if k in dense_map:
-            dense_map[k]["score_bm25"] = b["score"]
-        else:
-            dense_map[k] = {
-                "file_path": b["file_path"],
-                "page": b["page"],
-                "chunk_id": b["chunk_id"],
-                "text": b["text"],
-                "score_dense": 0.0,
-                "score_bm25": b["score"],
-            }
-    
-    merged = list(dense_map.values())
-    nd = norm([m["score_dense"] for m in merged])
-    nb = norm([m["score_bm25"] for m in merged])
-    for m, a, b in zip(merged, nd, nb):
-        m["score_hybrid"] = 0.6 * a + 0.4 * b
+        logger.info(f"   - Archivos únicos: {len(files)}")
+        for file_path, hits_list in sorted(files.items(), key=lambda x: -len(x[1]))[:5]:
+            filename = os.path.basename(file_path)
+            logger.info(f"       • {filename}: {len(hits_list)} hits")
+            for idx, score, point_id in hits_list[:2]:
+                logger.info(f"         - score={score:.4f}, id={point_id}")
+    else:
+        logger.error("   ❌ NO HAY RESULTADOS - PROBLEMA GRAVE")
 
-    merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
-    
-    logger.info("\n📌 DESPUÉS DE MERGE Y NORMALIZACIÓN (Top 10):")
-    for i, m in enumerate(merged[:10], 1):
-        filename = os.path.basename(m["file_path"])
-        logger.info(f"  [{i}] {filename}, p.{m['page']}")
-        logger.info(f"       Dense: {m['score_dense']:.4f}, BM25: {m['score_bm25']:.4f}, Hybrid: {m['score_hybrid']:.4f}")
-        logger.info(f"       Text: {m['text'][:80].replace(chr(10), ' ')}...")
-    
-    merged = deduplicate_chunks(merged)
-    
-    file_counts = {}
-    filtered = []
-    for m in merged:
-        cnt = file_counts.get(m["file_path"], 0)
-        if cnt < MAX_CHUNKS_PER_FILE:
-            filtered.append(m)
-            file_counts[m["file_path"]] = cnt + 1
-        if len(filtered) >= FINAL_TOPK:
-            break
-    
-    logger.info(f"\n✅ FINAL FILTERED (después MAX_CHUNKS_PER_FILE={MAX_CHUNKS_PER_FILE}, FINAL_TOPK={FINAL_TOPK}):")
-    for i, f in enumerate(filtered, 1):
-        filename = os.path.basename(f["file_path"])
-        logger.info(f"  [{i}] {filename}, p.{f['page']}, hybrid_score={f['score_hybrid']:.4f}")
-    
-    logger.info("=" * 80)
-    
-    return filtered, {
-        "dense_k": HYBRID_DENSE_K,
-        "bm25_k": HYBRID_BM25_K,
-        "final_topk": FINAL_TOPK,
+    # 4. Búsqueda BM25
+    logger.info("\n📚 Búsqueda BM25 (Keyword Search):")
+    logger.info(f"   - K: {HYBRID_BM25_K}")
+    bm25_hits = bm25_search(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
+    logger.info(f"   - Resultados: {len(bm25_hits)}")
+
+    if bm25_hits:
+        files_bm25 = {}
+        for h in bm25_hits:
+            file_path = h["file_path"]
+            if file_path not in files_bm25:
+                files_bm25[file_path] = 0
+            files_bm25[file_path] += 1
+
+        logger.info(f"   - Archivos únicos: {len(files_bm25)}")
+        for file_path, count in sorted(files_bm25.items(), key=lambda x: -x[1])[:5]:
+            filename = os.path.basename(file_path)
+            logger.info(f"       • {filename}: {count} hits")
+
+    # 5. Después del merge
+    logger.info("\n🔀 Después del Merge (Hybrid):")
+
+    merged, meta = hybrid_retrieve(topic, query)
+
+    files_merged = {}
+    for c in merged:
+        file_path = c["file_path"]
+        if file_path not in files_merged:
+            files_merged[file_path] = 0
+        files_merged[file_path] += 1
+
+    logger.info(f"   - Total chunks: {len(merged)}")
+    logger.info(f"   - Archivos únicos: {len(files_merged)}")
+    for file_path, count in sorted(files_merged.items(), key=lambda x: -x[1]):
+        filename = os.path.basename(file_path)
+        chunks_info = [c for c in merged if c["file_path"] == file_path]
+        avg_score = sum(c.get("score_hybrid", 0) for c in chunks_info) / len(
+            chunks_info
+        )
+        logger.info(f"       • {filename}: {count} chunks (avg_score={avg_score:.4f})")
+
+    logger.info("=" * 80 + "\n")
+
+    return {
+        "collection_stats": stats,
+        "dense_hits": len(dense_hits),
+        "bm25_hits": len(bm25_hits),
+        "merged_results": len(merged),
+        "unique_files": len(files_merged),
+        "results": merged,
     }
 
 
-# En app.py, reemplaza:
-# retrieved, meta = choose_retrieval(topic, user_msg)
-# CON:
-# retrieved, meta = hybrid_retrieve_debug(topic, user_msg)  # Temporal para debug
+# ============================================================
+# CÓMO USAR EN app.py:
+# ============================================================
+# En app.py, en la función chat_completions(), reemplaza:
+#
+#     retrieved, meta = choose_retrieval(topic, user_msg)
+#
+# CON (temporalmente para debugging):
+#
+#     debug_info = debug_retrieval(topic, user_msg)
+#     retrieved = debug_info["results"]
+#     meta = {"mode": "debug"}
+#
+# Verás todos los detalles en los logs
