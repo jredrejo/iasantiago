@@ -1,19 +1,27 @@
-import os, json, asyncio, httpx, time, logging, re
-from fastapi import FastAPI, Request, Response, HTTPException, Header
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
+import asyncio
+import json
+import logging
+import os
+import re
+import time
+from typing import Any, Dict, List, Optional
+
+import httpx
+from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
-from settings import *
 from retrieval import (
-    choose_retrieval,
     attach_citations,
-    soft_trim_context,
-    rerank_passages,
-    telemetry_log,
-    count_tokens,
+    choose_retrieval,
     choose_retrieval_enhanced,
+    count_tokens,
+    rerank_passages,
+    soft_trim_context,
+    telemetry_log,
 )
+from settings import *
 from token_utils import extract_topic_from_model_name
+
 from eval import aggregate_eval
 
 # Setup logging
@@ -84,8 +92,8 @@ def ensure_models_loaded():
     logger.info("Checking if embedding models are available...")
 
     try:
-        from settings import EMBED_PER_TOPIC, EMBED_DEFAULT, RERANK_MODEL
         from retrieval import get_embedder, get_reranker
+        from settings import EMBED_DEFAULT, EMBED_PER_TOPIC, RERANK_MODEL
 
         # Pre-load embedders
         for topic in EMBED_PER_TOPIC.keys():
@@ -357,12 +365,11 @@ async def chat_completions(
     is_generative = detect_generative_intent(user_msg)
     sys_prompt = load_system_prompt(is_generative)
 
+    # Ajustar límites de contexto según el modo
     if is_generative:
         context_token_limit = CTX_TOKENS_GENERATIVE
-        max_tokens = 16384
     else:
         context_token_limit = CTX_TOKENS_SOFT_LIMIT
-        max_tokens = 8192
 
     # Retrieval con parámetros ajustados
     retrieved, meta = choose_retrieval_enhanced(topic, user_msg, is_generative)
@@ -377,7 +384,8 @@ async def chat_completions(
         logger.info(
             f"After rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
         )
-        retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
+        # ✅ Usar el límite de contexto calculado dinámicamente
+        retrieved = soft_trim_context(retrieved, context_token_limit)
 
     context_text, cited = attach_citations(retrieved, topic)
 
@@ -431,10 +439,10 @@ async def chat_completions(
     ):
         enhanced_system = f"""{sys_prompt}
 
-[Contexto RAG - Información relevante de la base de datos]
-{context_text}
+    [Contexto RAG - Información relevante de la base de datos]
+    {context_text}
 
-Usa este contexto para responder las preguntas del usuario. Siempre cita las fuentes usando los enlaces proporcionados."""
+    Usa este contexto para responder las preguntas del usuario. Siempre cita las fuentes usando los enlaces proporcionados."""
     else:
         enhanced_system = sys_prompt
 
@@ -447,8 +455,13 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
             messages.append({"role": msg.role, "content": msg.content})
 
     # ============================================================
-    # ANÁLISIS DE TOKENS Y WARNINGS
+    # 🔴 NUEVO: CÁLCULO DINÁMICO DE max_tokens
     # ============================================================
+
+    # Obtener límite del modelo desde .env
+    max_model_len = int(os.getenv("VLLM_MAX_MODEL_LEN", "4096"))
+
+    # Calcular tokens de input (sistema + historial)
     system_tokens = count_tokens(enhanced_system)
     context_tokens = count_tokens(context_text)
     history_tokens = sum(
@@ -456,13 +469,47 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
     )
     total_input_tokens = system_tokens + history_tokens
 
+    # Calcular max_tokens disponibles (dejar margen de seguridad)
+    safety_margin = 100  # tokens de buffer para evitar errores de precisión
+    available_tokens = max_model_len - total_input_tokens - safety_margin
+
+    # Límites según el modo
+    if is_generative:
+        # Generación: necesita más tokens para exámenes/ejercicios
+        desired_max_tokens = min(4096, max_model_len // 2)  # Máximo 50% del modelo
+    else:
+        # Respuesta: más conservador
+        desired_max_tokens = min(2048, max_model_len // 3)  # Máximo 33% del modelo
+
+    # Usar el mínimo entre lo deseado y lo disponible
+    max_tokens = max(100, min(desired_max_tokens, available_tokens))
+
+    # ============================================================
+    # ANÁLISIS DE TOKENS Y WARNINGS
+    # ============================================================
     logger.info(f"📊 Token breakdown:")
+    logger.info(f"   - Model max length: {max_model_len} tokens")
     logger.info(f"   - System prompt: ~{system_tokens} tokens")
     logger.info(f"   - RAG context: ~{context_tokens} tokens")
     logger.info(f"   - Conversation history: ~{history_tokens} tokens")
     logger.info(f"   - TOTAL INPUT: ~{total_input_tokens} tokens")
+    logger.info(f"   - Available for response: {available_tokens} tokens")
+    logger.info(f"   - Configured max_tokens: {max_tokens} tokens")
 
-    max_model_len = int(os.getenv("VLLM_MAX_MODEL_LEN", "8192"))
+    # Validación crítica
+    if available_tokens < 100:
+        logger.error(
+            f"❌ Input demasiado largo: {total_input_tokens} tokens "
+            f"(límite modelo: {max_model_len}). "
+            f"Solo quedan {available_tokens} tokens para respuesta."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"El contexto de entrada es demasiado largo ({total_input_tokens} tokens). "
+            f"El modelo solo soporta {max_model_len} tokens totales. "
+            f"Por favor, reduce el historial de conversación o el tamaño de la consulta.",
+        )
+
     if total_input_tokens > max_model_len * 0.7:
         logger.warning(
             f"⚠️  Input muy largo ({total_input_tokens} tokens, "
@@ -482,15 +529,17 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
             detail="vLLM service is not responding. Please try again in a few moments.",
         )
 
-    # Payload para vLLM
+    # ============================================================
+    # 🔴 PAYLOAD CON max_tokens DINÁMICO
+    # ============================================================
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     payload = {
-        "model": os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+        "model": os.getenv("VLLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3-GPTQ"),
         "messages": messages,
         "temperature": req.temperature,
         "top_p": req.top_p,
         "stream": req.stream,
-        "max_tokens": int(os.getenv("VLLM_MAX_TOKENS", "8192")),
+        "max_tokens": max_tokens,  # ✅ Usar el valor calculado dinámicamente
     }
 
     # Log del tamaño del payload
@@ -568,12 +617,19 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
                 await asyncio.sleep(wait_time)
 
             except httpx.HTTPStatusError as e:
+                # Leer el cuerpo del error si está disponible
+                try:
+                    error_text = await e.response.aread()
+                    error_text = error_text.decode("utf-8", errors="ignore")
+                except Exception:
+                    error_text = "<unreadable>"
+
                 logger.error(
-                    f"❌ vLLM HTTP error: {e.response.status_code} - {e.response.text}"
+                    f"❌ vLLM HTTP error: {e.response.status_code} - {error_text}"
                 )
                 error_data = {
                     "error": {
-                        "message": f"vLLM error: {str(e)}",
+                        "message": f"vLLM error: HTTP {e.response.status_code} - {error_text}",
                         "type": "upstream_error",
                         "code": e.response.status_code,
                     }
