@@ -1,6 +1,4 @@
 # TLS Configuration with Let's Encrypt
-  # El mismo certificado cubre ia.santiagoapostol.net e iasantiago.santiagoapostol.net
-  # nginx usa SNI para servir el mismo certificado a ia.santiago (local)
   server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -20,10 +18,10 @@ NC='\033[0m'
 
 # Variables de configuración
 # Solo dominios públicos para Let's Encrypt
-DOMAINS=("ia.santiagoapostol.net" "iasantiago.santiagoapostol.net")
-MAIN_DOMAIN="ia.santiagoapostol.net"
+DOMAINS=("ia.iessaenzdeburuaga.es" )
+MAIN_DOMAIN="ia.iessaenzdeburuaga.es"
 # Todos los nombres (incluyendo local) para nginx
-ALL_DOMAINS="ia.santiagoapostol.net iasantiago.santiagoapostol.net ia.santiago"
+ALL_DOMAINS="ia.iessaenzdeburuaga.es"
 CERT_PATH="/opt/iasantiago-rag/nginx/certs"
 LETSENCRYPT_PATH="/etc/letsencrypt/live/$MAIN_DOMAIN"
 NGINX_CONF="/etc/nginx/nginx.conf"
@@ -167,7 +165,7 @@ http {
   server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name ia.santiagoapostol.net iasantiago.santiagoapostol.net ia.santiago;
+    server_name ia.iessaenzdeburuaga.es  ia.iessaenzdeburuaga;
 
     access_log /var/log/nginx/openwebui_access.log;
     error_log /var/log/nginx/openwebui_error.log;
@@ -206,7 +204,7 @@ http {
   server {
     listen 80;
     listen [::]:80;
-    server_name ia.santiagoapostol.net iasantiago.santiagoapostol.net ia.santiago;
+    server_name ia.iessaenzdeburuaga.es ia.iessaenzdeburuaga;
 
     # Allow Let's Encrypt ACME challenge
     location /.well-known/acme-challenge/ {
@@ -239,8 +237,8 @@ mkdir -p /etc/letsencrypt/renewal-hooks/post
 cat > /etc/letsencrypt/renewal-hooks/post/nginx.sh << 'EOF'
 #!/bin/bash
 # Copiar certificados a ruta personalizada
-cp /etc/letsencrypt/live/ia.santiagoapostol.net/fullchain.pem /opt/iasantiago-rag/nginx/certs/server.crt
-cp /etc/letsencrypt/live/ia.santiagoapostol.net/privkey.pem /opt/iasantiago-rag/nginx/certs/server.key
+cp /etc/letsencrypt/live/ia.iessaenzdeburuaga.es/fullchain.pem /opt/iasantiago-rag/nginx/certs/server.crt
+cp /etc/letsencrypt/live/ia.iessaenzdeburuaga.es/privkey.pem /opt/iasantiago-rag/nginx/certs/server.key
 chmod 644 /opt/iasantiago-rag/nginx/certs/server.crt
 chmod 600 /opt/iasantiago-rag/nginx/certs/server.key
 # Recargar nginx
@@ -274,7 +272,7 @@ echo "  ✓ https://ia.santiago (usa mismo certificado vía SNI)"
 echo -e "\n${YELLOW}Próximos pasos:${NC}"
 echo "1. Verifica que Open WebUI corre en puerto 8080"
 echo "2. Verifica que RAG API corre en puerto 8001"
-echo "3. Prueba el acceso: https://ia.santiagoapostol.net"
+echo "3. Prueba el acceso: https://ia.iessaenzdeburuaga.es"
 echo "4. Prueba desde intranet: https://ia.santiago"
 echo ""
 echo -e "${YELLOW}Para verificar logs:${NC}"
