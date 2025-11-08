@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from retrieval import (
     attach_citations,
@@ -324,7 +324,7 @@ async def chat_completions(
     # ============================================================
     global _current_vllm_model
 
-    default_model = os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+    default_model = os.getenv("VLLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3-GPTQ")
     requested_model = default_model
 
     # Usar lock para evitar race conditions si varios usuarios cambian modelo simultáneamente
