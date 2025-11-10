@@ -3,7 +3,7 @@ import tiktoken
 from sentence_transformers import SentenceTransformer
 from settings import *
 from qdrant_utils import search_dense
-from bm25_utils import bm25_search
+from bm25_utils import bm25_search, bm25_search_safe
 from rerank import CrossEncoderReranker
 import os, json, time
 import logging
@@ -89,7 +89,7 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
         for h in dense_hits
     ]
 
-    bm25 = bm25_search(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
+    bm25 = bm25_search_safe(BM25_BASE_DIR, topic, query, HYBRID_BM25_K)
 
     def norm(scores):
         if not scores:
@@ -163,7 +163,7 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
         for h in dense_hits
     ]
 
-    bm25 = bm25_search(BM25_BASE_DIR, topic, query, bm25_k)
+    bm25 = bm25_search_safe(BM25_BASE_DIR, topic, query, bm25_k)
 
     # ... (mismo código de normalización y merge) ...
 
@@ -218,7 +218,7 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
 
 def bm25_only_enhanced(topic: str, query: str, final_topk: int):
     """Versión con topk configurable"""
-    hits = bm25_search(BM25_BASE_DIR, topic, query, final_topk * 3)
+    hits = bm25_search_safe(BM25_BASE_DIR, topic, query, final_topk * 3)
     file_counts, filtered = {}, []
     for h in hits:
         c = file_counts.get(h["file_path"], 0)
@@ -257,7 +257,7 @@ def choose_retrieval_enhanced(topic: str, query: str, is_generative: bool = Fals
 
 
 def bm25_only(topic: str, query: str):
-    hits = bm25_search(BM25_BASE_DIR, topic, query, FINAL_TOPK * 3)
+    hits = bm25_search_safe(BM25_BASE_DIR, topic, query, FINAL_TOPK * 3)
     file_counts, filtered = {}, []
     for h in hits:
         c = file_counts.get(h["file_path"], 0)
