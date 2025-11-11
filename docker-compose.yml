@@ -218,7 +218,8 @@ services:
       # Confiar en los headers que envia oauth2-proxy
       - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
       - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-Forwarded-User
-
+      - WEBUI_AUTH_COOKIE_AGE=604800  # 7 days in seconds
+      - WEBUI_SESSION_COOKIE_AGE=604800  # 7 days in seconds
       # Cookies "sanas" detrás de reverse proxy
       - WEBUI_SESSION_COOKIE_SAME_SITE=lax
       - WEBUI_AUTH_COOKIE_SAME_SITE=lax
@@ -262,6 +263,8 @@ services:
       - --http-address=0.0.0.0:4180
       - --upstream=http://openwebui:8080
       - --custom-templates-dir=/etc/oauth2-proxy/templates
+      - --cookie-expire=168h
+      - --cookie-refresh=0h
     depends_on:
       - openwebui
 
