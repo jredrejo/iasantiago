@@ -1,6 +1,7 @@
 .env
 data/
 ingestor/__pycache__/
+ingestor/figures/
 nginx/certs/
 nginx/access.log
 nginx/error.log
