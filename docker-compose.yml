@@ -29,8 +29,8 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 16gb
+    env_file: .env
     environment:
-    - TZ=${TZ}
     - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
     - VLLM_TORCH_COMPILE_LEVEL=0
     - CUDA_LAUNCH_BLOCKING=0
@@ -85,8 +85,8 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 16gb
+    env_file: .env
     environment:
-      - TZ=${TZ}
       - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
       - VLLM_TORCH_COMPILE_LEVEL=0
       - CUDA_LAUNCH_BLOCKING=1
@@ -141,27 +141,10 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 8gb
+    env_file: .env
     environment:
-      - TZ=${TZ}
-      - QDRANT_URL=${QDRANT_URL}
       - BM25_BASE_DIR=/whoosh
-      - TOPIC_LABELS=${TOPIC_LABELS}
       - TOPIC_BASE_DIR=/topics
-      - EMBED_MODEL_DEFAULT=${EMBED_MODEL_DEFAULT}
-      - EMBED_MODEL_PROGRAMMING=${EMBED_MODEL_PROGRAMMING}
-      - EMBED_MODEL_ELECTRONICS=${EMBED_MODEL_ELECTRONICS}
-      - EMBED_MODEL_CHEMISTRY=${EMBED_MODEL_CHEMISTRY}
-      - RERANK_MODEL=${RERANK_MODEL}
-      - CTX_TOKENS_SOFT_LIMIT=${CTX_TOKENS_SOFT_LIMIT}
-      - CTX_TOKENS_GENERATIVE=${CTX_TOKENS_GENERATIVE}
-      - MAX_CHUNKS_PER_FILE=${MAX_CHUNKS_PER_FILE}
-      - HYBRID_DENSE_K=${HYBRID_DENSE_K}
-      - HYBRID_BM25_K=${HYBRID_BM25_K}
-      - FINAL_TOPK=${FINAL_TOPK}
-      - BM25_FALLBACK_TOKEN_THRESHOLD=${BM25_FALLBACK_TOKEN_THRESHOLD}
-      - UPSTREAM_OPENAI_URL=${UPSTREAM_OPENAI_URL}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TELEMETRY_PATH=${TELEMETRY_PATH}
     volumes:
       - ${TOPIC_BASE_DIR}:/topics:ro
       - ${BM25_BASE_DIR}:/whoosh
@@ -190,18 +173,14 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 16gb
+    env_file: .env
     environment:
-      - TZ=${TZ}
       - HF_HOME=/models_cache
-      - QDRANT_URL=${QDRANT_URL}
       # Conecta a vLLM-LLaVA cuando está corriendo
       - VLLM_URL=http://vllm-llava:8000
       - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
-      - TOPIC_LABELS=${TOPIC_LABELS}
       - TOPIC_BASE_DIR=/topics
       - BM25_BASE_DIR=/whoosh
-      - EMBED_MODEL_DEFAULT=${EMBED_MODEL_DEFAULT}
-      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
       - MIN_IMAGE_WIDTH=100
       - MIN_IMAGE_HEIGHT=100
       - LLM_ANALYSIS_TEMPERATURE=0.3
