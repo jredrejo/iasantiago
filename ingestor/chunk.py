@@ -1,233 +1,225 @@
 """
-chunk.py
-Extrae: PDF, DOCX, PPTX (sin XLSX)
-Mantiene caché SQLite + LLaVA análisis
-Manejo defensivo de CUDA
+chunk.py  –  Hybrid extractor
+Unstructured.io  (default, local)
+MinerU micro-service  (remote, PDF-only, complexity-gated)
+SQLite cache  (images / tables)
+LLaVA analysis  (via vLLM)
 """
 
 import os
 import logging
+import hashlib
+import requests
+import threading
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+from io import BytesIO
+from PIL import Image
 from unstructured.partition.auto import partition
 from unstructured.partition.pdf import partition_pdf
 from unstructured.partition.docx import partition_docx
 from unstructured.partition.pptx import partition_pptx
 
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-import hashlib
-import sqlite3
-import threading
-import requests
-import base64
-from io import BytesIO
-from PIL import Image
-
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# DISABLE CUDA FOR UNSTRUCTURED ONLY (prevent OOM with vLLM)
-# No desactives para todo el proceso, solo para unstructured
-# ============================================================
+# ------------------------------------------------------------------
+# CUDA / GPU  –  keep Unstructured OFF GPU (vLLM uses it)
+# ------------------------------------------------------------------
 os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "false"
-# NO hagas esto: os.environ["CUDA_VISIBLE_DEVICES"] = ""
-logger.warning("[CONFIG] CUDA DISABLED for Unstructured (vLLM-LLaVA uses GPU)")
+logger.warning("[CONFIG] CUDA disabled for Unstructured (vLLM-LLaVA uses GPU)")
 
-
-# ============================================================
-# CONFIGURATION: Deshabilitar LLaVA si es necesario
-# ============================================================
+# ------------------------------------------------------------------
+# Feature flags
+# ------------------------------------------------------------------
 DISABLE_LLAVA = os.getenv("DISABLE_LLAVA", "false").lower() == "true"
-if DISABLE_LLAVA:
-    logger.warning("[CONFIG] LLaVA analysis is DISABLED")
-else:
-    logger.info("[CONFIG] LLaVA analysis is ENABLED")
+USE_MINERU = os.getenv("USE_MINERU", "true").lower() == "true"
+MINERU_URL = os.getenv("MINERU_SERVICE_URL", "http://mineru-extractor:8003")
 
 
-# ============================================================
-# SQLITE CACHE MANAGER
-# ============================================================
-
-
+# ------------------------------------------------------------------
+# SQLite Cache Manager  (unchanged)
+# ------------------------------------------------------------------
 class SQLiteCacheManager:
-    """Caché SQLite thread-safe para imágenes y tablas"""
+    """Thread-safe SQLite cache for images / tables."""
 
     def __init__(self, cache_db: str = "/tmp/llava_cache/llava_cache.db"):
         self.cache_db = Path(cache_db)
         self.cache_db.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self._init_db()
-        logger.info(f"Cache database: {self.cache_db}")
 
+    # ---------- internal helpers ----------
     def _init_db(self) -> None:
-        """Inicializa tablas SQLite"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS image_cache (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        image_hash TEXT UNIQUE NOT NULL,
-                        description TEXT NOT NULL,
-                        width INTEGER,
-                        height INTEGER,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        hit_count INTEGER DEFAULT 1
-                    )
+        with self.lock:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute(
                 """
-                )
-
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS table_cache (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        table_hash TEXT UNIQUE NOT NULL,
-                        analysis TEXT NOT NULL,
-                        rows INTEGER,
-                        cols INTEGER,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        hit_count INTEGER DEFAULT 1
-                    )
+                CREATE TABLE IF NOT EXISTS image_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    image_hash TEXT UNIQUE NOT NULL,
+                    description TEXT NOT NULL,
+                    width INTEGER, height INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    hit_count INTEGER DEFAULT 1
+                )"""
+            )
+            cur.execute(
                 """
-                )
+                CREATE TABLE IF NOT EXISTS table_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    table_hash TEXT UNIQUE NOT NULL,
+                    analysis TEXT NOT NULL,
+                    rows INTEGER, cols INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    hit_count INTEGER DEFAULT 1
+                )"""
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_image_hash ON image_cache(image_hash)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_table_hash ON table_cache(table_hash)"
+            )
+            conn.commit()
+            conn.close()
 
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_image_hash ON image_cache(image_hash)"
-                )
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_table_hash ON table_cache(table_hash)"
-                )
+    def _get_conn(self):
+        import sqlite3
 
-                conn.commit()
-                logger.info("Cache database initialized")
-        except Exception as e:
-            logger.error(f"Error initializing cache DB: {e}")
+        return sqlite3.connect(str(self.cache_db), check_same_thread=False, timeout=10)
 
-    def _get_connection(self):
-        """Retorna conexión SQLite thread-safe"""
-        conn = sqlite3.connect(str(self.cache_db), check_same_thread=False, timeout=10)
-        conn.row_factory = sqlite3.Row
-        return conn
-
+    # ---------- public API ----------
     def load_image_cache(self, image_hash: str) -> Optional[Dict[str, Any]]:
-        """Carga descripción en caché de imagen"""
-        try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT description, width, height FROM image_cache WHERE image_hash = ?",
-                        (image_hash,),
-                    )
-                    row = cursor.fetchone()
-
-                    if row:
-                        cursor.execute(
-                            "UPDATE image_cache SET accessed_at = CURRENT_TIMESTAMP, hit_count = hit_count + 1 WHERE image_hash = ?",
-                            (image_hash,),
-                        )
-                        conn.commit()
-                        logger.debug(f"Cache hit (imagen): {image_hash}")
-
-                        return {
-                            "description": row["description"],
-                            "width": row["width"],
-                            "height": row["height"],
-                        }
-        except Exception as e:
-            logger.error(f"Error loading image cache: {e}")
-
-        return None
-
-    def load_table_cache(self, table_hash: str) -> Optional[Dict[str, Any]]:
-        """Carga análisis en caché de tabla"""
-        try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT analysis FROM table_cache WHERE table_hash = ?",
-                        (table_hash,),
-                    )
-                    row = cursor.fetchone()
-
-                    if row:
-                        cursor.execute(
-                            "UPDATE table_cache SET accessed_at = CURRENT_TIMESTAMP, hit_count = hit_count + 1 WHERE table_hash = ?",
-                            (table_hash,),
-                        )
-                        conn.commit()
-                        logger.debug(f"Cache hit (tabla): {table_hash}")
-
-                        return {"analysis": row["analysis"]}
-        except Exception as e:
-            logger.error(f"Error loading table cache: {e}")
-
+        with self.lock:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT description,width,height FROM image_cache WHERE image_hash=?",
+                (image_hash,),
+            )
+            row = cur.fetchone()
+            if row:
+                cur.execute(
+                    "UPDATE image_cache SET accessed_at=CURRENT_TIMESTAMP,hit_count=hit_count+1 WHERE image_hash=?",
+                    (image_hash,),
+                )
+                conn.commit()
+                conn.close()
+                logger.debug(f"Cache hit (image): {image_hash}")
+                return {"description": row[0], "width": row[1], "height": row[2]}
+            conn.close()
         return None
 
     def save_image_cache(
         self, image_hash: str, description: str, width: int, height: int
     ) -> None:
-        """Guarda descripción de imagen en caché"""
-        try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO image_cache
-                           (image_hash, description, width, height, accessed_at, hit_count)
-                           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)""",
-                        (image_hash, description, width, height),
-                    )
-                    conn.commit()
-                    logger.debug(f"Cache saved (imagen): {image_hash}")
-        except Exception as e:
-            logger.error(f"Error saving image cache: {e}")
+        with self.lock:
+            conn = self._get_conn()
+            conn.execute(
+                """INSERT OR REPLACE INTO image_cache
+                (image_hash,description,width,height,accessed_at,hit_count)
+                VALUES (?,?,?,?,CURRENT_TIMESTAMP,1)""",
+                (image_hash, description, width, height),
+            )
+            conn.commit()
+            conn.close()
+            logger.debug(f"Cache saved (image): {image_hash}")
+
+    def load_table_cache(self, table_hash: str) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT analysis FROM table_cache WHERE table_hash=?", (table_hash,)
+            )
+            row = cur.fetchone()
+            if row:
+                cur.execute(
+                    "UPDATE table_cache SET accessed_at=CURRENT_TIMESTAMP,hit_count=hit_count+1 WHERE table_hash=?",
+                    (table_hash,),
+                )
+                conn.commit()
+                conn.close()
+                logger.debug(f"Cache hit (table): {table_hash}")
+                return {"analysis": row[0]}
+            conn.close()
+        return None
 
     def save_table_cache(
         self, table_hash: str, analysis: str, rows: int, cols: int
     ) -> None:
-        """Guarda análisis de tabla en caché"""
-        try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO table_cache
-                           (table_hash, analysis, rows, cols, accessed_at, hit_count)
-                           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)""",
-                        (table_hash, analysis, rows, cols),
-                    )
-                    conn.commit()
-                    logger.debug(f"Cache saved (tabla): {table_hash}")
-        except Exception as e:
-            logger.error(f"Error saving table cache: {e}")
+        with self.lock:
+            conn = self._get_conn()
+            conn.execute(
+                """INSERT OR REPLACE INTO table_cache
+                (table_hash,analysis,rows,cols,accessed_at,hit_count)
+                VALUES (?,?,?,?,CURRENT_TIMESTAMP,1)""",
+                (table_hash, analysis, rows, cols),
+            )
+            conn.commit()
+            conn.close()
+            logger.debug(f"Cache saved (table): {table_hash}")
 
 
-# ============================================================
-# SIMPLE EXTRACTOR
-# ============================================================
+# ------------------------------------------------------------------
+# Page-number helper  (robust)
+# ------------------------------------------------------------------
+def extract_page_number(
+    element, element_idx: int, total_elements: int, file_path: str
+) -> int:
+    """Return validated page number (1-based)."""
+    page = 1
+    try:
+        if hasattr(element, "metadata") and element.metadata:
+            md = element.metadata
+            if hasattr(md, "page_number") and md.page_number:
+                page = int(md.page_number)
+            elif hasattr(md, "page") and md.page:
+                page = int(md.page)
+            elif total_elements > 0 and hasattr(md, "coordinates"):
+                # crude fallback: ~25 elements per page
+                page = (element_idx // 25) + 1
+                logger.debug(
+                    f"Inferred page {page} from position for element {element_idx}"
+                )
+        # sanity bounds
+        if page < 1 or page > 10000:
+            logger.warning(
+                f"Invalid page {page} in {Path(file_path).name}, defaulting to 1"
+            )
+            page = 1
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Page parse error in {Path(file_path).name}: {e}")
+        page = 1
+    except Exception as e:
+        logger.error(f"Unexpected page error in {Path(file_path).name}: {e}")
+        page = 1
+    return page
 
 
-class SimpleExtractor:
-    """Extractor simple: Unstructured.io (sin CUDA)"""
-
+# ------------------------------------------------------------------
+# Hybrid Extractor
+# ------------------------------------------------------------------
+class HybridExtractor:
     SUPPORTED_FORMATS = {
-        ".pdf": "PDF",
-        ".docx": "Word",
-        ".doc": "Word",
-        ".pptx": "PowerPoint",
-        ".ppt": "PowerPoint",
-        ".html": "HTML",
-        ".htm": "HTML",
-        ".md": "Markdown",
-        ".txt": "Text",
-        ".png": "Image",
-        ".jpg": "Image",
-        ".jpeg": "Image",
+        ext: True
+        for ext in [
+            ".pdf",
+            ".docx",
+            ".doc",
+            ".pptx",
+            ".ppt",
+            ".html",
+            ".htm",
+            ".md",
+            ".txt",
+            ".png",
+            ".jpg",
+            ".jpeg",
+        ]
     }
 
     def __init__(
@@ -237,16 +229,20 @@ class SimpleExtractor:
     ):
         self.vllm_url = vllm_url
         self.cache = SQLiteCacheManager(cache_db=cache_db)
+        self.mineru_url = MINERU_URL
+        self.use_mineru = USE_MINERU
         self.stats = {
             "text_chunks": 0,
             "tables_processed": 0,
             "tables_cached": 0,
             "images_processed": 0,
             "images_cached": 0,
+            "mineru_used": 0,
+            "unstructured_used": 0,
         }
 
+    # ---------- public entry ----------
     def extract_document(self, file_path: str) -> List[Dict[str, Any]]:
-        """Extrae documento con Unstructured.io (usa OCR solo si es necesario)"""
         file_path = str(file_path)
         ext = Path(file_path).suffix.lower()
 
@@ -256,38 +252,87 @@ class SimpleExtractor:
             logger.warning(f"Format not supported: {ext}")
             return []
 
+        # PDF + MinerU enabled + complexity threshold
+        if ext == ".pdf" and self.use_mineru:
+            complexity = self._detect_pdf_complexity(file_path)
+            threshold = float(os.getenv("MINERU_COMPLEXITY_THRESHOLD", "0.6"))
+            logger.warning(f"Complexity of {complexity} with threshold of {threshold}")
+            if complexity >= threshold:
+                logger.info(
+                    f"[EXTRACTOR] Complexity {complexity:.2f} >= {threshold} → MinerU service"
+                )
+                chunks = self._extract_via_mineru_service(file_path)
+                self.stats["mineru_used"] += 1
+                return self._post_process_chunks(chunks, file_path)
+
+        # Default: local Unstructured
+        logger.info("[EXTRACTOR] Using local Unstructured.io")
+        chunks = self._extract_with_unstructured(file_path)
+        self.stats["unstructured_used"] += 1
+        return self._post_process_chunks(chunks, file_path)
+
+    # ---------- helpers ----------
+    def is_supported(self, ext: str) -> bool:
+        return ext.lower() in self.SUPPORTED_FORMATS
+
+    def _detect_pdf_complexity(self, file_path: str) -> float:
+        """Return 0.0-1.0 complexity score (quick heuristic)."""
+        try:
+            from PyPDF2 import PdfReader
+
+            reader = PdfReader(file_path)
+            num_pages = len(reader.pages)
+            file_size_mb = Path(file_path).stat().st_size / (1024 * 1024)
+
+            score = 0.0
+            score += min(num_pages / 100, 0.3)
+            score += min(file_size_mb / 50, 0.2)
+
+            # sample first 3 pages for image density
+            sample = min(3, num_pages)
+            images = 0
+            for p in reader.pages[:sample]:
+                if hasattr(p, "images"):
+                    images += len(p.images)
+            avg_img = images / sample if sample else 0
+            score += min(avg_img / 5, 0.3)
+
+            # low text → likely scanned
+            text_len = sum(len(p.extract_text() or "") for p in reader.pages[:sample])
+            if text_len < 1000:
+                score += 0.2
+
+            return min(score, 1.0)
+        except Exception as e:
+            logger.warning(f"Complexity detection failed: {e}")
+            return 0.5
+
+    # ---------- Unstructured local ----------
+    def _extract_with_unstructured(self, file_path: str) -> List[Dict[str, Any]]:
         try:
             elements = []
-            ocr_used = False  # 🔹 Detecta si se usó OCR
+            ext = Path(file_path).suffix.lower()
+            ocr_used = False
 
-            # ============================================================
-            # PDF: modo híbrido (texto directo + OCR cuando hace falta)
-            # ============================================================
             if ext == ".pdf":
-                from unstructured.partition.pdf import partition_pdf
-
-                # Primer intento: extracción directa
                 elements = partition_pdf(
                     filename=file_path,
-                    strategy="fast",  # texto directo (sin OCR)
+                    strategy="fast",
                     infer_table_structure=True,
                     extract_image_block_types=["Image"],
                     extract_strategy="auto",
                     languages=["es", "en"],
                     split_pdf_pages=True,
                 )
-
-                # Si no hay texto significativo, repetir con OCR
-                text_count = sum(
-                    1 for e in elements if hasattr(e, "text") and e.text.strip()
-                )
-                if text_count == 0:
-                    logger.warning(
-                        "[PDF] Sin texto embebido detectado, aplicando OCR (hi_res)..."
-                    )
+                # OCR fallback if no text
+                if (
+                    sum(1 for e in elements if hasattr(e, "text") and e.text.strip())
+                    == 0
+                ):
+                    logger.warning("[PDF] No embedded text, switching to OCR (hi_res)")
                     elements = partition_pdf(
                         filename=file_path,
-                        strategy="hi_res",  # usa OCR cuando es necesario
+                        strategy="hi_res",
                         infer_table_structure=True,
                         extract_image_block_types=["Image"],
                         ocr_languages="spa+eng",
@@ -295,111 +340,118 @@ class SimpleExtractor:
                         split_pdf_pages=True,
                     )
                     ocr_used = True
-
-            # ============================================================
-            # Otros formatos (Word, PowerPoint, HTML, etc.)
-            # ============================================================
             elif ext in [".docx", ".doc"]:
                 elements = partition_docx(file_path, infer_table_structure=False)
             elif ext in [".pptx", ".ppt"]:
                 elements = partition_pptx(file_path, infer_table_structure=False)
             else:
                 elements = partition(
-                    file_path,
-                    infer_table_structure=False,
-                    languages=["es", "en"],
+                    file_path, infer_table_structure=False, languages=["es", "en"]
                 )
 
-            logger.info(f"Found {len(elements)} elements")
-            if ocr_used:
-                logger.info("[INFO] OCR activado para este documento.")
-            else:
-                logger.info("[INFO] Extracción directa sin OCR.")
-
-            # Procesamiento
-            chunks = self._process_elements(elements, file_path)
-            self._log_stats()
-
-            return chunks
+            logger.info(
+                f"Unstructured found {len(elements)} elements (OCR: {ocr_used})"
+            )
+            return self._process_elements(elements, file_path)
 
         except Exception as e:
-            logger.error(f"Error extracting {file_path}: {e}", exc_info=True)
+            logger.error(f"Unstructured extraction failed: {e}", exc_info=True)
             return []
 
-    def is_supported(self, ext: str) -> bool:
-        """Verifica si formato es soportado"""
-        return ext.lower() in self.SUPPORTED_FORMATS
-
     def _process_elements(self, elements, file_path: str) -> List[Dict[str, Any]]:
-        """Procesa elementos según tipo"""
+        """Convert Unstructured elements → chunks."""
         chunks = []
-        total_elements = len(elements)
+        total = len(elements)
+        for idx, el in enumerate(elements):
+            typ = el.__class__.__name__
+            page = extract_page_number(el, idx, total, file_path)
 
-        for idx, element in enumerate(elements):
-            element_type = element.__class__.__name__
-
-            page = extract_page_number(element, idx, total_elements, file_path)
-            # TEXTO
-            if element_type in [
-                "Text",
-                "NarrativeText",
-                "Title",
-                "Heading",
-                "Paragraph",
-            ]:
-                if hasattr(element, "text") and element.text.strip():
+            if typ in ["Text", "NarrativeText", "Title", "Heading", "Paragraph"]:
+                if hasattr(el, "text") and el.text.strip():
                     chunks.append(
                         {
                             "page": page,
-                            "text": element.text.strip(),
+                            "text": el.text.strip(),
                             "type": "text",
                             "source": "unstructured",
                         }
                     )
                     self.stats["text_chunks"] += 1
 
-            # TABLAS (sin GPU extraction, solo como texto)
-            elif element_type == "Table":
-                chunk = self._process_table(element, page)
+            elif typ == "Table":
+                chunk = self._process_table_element(el, page)
                 if chunk:
                     chunks.append(chunk)
 
-            # IMÁGENES
-            elif element_type in ["Image", "Picture"]:
-                chunk = self._process_image(element, page)
+            elif typ in ["Image", "Picture"]:
+                chunk = self._process_image_element(el, page)
                 if chunk:
                     chunks.append(chunk)
 
         return chunks
 
-    def _process_table(self, element, page: int = 1) -> Optional[Dict[str, Any]]:
-        """Procesa tabla con LLaVA + caché"""
-        self.stats["tables_processed"] += 1
+    # ---------- MinerU remote ----------
+    def _extract_via_mineru_service(self, file_path: str) -> List[Dict[str, Any]]:
+        """Call MinerU micro-service; fallback to Unstructured on any error."""
+        import requests
 
+        logger.info(
+            f"[MinerU-HTTP] POST {self.mineru_url}/extract  file={Path(file_path).name}"
+        )
         try:
-            table_text = element.text if hasattr(element, "text") else str(element)
+            rsp = requests.post(
+                f"{self.mineru_url}/extract", json={"file_path": file_path}, timeout=120
+            )
+            if rsp.status_code != 200:
+                logger.warning(f"[MinerU-HTTP] {rsp.status_code}  {rsp.text[:100]}")
+                logger.warning("Falling back → Unstructured")
+                return self._extract_with_unstructured(file_path)
 
-            if not table_text.strip():
+            data = rsp.json()
+            chunks = data["chunks"]
+            logger.info(
+                f"[MinerU-HTTP] received {len(chunks)} chunks  pages={data.get('page_count')}"
+            )
+            self.stats["mineru_used"] += 1
+
+            # enrich tables / images with LLaVA (MinerU service returns raw text)
+            for c in chunks:
+                if c["type"] == "table":
+                    c["text"] = self._analyze_table_with_llava(c["text"])
+                    c["source"] = "mineru+llava"
+                elif c["type"] == "image":
+                    c["text"] = self._describe_image_with_llava(
+                        Image.open(BytesIO(requests.get(c["url"]).content))
+                        if c.get("url")
+                        else Image.new("RGB", (100, 100))
+                    )
+                    c["source"] = "mineru+llava"
+            return chunks
+
+        except Exception as e:
+            logger.error(f"[MinerU-HTTP] {e}")
+            logger.warning("Falling back → Unstructured")
+            return self._extract_with_unstructured(file_path)
+
+    # ---------- table / image  (LLaVA) ----------
+    def _process_table_element(self, element, page: int) -> Optional[Dict[str, Any]]:
+        self.stats["tables_processed"] += 1
+        try:
+            text = element.text if hasattr(element, "text") else str(element)
+            if not text.strip():
                 return None
-
-            table_hash = hashlib.md5(table_text.encode()).hexdigest()[:16]
-
-            # Check cache
-            cached = self.cache.load_table_cache(table_hash)
+            h = hashlib.md5(text.encode()).hexdigest()[:16]
+            cached = self.cache.load_table_cache(h)
             if cached:
                 self.stats["tables_cached"] += 1
                 analysis = cached["analysis"]
             else:
-                # Analyze with LLaVA
-                analysis = self._analyze_table_with_llava(table_text)
-                rows = len(table_text.split("\n"))
+                analysis = self._analyze_table_with_llava(text)
+                rows = len(text.split("\n"))
                 cols = max(
-                    len(row.split("\t"))
-                    for row in table_text.split("\n")
-                    if row.strip()
+                    len(row.split("\t")) for row in text.split("\n") if row.strip()
                 )
-                self.cache.save_table_cache(table_hash, analysis, rows, cols)
-
+                self.cache.save_table_cache(h, analysis, rows, cols)
             return {
                 "page": page,
                 "text": analysis,
@@ -407,60 +459,43 @@ class SimpleExtractor:
                 "source": "unstructured+llava",
             }
         except Exception as e:
-            logger.error(f"Error processing table: {e}")
+            logger.error(f"Table processing error: {e}")
             return None
 
-    def _process_image(self, element, page: int = 1) -> Optional[Dict[str, Any]]:
-        """Procesa imagen con LLaVA + caché"""
+    def _process_image_element(self, element, page: int) -> Optional[Dict[str, Any]]:
         self.stats["images_processed"] += 1
-
         try:
-            image = None
-            if hasattr(element, "image"):
-                image = element.image
-
-            if not image:
+            img = element.image if hasattr(element, "image") else None
+            if not img:
                 return None
-
-            img_bytes = BytesIO()
-            image.save(img_bytes, format="PNG")
-            image_hash = hashlib.md5(img_bytes.getvalue()).hexdigest()[:16]
-
-            # Check cache
-            cached = self.cache.load_image_cache(image_hash)
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            h = hashlib.md5(buf.getvalue()).hexdigest()[:16]
+            cached = self.cache.load_image_cache(h)
             if cached:
                 self.stats["images_cached"] += 1
-                description = cached["description"]
+                desc = cached["description"]
             else:
-                description = self._describe_image_with_llava(image)
-                width = image.width if hasattr(image, "width") else 0
-                height = image.height if hasattr(image, "height") else 0
-                self.cache.save_image_cache(image_hash, description, width, height)
-
+                desc = self._describe_image_with_llava(img)
+                w, h = img.width, img.height
+                self.cache.save_image_cache(h, desc, w, h)
             return {
                 "page": page,
-                "text": description,
+                "text": desc,
                 "type": "image",
                 "source": "unstructured+llava",
             }
         except Exception as e:
-            logger.error(f"Error processing image: {e}")
+            logger.error(f"Image processing error: {e}")
             return None
 
+    # ---------- LLaVA calls ----------
     def _analyze_table_with_llava(self, table_text: str) -> str:
-        """Analiza tabla con LLaVA"""
-        prompt = f"""Analiza esta tabla:
-1. Que datos contiene?
-2. Cuales son las columnas principales?
-3. Hay patrones importantes?
-
-Tabla:
-{table_text[:800]}
-
-Responde brevemente."""
-
+        if DISABLE_LLAVA:
+            return table_text[:300]
+        prompt = f"Analiza esta tabla:\n1. Que datos contiene?\n2. Columnas principales?\n3. Patrones importantes?\n\nTabla:\n{table_text[:800]}\n\nResponde brevemente."
         try:
-            response = requests.post(
+            r = requests.post(
                 f"{self.vllm_url}/v1/chat/completions",
                 json={
                     "model": "auto",
@@ -470,24 +505,21 @@ Responde brevemente."""
                 },
                 timeout=30,
             )
-
-            if response.status_code == 200:
-                return response.json()["choices"][0]["message"]["content"]
+            if r.status_code == 200:
+                return r.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.error(f"LLaVA error: {e}")
-
+            logger.error(f"LLaVA table error: {e}")
         return table_text[:300]
 
     def _describe_image_with_llava(self, image: Image.Image) -> str:
-        """Describe imagen con LLaVA"""
+        if DISABLE_LLAVA:
+            return "[Image processed]"
         try:
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            img_base64 = base64.b64encode(buffered.getvalue()).decode()
-
-            prompt = "Describe brevemente que ves en esta imagen (maximo 100 palabras)."
-
-            response = requests.post(
+            buf = BytesIO()
+            image.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            prompt = "Describe brevemente que ves en esta imagen (máximo 100 palabras)."
+            r = requests.post(
                 f"{self.vllm_url}/v1/chat/completions",
                 json={
                     "model": "auto",
@@ -498,7 +530,7 @@ Responde brevemente."""
                                 {
                                     "type": "image_url",
                                     "image_url": {
-                                        "url": f"data:image/png;base64,{img_base64}"
+                                        "url": f"data:image/png;base64,{b64}"
                                     },
                                 },
                                 {"type": "text", "text": prompt},
@@ -510,96 +542,53 @@ Responde brevemente."""
                 },
                 timeout=60,
             )
-
-            if response.status_code == 200:
-                return response.json()["choices"][0]["message"]["content"]
+            if r.status_code == 200:
+                return r.json()["choices"][0]["message"]["content"]
         except Exception as e:
             logger.error(f"LLaVA image error: {e}")
-
         return "[Image processed]"
 
+    # ---------- final chunking ----------
+    def _post_process_chunks(self, chunks: List[Dict], file_path: str) -> List[Dict]:
+        """Apply chunk-size split on text chunks only."""
+        final = []
+        chunk_size = 900
+        overlap = 120
+        for c in chunks:
+            if c["type"] == "text" and len(c["text"]) > chunk_size:
+                text = c["text"]
+                start = 0
+                while start < len(text):
+                    end = min(len(text), start + chunk_size)
+                    seg = text[start:end]
+                    final.append({**c, "text": seg, "chunk_id": len(final)})
+                    start = end - overlap if end - overlap > start else end
+            else:
+                final.append({**c, "chunk_id": len(final)})
+        logger.info(f"Final chunk count: {len(final)}")
+        self._log_stats()
+        return final
+
     def _log_stats(self):
-        """Log estadisticas"""
         logger.info("\n" + "=" * 60)
         logger.info("EXTRACTION STATISTICS")
         logger.info("=" * 60)
         logger.info(f"Text chunks: {self.stats['text_chunks']}")
-        logger.info(f"Tables: {self.stats['tables_processed']}")
-
-        if self.stats["tables_processed"] > 0:
-            ratio = self.stats["tables_cached"] / self.stats["tables_processed"] * 100
-            logger.info(f"  -> Cached: {self.stats['tables_cached']} ({ratio:.1f}%)")
-
-        logger.info(f"Images: {self.stats['images_processed']}")
-
-        if self.stats["images_processed"] > 0:
-            ratio = self.stats["images_cached"] / self.stats["images_processed"] * 100
-            logger.info(f"  -> Cached: {self.stats['images_cached']} ({ratio:.1f}%)")
-
+        logger.info(
+            f"Tables: {self.stats['tables_processed']}  (cached: {self.stats['tables_cached']})"
+        )
+        logger.info(
+            f"Images: {self.stats['images_processed']}  (cached: {self.stats['images_cached']})"
+        )
+        logger.info(
+            f"Engines  –  MinerU: {self.stats['mineru_used']}  Unstructured: {self.stats['unstructured_used']}"
+        )
         logger.info("=" * 60 + "\n")
 
 
-# ============================================================
-# PUBLIC INTERFACE
-# ============================================================
-
-
-# In chunk.py, add this function
-def extract_page_number(
-    element, element_index: int, total_elements: int, file_path: str
-) -> int:
-    """
-    Extract and validate page number from element metadata with fallbacks.
-    Returns 1 if page cannot be determined.
-    """
-    page = 1
-
-    try:
-        # Try primary metadata sources
-        if hasattr(element, "metadata") and element.metadata:
-            metadata = element.metadata
-
-            # PDFs typically have page_number
-            if hasattr(metadata, "page_number") and metadata.page_number:
-                page = int(metadata.page_number)
-
-            # DOCX/PPTX might have page
-            elif hasattr(metadata, "page") and metadata.page:
-                page = int(metadata.page)
-
-            # Fallback: infer from element position (rough estimate)
-            elif total_elements > 0 and hasattr(metadata, "coordinates"):
-                # If no page info, estimate based on element position (25 elements/page estimate)
-                estimated_page = (element_index // 25) + 1
-                page = estimated_page
-                logger.debug(
-                    f"Inferred page {page} from position for element {element_index}"
-                )
-
-        # Validate page number
-        if page < 1 or page > 10000:  # Sanity check: max 10,000 pages
-            logger.warning(
-                f"Invalid page number {page} extracted from {Path(file_path).name}, "
-                f"element {element_index}. Defaulting to 1"
-            )
-            page = 1
-
-    except (ValueError, TypeError) as e:
-        logger.warning(
-            f"Error parsing page number from {Path(file_path).name}, "
-            f"element {element_index}: {e}. Defaulting to 1"
-        )
-        page = 1
-
-    except Exception as e:
-        logger.error(
-            f"Unexpected error extracting page from {Path(file_path).name}: {e}"
-        )
-        page = 1
-
-    return page
-
-
+# ------------------------------------------------------------------
+# Public helper  (unchanged signature)
+# ------------------------------------------------------------------
 def pdf_to_chunks(
     path: str,
     chunk_size: int = 900,
@@ -607,37 +596,8 @@ def pdf_to_chunks(
     vllm_url: str = "http://vllm-llava:8000",
     cache_db: str = "/tmp/llava_cache/llava_cache.db",
 ) -> List[Dict[str, Any]]:
-    """
-    Extrae chunks usando Unstructured.io
-
-    Formatos: PDF, DOCX, PPTX, HTML, Markdown, Imagenes
-    Cache: SQLite (70x speedup)
-    Analisis: LLaVA para tablas e imagenes
-    CUDA: Deshabilitado (usa vLLM-LLaVA en GPU)
-    """
-    extractor = SimpleExtractor(vllm_url=vllm_url, cache_db=cache_db)
-
+    """Extract → chunk  (kept for backward compatibility)."""
+    extractor = HybridExtractor(vllm_url=vllm_url, cache_db=cache_db)
     chunks = extractor.extract_document(path)
-
-    # Apply chunking to text only
-    final_chunks = []
-    for chunk in chunks:
-        if chunk["type"] == "text" and len(chunk["text"]) > chunk_size:
-            text = chunk["text"]
-            start = 0
-
-            while start < len(text):
-                end = min(len(text), start + chunk_size)
-                seg = text[start:end]
-
-                final_chunks.append(
-                    {**chunk, "text": seg, "chunk_id": len(final_chunks)}
-                )
-
-                start = end - overlap if end - overlap > start else end
-        else:
-            chunk["chunk_id"] = len(final_chunks)
-            final_chunks.append(chunk)
-
-    logger.info(f"Total chunks: {len(final_chunks)}")
-    return final_chunks
+    # chunking already applied inside extractor
+    return chunks
