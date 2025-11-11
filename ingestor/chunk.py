@@ -317,7 +317,7 @@ class SimpleExtractor:
                 logger.info("[INFO] Extracción directa sin OCR.")
 
             # Procesamiento
-            chunks = self._process_elements(elements)
+            chunks = self._process_elements(elements, file_path)
             self._log_stats()
 
             return chunks
@@ -330,21 +330,15 @@ class SimpleExtractor:
         """Verifica si formato es soportado"""
         return ext.lower() in self.SUPPORTED_FORMATS
 
-    def _process_elements(self, elements) -> List[Dict[str, Any]]:
+    def _process_elements(self, elements, file_path: str) -> List[Dict[str, Any]]:
         """Procesa elementos según tipo"""
         chunks = []
+        total_elements = len(elements)
 
-        for element in elements:
+        for idx, element in enumerate(elements):
             element_type = element.__class__.__name__
 
-            # Extrae el número de página del metadata
-            page = 1
-            if hasattr(element, "metadata") and element.metadata:
-                if hasattr(element.metadata, "page_number"):
-                    page = element.metadata.page_number
-                elif hasattr(element.metadata, "page"):
-                    page = element.metadata.page
-
+            page = extract_page_number(element, idx, total_elements, file_path)
             # TEXTO
             if element_type in [
                 "Text",
@@ -548,6 +542,62 @@ Responde brevemente."""
 # ============================================================
 # PUBLIC INTERFACE
 # ============================================================
+
+
+# In chunk.py, add this function
+def extract_page_number(
+    element, element_index: int, total_elements: int, file_path: str
+) -> int:
+    """
+    Extract and validate page number from element metadata with fallbacks.
+    Returns 1 if page cannot be determined.
+    """
+    page = 1
+
+    try:
+        # Try primary metadata sources
+        if hasattr(element, "metadata") and element.metadata:
+            metadata = element.metadata
+
+            # PDFs typically have page_number
+            if hasattr(metadata, "page_number") and metadata.page_number:
+                page = int(metadata.page_number)
+
+            # DOCX/PPTX might have page
+            elif hasattr(metadata, "page") and metadata.page:
+                page = int(metadata.page)
+
+            # Fallback: infer from element position (rough estimate)
+            elif total_elements > 0 and hasattr(metadata, "coordinates"):
+                # If no page info, estimate based on element position (25 elements/page estimate)
+                estimated_page = (element_index // 25) + 1
+                page = estimated_page
+                logger.debug(
+                    f"Inferred page {page} from position for element {element_index}"
+                )
+
+        # Validate page number
+        if page < 1 or page > 10000:  # Sanity check: max 10,000 pages
+            logger.warning(
+                f"Invalid page number {page} extracted from {Path(file_path).name}, "
+                f"element {element_index}. Defaulting to 1"
+            )
+            page = 1
+
+    except (ValueError, TypeError) as e:
+        logger.warning(
+            f"Error parsing page number from {Path(file_path).name}, "
+            f"element {element_index}: {e}. Defaulting to 1"
+        )
+        page = 1
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error extracting page from {Path(file_path).name}: {e}"
+        )
+        page = 1
+
+    return page
 
 
 def pdf_to_chunks(
