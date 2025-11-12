@@ -317,6 +317,7 @@ def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
 def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dict]]:
     """
     Versión mejorada: contexto RAG con citas OBLIGATORIAS y fáciles de copiar
+    Las citas incluyen URLs COMPLETAS para que el modelo las copie exactamente
     """
     if not chunks:
         return "No se encontró información relevante.", []
@@ -334,41 +335,52 @@ def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dic
         else:
             doc_url = f"/docs/{encoded_filename}#page={page}"
 
-        # FORMATO MEJORADO: Markdown inline citation
-        chunk_with_citation = f"""{text}
+        # FORMATO EXPLÍCITO: Mostrar la URL completa para que el modelo la copie
+        chunk_with_citation = f"""[FRAGMENTO {i}]
+{text}
 
-**Cita:** [{filename}, p.{page}]({doc_url})"""
+FUENTE DE ESTE FRAGMENTO (copiar exactamente):
+[{filename}, p.{page}]({doc_url})"""
 
         context_parts.append(chunk_with_citation)
-        logger.info(f"[{i}] {filename}, p.{page}")
+        logger.info(f"[{i}] {filename}, p.{page} → {doc_url}")
 
     # Separador MUY claro
-    separator = "─" * 70
-    context_body = "\n\n" + separator + "\n\n"
-    context_body += "FRAGMENTO DE CONTEXTO RAG:\n\n"
-    context_body += ("\n\n" + separator + "\n\n").join(context_parts)
+    separator = "=" * 70
+    context_body = "\n\n" + separator + "\n"
+    context_body += "CONTEXTO RAG - INFORMACIÓN DE DOCUMENTOS\n"
+    context_body += separator + "\n\n"
+    context_body += "\n\n".join(context_parts)
+    context_body += "\n\n" + separator
 
     # Instrucciones REFORZADAS para el LLM
     instructions = f"""
 
 {separator}
-⚠️  INSTRUCCIONES DE CITACIÓN (CRÍTICO)
+INSTRUCCIONES CRÍTICAS DE CITACIÓN
 {separator}
 
-REGLA 1: SIEMPRE cita las fuentes del contexto anterior.
-REGLA 2: Las citas DEBEN estar en formato markdown: [archivo.pdf, p.N](/ruta/completa)
-REGLA 3: COPIA EXACTAMENTE el formato de las citas del contexto.
-REGLA 4: NO INVENTES información que no esté en el contexto.
-REGLA 5: Si NO está en el contexto, di: "No encontré información sobre esto"
+Cuando crees preguntas basadas en el contexto anterior:
 
-FORMATO CORRECTO:
-"...información relevante [archivo.pdf, p.13](/docs/TOPIC/archivo.pdf#page=13)"
+1. CADA FRAGMENTO tiene su fuente al final en este formato:
+   [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
 
-FORMATOS INCORRECTOS:
-❌ "...información [FUENTE 1]" ← falta URL
-❌ "...información [archivo.pdf]" ← falta página y URL
-❌ "...información" ← falta cita completamente
-❌ "Según el archivo:" ← vago, sin número de página
+2. DEBES copiar EXACTAMENTE ese formato en tus citas:
+   Fuente: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
+
+3. NO modifiques la URL, NO omitas partes, NO cambies el formato
+
+4. SI usas información del FRAGMENTO 3, copia su fuente EXACTAMENTE
+
+EJEMPLO:
+Si el FRAGMENTO 5 dice:
+   FUENTE: [Manual.pdf, p.42](/docs/Chemistry/Manual.pdf#page=42)
+
+Tu pregunta debe terminar con:
+   Fuente: [Manual.pdf, p.42](/docs/Chemistry/Manual.pdf#page=42)
+
+NO inventes información que no esté en los fragmentos anteriores.
+NO uses formato markdown (**, ##) en el texto de las preguntas.
 
 {separator}
 """

@@ -350,6 +350,15 @@ async def chat_completions(
     # Ajustar límites de contexto según el modo
     if is_generative:
         context_token_limit = CTX_TOKENS_GENERATIVE
+        # En generativo, reservar espacio para la respuesta larga
+        # Reducir contexto si es necesario para dejar espacio
+        max_context_for_generation = (
+            VLLM_MAX_MODEL_LEN - VLLM_MAX_TOKENS - 1000
+        )  # 1000 tokens para system prompt
+        context_token_limit = min(context_token_limit, max_context_for_generation)
+        logger.info(
+            f"🎯 Modo GENERATIVO: Límite de contexto ajustado a {context_token_limit} tokens"
+        )
     else:
         context_token_limit = CTX_TOKENS_SOFT_LIMIT
 
@@ -456,10 +465,17 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
             VLLM_MAX_TOKENS,
             int(VLLM_MAX_MODEL_LEN * (GENERATIVE_MAX_TOKENS_PERCENT / 100.0)),
         )
+
+        # CRÍTICO: En modo generativo, garantizar MÍNIMO tokens para respuesta
+        # Para 40 preguntas necesitamos ~15k tokens mínimo
+        min_tokens_for_generation = int(VLLM_MAX_MODEL_LEN * 0.45)  # 45% del modelo
+        desired_max_tokens = max(desired_max_tokens, min_tokens_for_generation)
+
         logger.info(
             f"🎯 MODO GENERATIVO: "
             f"Objetivo {desired_max_tokens} tokens "
-            f"({GENERATIVE_MAX_TOKENS_PERCENT}% de {VLLM_MAX_MODEL_LEN})"
+            f"({GENERATIVE_MAX_TOKENS_PERCENT}% de {VLLM_MAX_MODEL_LEN}, "
+            f"mínimo garantizado: {min_tokens_for_generation})"
         )
     else:
         # Modo respuesta: usar el % configurado en .env
@@ -475,6 +491,16 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
 
     # Usar el mínimo entre lo deseado y lo disponible
     max_tokens = max(MIN_RESPONSE_TOKENS, min(desired_max_tokens, available_tokens))
+
+    # CRÍTICO: Si en modo generativo no tenemos suficientes tokens, es un problema
+    if is_generative and max_tokens < 10000:
+        logger.error(
+            f"❌ MODO GENERATIVO: Solo {max_tokens} tokens disponibles "
+            f"(se necesitan ~15k para 40 preguntas). "
+            f"Input: {total_input_tokens}, disponibles: {available_tokens}"
+        )
+        # Intentar liberar espacio reduciendo contexto RAG
+        logger.warning("⚠️  Considerar reducir CTX_TOKENS_GENERATIVE en .env")
 
     # ============================================================
     # ANÁLISIS DE TOKENS Y WARNINGS
