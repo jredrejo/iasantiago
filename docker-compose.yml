@@ -202,7 +202,7 @@ services:
             - capabilities: [gpu]
 
   openwebui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:cuda
     container_name: openwebui
     restart: unless-stopped
     environment:
