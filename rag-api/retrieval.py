@@ -12,8 +12,8 @@ from urllib.parse import quote
 logger = logging.getLogger(__name__)
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")
-
 _embedder_cache = {}
+_reranker = None
 
 
 def deduplicate_chunks(chunks: List[Dict]) -> List[Dict]:
@@ -47,9 +47,6 @@ def get_embedder(topic: str):
     return _embedder_cache[name]
 
 
-_reranker = None
-
-
 def get_reranker():
     global _reranker
     if _reranker is None:
@@ -74,6 +71,7 @@ def soft_trim_context(chunks: List[Dict], token_limit: int) -> List[Dict]:
 
 
 def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
+    """Versión básica con valores por defecto de .env"""
     embedder = get_embedder(topic)
     q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
     dense_hits = search_dense(topic, q_vec, HYBRID_DENSE_K)
@@ -121,8 +119,6 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
         m["score_hybrid"] = 0.6 * a + 0.4 * b
 
     merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
-
-    # ✅ DEDUPLICAR AQUÍ
     merged = deduplicate_chunks(merged)
 
     file_counts = {}
@@ -142,13 +138,15 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
 
 
 def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
-    """Versión con topk configurable"""
+    """Versión con topk configurable - SIN HARDCODEO"""
     embedder = get_embedder(topic)
     q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
 
-    # Recuperar MÁS en búsqueda inicial
-    dense_k = HYBRID_DENSE_K * 2  # 40 * 2 = 80
-    bm25_k = HYBRID_BM25_K * 2  # 40 * 2 = 80
+    # Recuperar MÁS en búsqueda inicial (2x el base de .env)
+    dense_k = HYBRID_DENSE_K * 2
+    bm25_k = HYBRID_BM25_K * 2
+
+    logger.info(f"[HYBRID] Dense K={dense_k}, BM25 K={bm25_k}, Final topk={final_topk}")
 
     dense_hits = search_dense(topic, q_vec, dense_k)
     dense = [
@@ -164,8 +162,6 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
     ]
 
     bm25 = bm25_search_safe(BM25_BASE_DIR, topic, query, bm25_k)
-
-    # ... (mismo código de normalización y merge) ...
 
     def norm(scores):
         if not scores:
@@ -199,6 +195,7 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
     merged.sort(key=lambda x: x["score_hybrid"], reverse=True)
     merged = deduplicate_chunks(merged)
 
+    # Filtrar por archivo usando MAX_CHUNKS_PER_FILE de .env
     file_counts = {}
     filtered = []
     for m in merged:
@@ -209,6 +206,11 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
         if len(filtered) >= final_topk:
             break
 
+    logger.info(
+        f"[HYBRID] Final: {len(filtered)} chunks de "
+        f"{len(set(r['file_path'] for r in filtered))} archivos"
+    )
+
     return filtered, {
         "dense_k": dense_k,
         "bm25_k": bm25_k,
@@ -216,47 +218,8 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
     }
 
 
-def bm25_only_enhanced(topic: str, query: str, final_topk: int):
-    """Versión con topk configurable"""
-    hits = bm25_search_safe(BM25_BASE_DIR, topic, query, final_topk * 3)
-    file_counts, filtered = {}, []
-    for h in hits:
-        c = file_counts.get(h["file_path"], 0)
-        if c < MAX_CHUNKS_PER_FILE:
-            filtered.append(h)
-            file_counts[h["file_path"]] = c + 1
-        if len(filtered) >= final_topk:
-            break
-    return filtered
-
-
-def choose_retrieval_enhanced(topic: str, query: str, is_generative: bool = False):
-    """
-    Versión mejorada de choose_retrieval que ajusta parámetros según el modo
-    """
-    q_tokens = len(query.strip().split())
-
-    # AJUSTAR TOPK según el modo
-    if is_generative:
-        # Para generación, necesitamos MÁS chunks (más diversidad)
-        final_topk = FINAL_TOPK * 3  # 5 * 3 = 15 chunks
-        logger.info(f"🎯 Modo GENERATIVO: recuperando {final_topk} chunks")
-    else:
-        # Para respuestas, el normal está bien
-        final_topk = FINAL_TOPK  # 5 chunks
-        logger.info(f"💬 Modo RESPUESTA: recuperando {final_topk} chunks")
-
-    if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
-        results = bm25_only_enhanced(topic, query, final_topk)
-        return results, {"mode": "bm25", "topk": final_topk}
-    else:
-        results, meta = hybrid_retrieve_enhanced(topic, query, final_topk)
-        meta["mode"] = "hybrid"
-        meta["topk"] = final_topk
-        return results, meta
-
-
 def bm25_only(topic: str, query: str):
+    """Versión básica con valores por defecto de .env"""
     hits = bm25_search_safe(BM25_BASE_DIR, topic, query, FINAL_TOPK * 3)
     file_counts, filtered = {}, []
     for h in hits:
@@ -267,6 +230,88 @@ def bm25_only(topic: str, query: str):
         if len(filtered) >= FINAL_TOPK:
             break
     return filtered
+
+
+def bm25_only_enhanced(topic: str, query: str, final_topk: int):
+    """Versión con topk configurable - SIN HARDCODEO"""
+    # Buscar 3x más de lo necesario para tener margen
+    hits = bm25_search_safe(BM25_BASE_DIR, topic, query, final_topk * 3)
+
+    file_counts, filtered = {}, []
+    for h in hits:
+        c = file_counts.get(h["file_path"], 0)
+        if c < MAX_CHUNKS_PER_FILE:
+            filtered.append(h)
+            file_counts[h["file_path"]] = c + 1
+        if len(filtered) >= final_topk:
+            break
+
+    logger.info(
+        f"[BM25] Final: {len(filtered)} chunks de "
+        f"{len(set(r['file_path'] for r in filtered))} archivos"
+    )
+
+    return filtered
+
+
+def choose_retrieval(topic: str, query: str):
+    """Versión básica para backward compatibility"""
+    q_tokens = len(query.strip().split())
+    if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
+        results = bm25_only(topic, query)
+        return results, {"mode": "bm25"}
+    else:
+        results, meta = hybrid_retrieve(topic, query)
+        meta["mode"] = "hybrid"
+        return results, meta
+
+
+def choose_retrieval_enhanced(topic: str, query: str, is_generative: bool = False):
+    """
+    Versión mejorada que ajusta parámetros según el modo
+    USANDO VARIABLES DE ENTORNO (sin hardcodeo)
+    """
+    q_tokens = len(query.strip().split())
+
+    # Ajustar TOPK usando multiplicador de .env
+    if is_generative:
+        # Para generación, multiplicar el topk base
+        final_topk = FINAL_TOPK * GENERATIVE_TOPK_MULTIPLIER
+        logger.info(
+            f"🎯 Modo GENERATIVO: recuperando {final_topk} chunks "
+            f"(base={FINAL_TOPK}, multiplicador={GENERATIVE_TOPK_MULTIPLIER})"
+        )
+    else:
+        # Para respuestas, usar el topk normal
+        final_topk = FINAL_TOPK
+        logger.info(f"💬 Modo RESPUESTA: recuperando {final_topk} chunks")
+
+    # Decidir estrategia: BM25 solo vs Hybrid
+    if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
+        logger.info(f"Query corta ({q_tokens} tokens) - usando BM25 solo")
+        results = bm25_only_enhanced(topic, query, final_topk)
+        return results, {"mode": "bm25", "topk": final_topk}
+    else:
+        logger.info(f"Query normal ({q_tokens} tokens) - usando Hybrid")
+        results, meta = hybrid_retrieve_enhanced(topic, query, final_topk)
+        meta["mode"] = "hybrid"
+        meta["topk"] = final_topk
+        return results, meta
+
+
+def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
+    """Reordena passages usando el reranker"""
+    if not passages:
+        return []
+
+    if len(passages) == 1:
+        return passages
+
+    reranker = get_reranker()
+    order = reranker.rerank(
+        query, [p["text"] for p in passages], topk=min(FINAL_TOPK, len(passages))
+    )
+    return [passages[i] for i in order]
 
 
 def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dict]]:
@@ -298,16 +343,17 @@ def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dic
         logger.info(f"[{i}] {filename}, p.{page}")
 
     # Separador MUY claro
-    context_body = (
-        "\n\n" + "─" * 70 + "\n\n".join(["FRAGMENTO DE CONTEXTO RAG:"] + context_parts)
-    )
+    separator = "─" * 70
+    context_body = "\n\n" + separator + "\n\n"
+    context_body += "FRAGMENTO DE CONTEXTO RAG:\n\n"
+    context_body += ("\n\n" + separator + "\n\n").join(context_parts)
 
     # Instrucciones REFORZADAS para el LLM
     instructions = f"""
 
-{"─" * 70}
+{separator}
 ⚠️  INSTRUCCIONES DE CITACIÓN (CRÍTICO)
-{"─" * 70}
+{separator}
 
 REGLA 1: SIEMPRE cita las fuentes del contexto anterior.
 REGLA 2: Las citas DEBEN estar en formato markdown: [archivo.pdf, p.N](/ruta/completa)
@@ -324,7 +370,7 @@ FORMATOS INCORRECTOS:
 ❌ "...información" ← falta cita completamente
 ❌ "Según el archivo:" ← vago, sin número de página
 
-{"─" * 70}
+{separator}
 """
 
     result = context_body + instructions
@@ -332,6 +378,7 @@ FORMATOS INCORRECTOS:
 
 
 def telemetry_log(entry: Dict):
+    """Registra telemetría en archivo JSONL"""
     ts = int(time.time() * 1000)
     entry["ts"] = ts
     try:
@@ -339,90 +386,6 @@ def telemetry_log(entry: Dict):
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:
         pass
-
-
-def choose_retrieval(topic: str, query: str):
-    q_tokens = len(query.strip().split())
-    if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
-        results = bm25_only(topic, query)
-        return results, {"mode": "bm25"}
-    else:
-        results, meta = hybrid_retrieve(topic, query)
-        meta["mode"] = "hybrid"
-        return results, meta
-
-
-def rerank_passages(query: str, passages: List[Dict]) -> List[Dict]:
-    if not passages:
-        return []
-
-    if len(passages) == 1:
-        return passages
-
-    reranker = get_reranker()
-    order = reranker.rerank(
-        query, [p["text"] for p in passages], topk=min(FINAL_TOPK, len(passages))
-    )
-    return [passages[i] for i in order]
-
-
-def attach_citations_explicit(
-    chunks: List[Dict], topic: str = ""
-) -> Tuple[str, List[Dict]]:
-    """
-    Formatea contexto RAG de forma MÁS EXPLÍCITA para que el modelo lo vea claro.
-    """
-    if not chunks:
-        empty_msg = "No se encontró información relevante en la base de datos."
-        logger.warning(f"attach_citations_explicit: {empty_msg}")
-        return empty_msg, []
-
-    logger.info(
-        f"attach_citations_explicit: Processing {len(chunks)} chunks with topic='{topic}'"
-    )
-
-    context_parts = []
-
-    for i, c in enumerate(chunks, start=1):
-        filename = os.path.basename(c["file_path"])
-        page = c["page"]
-        text = c["text"]
-
-        encoded_filename = quote(filename, safe=".")
-
-        if topic:
-            doc_url = f"/docs/{topic}/{encoded_filename}#page={page}"
-        else:
-            doc_url = f"/docs/{encoded_filename}#page={page}"
-
-        fragment = f"""[{i}] {text}
-
-**Fuente:** [{filename}, p.{page}]({doc_url})"""
-
-        context_parts.append(fragment)
-        logger.info(f"  [{i}] {filename}, p.{page}")
-
-    result = f"""
-╔════════════════════════════════════════════════════════════════╗
-║            CONTEXTO RAG - INFORMACIÓN DE DOCUMENTOS             ║
-╚════════════════════════════════════════════════════════════════╝
-
-{chr(10).join([""] + context_parts)}
-
-╔════════════════════════════════════════════════════════════════╗
-║                    FIN DE CONTEXTO RAG                          ║
-╚════════════════════════════════════════════════════════════════╝
-
-INSTRUCCIONES CRÍTICAS:
-- DEBES usar la información anterior para responder
-- Si la respuesta está en los fragmentos [1] a [{len(chunks)}], úsala y cita correctamente
-- Si NO está en los fragmentos, responde: "No encontré información sobre esto en los documentos"
-- NUNCA inventes información fuera de estos fragmentos
-- Las citas DEBEN estar en formato: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
-"""
-
-    logger.info(f"attach_citations_explicit: Final context length: {len(result)} chars")
-    return result, chunks
 
 
 def validate_context_usage(retrieved_chunks: List[Dict], model_response: str) -> Dict:
@@ -451,7 +414,7 @@ def validate_context_usage(retrieved_chunks: List[Dict], model_response: str) ->
 def debug_retrieval(topic: str, query: str) -> dict:
     """
     Función de debugging completa - muestra TODO lo que pasa en el retrieval
-    Útil para diagnosticar por qué solo trae de un archivo
+    Útil para diagnosticar problemas
     """
     import os
     from qdrant_utils import get_collection_stats
@@ -472,7 +435,7 @@ def debug_retrieval(topic: str, query: str) -> dict:
         logger.error("   ❌ No se pudo obtener stats - ¿colección existe?")
 
     # 2. Obtener embeddings del query
-    logger.info("\n📝 Query:")
+    logger.info("\n🔎 Query:")
     logger.info(f"   - Texto: {query[:100]}...")
     logger.info(f"   - Tokens: ~{count_tokens(query)}")
 
@@ -490,7 +453,6 @@ def debug_retrieval(topic: str, query: str) -> dict:
     logger.info(f"   - Resultados: {len(dense_hits)}")
 
     if dense_hits:
-        # Analizar diversidad de archivos
         files = {}
         for i, h in enumerate(dense_hits):
             file_path = h.payload["file_path"]
@@ -558,19 +520,3 @@ def debug_retrieval(topic: str, query: str) -> dict:
         "unique_files": len(files_merged),
         "results": merged,
     }
-
-
-# ============================================================
-# CÓMO USAR EN app.py:
-# ============================================================
-# En app.py, en la función chat_completions(), reemplaza:
-#
-#     retrieved, meta = choose_retrieval(topic, user_msg)
-#
-# CON (temporalmente para debugging):
-#
-#     debug_info = debug_retrieval(topic, user_msg)
-#     retrieved = debug_info["results"]
-#     meta = {"mode": "debug"}
-#
-# Verás todos los detalles en los logs

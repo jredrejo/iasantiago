@@ -160,17 +160,6 @@ async def wait_for_model_ready(
 ) -> bool:
     """
     Espera a que un modelo esté listo en vLLM.
-
-    Útil cuando el usuario cambia de modelo en Open WebUI.
-    El descargo del modelo anterior + carga del nuevo puede tardar minutos.
-
-    Args:
-        model_name: Nombre del modelo (ej: "Qwen/Qwen2.5-7B-Instruct")
-        max_wait_seconds: Tiempo máximo a esperar (5 min por defecto)
-        check_interval: Intervalo entre checks (2 segundos)
-
-    Returns:
-        True si el modelo está listo, False si timeout
     """
     vllm_url = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
     vllm_base_url = vllm_url.replace("/v1", "")
@@ -187,7 +176,6 @@ async def wait_for_model_ready(
         attempt += 1
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                # 1️⃣ Verificar que vLLM esté vivo
                 try:
                     health_resp = await client.get(f"{vllm_base_url}/health")
                     if health_resp.status_code != 200:
@@ -203,7 +191,6 @@ async def wait_for_model_ready(
                     elapsed += check_interval
                     continue
 
-                # 2️⃣ Obtener lista de modelos
                 try:
                     models_resp = await client.get(f"{vllm_url}/models")
                     if models_resp.status_code != 200:
@@ -217,7 +204,6 @@ async def wait_for_model_ready(
                     models_data = models_resp.json()
                     available_models = [m["id"] for m in models_data.get("data", [])]
 
-                    # 3️⃣ Verificar que nuestro modelo está en la lista
                     if model_name in available_models:
                         logger.info(
                             f"✅ Model '{model_name}' is READY (took {elapsed}s)"
@@ -295,7 +281,7 @@ async def call_vllm_with_retry(
                     status_code=503, detail=f"vLLM service unavailable: {str(e)}"
                 )
 
-            wait_time = 2**attempt  # Backoff exponencial: 1s, 2s, 4s
+            wait_time = 2**attempt
             logger.warning(
                 f"vLLM connection failed (attempt {attempt + 1}/{max_retries}), "
                 f"retrying in {wait_time}s... Error: {type(e).__name__}: {e}"
@@ -320,21 +306,17 @@ async def chat_completions(
     logger.info(f"📨 Mensajes recibidos: {len(req.messages)}")
 
     # ============================================================
-    # 🔴 NUEVO: DETECTAR Y ESPERAR A CAMBIO DE MODELO
+    # DETECTAR Y ESPERAR A CAMBIO DE MODELO
     # ============================================================
     global _current_vllm_model
 
-    default_model = os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
-    requested_model = default_model
+    requested_model = VLLM_MODEL
 
-    # Usar lock para evitar race conditions si varios usuarios cambian modelo simultáneamente
     async with _model_check_lock:
         if _current_vllm_model is None:
-            # Primera vez - establecer el modelo
             _current_vllm_model = requested_model
             logger.info(f"🎯 Initial model set to: {_current_vllm_model}")
         elif _current_vllm_model != requested_model:
-            # Cambio de modelo detectado
             logger.warning(
                 f"⚠️  Model change detected: {_current_vllm_model} → {requested_model}"
             )
@@ -384,7 +366,6 @@ async def chat_completions(
         logger.info(
             f"After rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
         )
-        # ✅ Usar el límite de contexto calculado dinámicamente
         retrieved = soft_trim_context(retrieved, context_token_limit)
 
     context_text, cited = attach_citations(retrieved, topic)
@@ -395,7 +376,6 @@ async def chat_completions(
     ):
         logger.warning("⚠️  NO context found - modelo está en riesgo de alucinar")
 
-    # Verificar que el contexto no sea vacío
     if (
         context_text
         and context_text != "No se encontró información relevante en la base de datos."
@@ -439,10 +419,10 @@ async def chat_completions(
     ):
         enhanced_system = f"""{sys_prompt}
 
-    [Contexto RAG - Información relevante de la base de datos]
-    {context_text}
+[Contexto RAG - Información relevante de la base de datos]
+{context_text}
 
-    Usa este contexto para responder las preguntas del usuario. Siempre cita las fuentes usando los enlaces proporcionados."""
+Usa este contexto para responder las preguntas del usuario. Siempre cita las fuentes usando los enlaces proporcionados."""
     else:
         enhanced_system = sys_prompt
 
@@ -450,18 +430,14 @@ async def chat_completions(
 
     # 2. TODO el historial de conversación del usuario
     for msg in req.messages:
-        # Filtrar system prompts que venga del cliente (Open WebUI)
         if msg.role != "system":
             messages.append({"role": msg.role, "content": msg.content})
 
     # ============================================================
-    # 🔴 NUEVO: CÁLCULO DINÁMICO DE max_tokens
+    # CÁLCULO DINÁMICO DE max_tokens - 100% DESDE .env
     # ============================================================
 
-    # Obtener límite del modelo desde .env
-    max_model_len = int(os.getenv("VLLM_MAX_MODEL_LEN", "4096"))
-
-    # Calcular tokens de input (sistema + historial)
+    # Calcular tokens de input
     system_tokens = count_tokens(enhanced_system)
     context_tokens = count_tokens(context_text)
     history_tokens = sum(
@@ -469,52 +445,73 @@ async def chat_completions(
     )
     total_input_tokens = system_tokens + history_tokens
 
-    # Calcular max_tokens disponibles (dejar margen de seguridad)
-    safety_margin = 100  # tokens de buffer para evitar errores de precisión
-    available_tokens = max_model_len - total_input_tokens - safety_margin
+    # Margen de seguridad
+    safety_margin = 100
+    available_tokens = VLLM_MAX_MODEL_LEN - total_input_tokens - safety_margin
 
-    # Límites según el modo
+    # Cálculo desde .env - sin hardcodeo
     if is_generative:
-        # Generación: necesita más tokens para exámenes/ejercicios
-        desired_max_tokens = min(4096, max_model_len // 2)  # Máximo 50% del modelo
+        # Modo generativo: usar el % configurado en .env
+        desired_max_tokens = min(
+            VLLM_MAX_TOKENS,
+            int(VLLM_MAX_MODEL_LEN * (GENERATIVE_MAX_TOKENS_PERCENT / 100.0)),
+        )
+        logger.info(
+            f"🎯 MODO GENERATIVO: "
+            f"Objetivo {desired_max_tokens} tokens "
+            f"({GENERATIVE_MAX_TOKENS_PERCENT}% de {VLLM_MAX_MODEL_LEN})"
+        )
     else:
-        # Respuesta: más conservador
-        desired_max_tokens = min(2048, max_model_len // 3)  # Máximo 33% del modelo
+        # Modo respuesta: usar el % configurado en .env
+        desired_max_tokens = min(
+            VLLM_MAX_TOKENS,
+            int(VLLM_MAX_MODEL_LEN * (RESPONSE_MAX_TOKENS_PERCENT / 100.0)),
+        )
+        logger.info(
+            f"💬 MODO RESPUESTA: "
+            f"Objetivo {desired_max_tokens} tokens "
+            f"({RESPONSE_MAX_TOKENS_PERCENT}% de {VLLM_MAX_MODEL_LEN})"
+        )
 
     # Usar el mínimo entre lo deseado y lo disponible
-    max_tokens = max(100, min(desired_max_tokens, available_tokens))
+    max_tokens = max(MIN_RESPONSE_TOKENS, min(desired_max_tokens, available_tokens))
 
     # ============================================================
     # ANÁLISIS DE TOKENS Y WARNINGS
     # ============================================================
     logger.info(f"📊 Token breakdown:")
-    logger.info(f"   - Model max length: {max_model_len} tokens")
+    logger.info(f"   - Model max length: {VLLM_MAX_MODEL_LEN} tokens (from .env)")
+    logger.info(f"   - vLLM max_tokens limit: {VLLM_MAX_TOKENS} (from .env)")
     logger.info(f"   - System prompt: ~{system_tokens} tokens")
     logger.info(f"   - RAG context: ~{context_tokens} tokens")
     logger.info(f"   - Conversation history: ~{history_tokens} tokens")
     logger.info(f"   - TOTAL INPUT: ~{total_input_tokens} tokens")
     logger.info(f"   - Available for response: {available_tokens} tokens")
-    logger.info(f"   - Configured max_tokens: {max_tokens} tokens")
+    logger.info(f"   - Desired max_tokens: {desired_max_tokens} tokens")
+    logger.info(f"   - FINAL max_tokens: {max_tokens} tokens ✅")
 
     # Validación crítica
-    if available_tokens < 100:
+    if available_tokens < MIN_RESPONSE_TOKENS:
         logger.error(
             f"❌ Input demasiado largo: {total_input_tokens} tokens "
-            f"(límite modelo: {max_model_len}). "
-            f"Solo quedan {available_tokens} tokens para respuesta."
+            f"(límite modelo: {VLLM_MAX_MODEL_LEN}). "
+            f"Solo quedan {available_tokens} tokens para respuesta "
+            f"(mínimo requerido: {MIN_RESPONSE_TOKENS})."
         )
         raise HTTPException(
             status_code=400,
             detail=f"El contexto de entrada es demasiado largo ({total_input_tokens} tokens). "
-            f"El modelo solo soporta {max_model_len} tokens totales. "
+            f"El modelo solo soporta {VLLM_MAX_MODEL_LEN} tokens totales. "
             f"Por favor, reduce el historial de conversación o el tamaño de la consulta.",
         )
 
-    if total_input_tokens > max_model_len * 0.7:
+    # Warning si estamos usando mucho del contexto
+    input_percent = (total_input_tokens / VLLM_MAX_MODEL_LEN) * 100
+    if input_percent > 70:
         logger.warning(
             f"⚠️  Input muy largo ({total_input_tokens} tokens, "
-            f"{(total_input_tokens / max_model_len) * 100:.1f}% del límite), "
-            f"podría causar OOM o respuestas truncadas"
+            f"{input_percent:.1f}% del límite), "
+            f"podría afectar calidad de respuesta"
         )
 
     logger.info(
@@ -522,7 +519,7 @@ async def chat_completions(
         f"(system + {len(req.messages)} historial)"
     )
 
-    # Verificar salud de vLLM antes de enviar
+    # Verificar salud de vLLM
     if not await check_vllm_health():
         raise HTTPException(
             status_code=503,
@@ -530,19 +527,18 @@ async def chat_completions(
         )
 
     # ============================================================
-    # 🔴 PAYLOAD CON max_tokens DINÁMICO
+    # PAYLOAD CON max_tokens CALCULADO DINÁMICAMENTE
     # ============================================================
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     payload = {
-        "model": os.getenv("VLLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3-GPTQ"),
+        "model": VLLM_MODEL,
         "messages": messages,
         "temperature": req.temperature,
         "top_p": req.top_p,
         "stream": req.stream,
-        "max_tokens": max_tokens,  # ✅ Usar el valor calculado dinámicamente
+        "max_tokens": max_tokens,
     }
 
-    # Log del tamaño del payload
     payload_size = len(json.dumps(payload))
     logger.info(
         f"📦 Payload size: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)"
@@ -562,7 +558,6 @@ async def chat_completions(
                         headers=headers,
                         json=payload,
                     ) as r:
-                        # 🔴 NUEVO: Capturar 404 específicamente
                         if r.status_code == 404:
                             logger.error(
                                 f"❌ 404: Model '{payload['model']}' not found or not ready"
@@ -588,7 +583,7 @@ async def chat_completions(
                             yield chunk
 
                         logger.info("✓ Stream completado exitosamente")
-                        return  # Éxito, salir
+                        return
 
             except (
                 httpx.ConnectError,
@@ -617,7 +612,6 @@ async def chat_completions(
                 await asyncio.sleep(wait_time)
 
             except httpx.HTTPStatusError as e:
-                # Leer el cuerpo del error si está disponible
                 try:
                     error_text = await e.response.aread()
                     error_text = error_text.decode("utf-8", errors="ignore")
@@ -679,7 +673,6 @@ async def eval_offline(cases: List[EvalCase]):
     rows = []
     for c in cases:
         retrieved, meta = choose_retrieval(c.topic, c.query)
-        # Attach citations with topic for proper URLs
         context_text, cited = attach_citations(retrieved, c.topic)
         rows.append(
             {
