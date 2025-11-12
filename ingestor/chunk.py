@@ -400,7 +400,7 @@ class HybridExtractor:
         )
         try:
             rsp = requests.post(
-                f"{self.mineru_url}/extract", json={"file_path": file_path}, timeout=120
+                f"{self.mineru_url}/extract", json={"file_path": file_path}, timeout=600
             )
             if rsp.status_code != 200:
                 logger.warning(f"[MinerU-HTTP] {rsp.status_code}  {rsp.text[:100]}")

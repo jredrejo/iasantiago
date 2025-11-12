@@ -162,6 +162,53 @@ services:
           devices:
             - capabilities: [gpu]
 
+  mineru-extractor:
+    build:
+      context: ./ingestor
+      dockerfile: Dockerfile.gpu
+    container_name: mineru-extractor
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    shm_size: 16gb
+    environment:
+      - TZ=${TZ}
+      - TORCH_CUDA_ARCH_LIST=89  # RTX5090 architecture
+      - CUDA_VISIBLE_DEVICES=0
+      - CUDA_LAUNCH_BLOCKING=0
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      # MinerU-specific settings
+      - MINERU_DEVICE=cuda:0
+      - MINERU_BACKEND=pytorch
+      - MINERU_MODEL_DIR=/models_cache/mineru
+      - MINERU_TIMEOUT=600
+      - PYTHONUNBUFFERED=1
+      # Enable parallel processing
+      - MINERU_NUM_WORKERS=4
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - VECLIB_MAXIMUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
+    ports:
+      - "8003:8003"
+    volumes:
+      - ${TOPIC_BASE_DIR}:/topics:ro  # Read-only access to PDFs  
+      - models_cache:/models_cache
+      - mineru_cache:/root/.cache
+      - huggingface_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
   ingestor:
     build:
       context: ./ingestor
@@ -186,6 +233,8 @@ services:
       - LLM_ANALYSIS_TEMPERATURE=0.3
       - TOKENIZERS_PARALLELISM=false
       - OMP_NUM_THREADS=1
+      - MINERU_SERVICE_URL=http://mineru-extractor:8003
+      - USE_MINERU=true
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
@@ -195,6 +244,7 @@ services:
     depends_on:
       - qdrant
       - vllm-llava
+      - mineru-extractor
     deploy:
       resources:
         reservations:
@@ -272,3 +322,4 @@ volumes:
   huggingface_cache:
   llava_cache:
   models_cache:
+  mineru_cache:
