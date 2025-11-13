@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from qdrant_client import models
+from qdrant_client import QdrantClient
 from settings import *
 from chunk import (
     AdaptiveChunkingStrategySelector,
@@ -34,6 +35,18 @@ os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 # ============================================================
 
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# QDRANT CLIENT INITIALIZATION
+# ============================================================
+
+# Initialize Qdrant client
+try:
+    client = QdrantClient(url=QDRANT_URL)
+    logger.info(f"[QDRANT] Connected to Qdrant at {QDRANT_URL}")
+except Exception as e:
+    logger.error(f"[QDRANT] Failed to connect to Qdrant: {e}")
+    client = None
 
 
 class BlackwellOptimizedGPUManager:
@@ -724,6 +737,9 @@ def topic_collection(topic: str) -> str:
 
 
 def ensure_qdrant(topic: str, d: int):
+    if client is None:
+        logger.error("[QDRANT] Client not initialized - cannot ensure collection")
+        return False
     coll = topic_collection(topic)
 
     if not client.collection_exists(collection_name=coll):
@@ -1125,6 +1141,9 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
     """
     Borra un PDF específico de Qdrant y Whoosh
     """
+    if client is None:
+        logger.error("[QDRANT] Client not initialized - cannot delete from Qdrant")
+        return False
     pdf_path = str(pdf_path)
     logger.info(f"\n{'=' * 60}")
     logger.info("DELETING PDF FROM INDEXES")
