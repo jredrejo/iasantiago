@@ -17,31 +17,48 @@ from unstructured.partition.pptx import partition_pptx
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import hashlib
 import sqlite3
 import threading
-import requests
-import base64
-from io import BytesIO
-from PIL import Image
 from collections import defaultdict
 import numpy as np
-import torch
 import pdfplumber
+import ssl
+import nltk
 
-try:
-    from nltk.tokenize import sent_tokenize
-    import nltk
-
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except LookupError:
-        nltk.download("punkt", quiet=True)
-except ImportError:
-    nltk = None
-    sent_tokenize = None
 
 logger = logging.getLogger(__name__)
+
+
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+
+# Try to download punkt data with error handling
+def ensure_nltk_data():
+    """Ensure NLTK data is available with fallback options"""
+    try:
+        # Check if punkt is already available
+        nltk.data.find("tokenizers/punkt")
+        logger.info("[NLTK] punkt data already available")
+    except LookupError:
+        try:
+            logger.info("[NLTK] Downloading punkt data...")
+            nltk.download("punkt", quiet=True)
+            logger.info("[NLTK] punkt data downloaded successfully")
+        except Exception as e:
+            logger.error(f"[NLTK] Failed to download punkt: {e}")
+            logger.warning("[NLTK] Will use fallback sentence tokenization")
+            return False
+    return True
+
+
+# Call this function at module import
+nltk_available = ensure_nltk_data()
+
 
 # ============================================================
 # DISABLE CUDA FOR UNSTRUCTURED ONLY (prevent OOM with vLLM)
