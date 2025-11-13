@@ -27,7 +27,8 @@ import nltk
 
 
 logger = logging.getLogger(__name__)
-
+os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"  # Spanish primero, luego English
+os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"  # English si no se puede Spanish
 
 try:
     _create_unverified_https_context = ssl._create_unverified_context
