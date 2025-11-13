@@ -173,7 +173,6 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 16gb
-    cpu_count: 10 
     env_file: .env
     environment:
       - HF_HOME=/models_cache
@@ -187,6 +186,9 @@ services:
       - LLM_ANALYSIS_TEMPERATURE=0.3
       - TOKENIZERS_PARALLELISM=true
       - OMP_NUM_THREADS=10
+      - NUMBA_NUM_THREADS=10        # Para NumPy/numba
+      - MKL_NUM_THREADS=10          # Para Intel MKL
+      - OPENBLAS_NUM_THREADS=10     # Para OpenBLAS
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
