@@ -35,33 +35,16 @@ EMBED_DEFAULT = os.getenv(
 )
 
 # ============================================================
-# EXTRACTION ENGINE (HÍBRIDO)
+# BLACKWELL (RTX 50XX) SPECIFIC SETTINGS
 # ============================================================
 
-EXTRACTION_ENGINE = os.getenv("EXTRACTION_ENGINE", "hybrid")
-"""
-Opciones:
-  - "hybrid" (default): Usa MinerU para PDFs complejos, Unstructured para el resto
-  - "unstructured": Solo Unstructured.io
-  - "mineru": Solo MinerU (solo PDFs)
-"""
+# Batch size multipliers for Blackwell
+BLACKWELL_BATCH_MULTIPLIER = float(os.getenv("BLACKWELL_BATCH_MULTIPLIER", "1.5"))
+BLACKWELL_SMALL_MODEL_MULTIPLIER = float(
+    os.getenv("BLACKWELL_SMALL_MODEL_MULTIPLIER", "1.5")
+)
+BLACKWELL_FP8_MULTIPLIER = float(os.getenv("BLACKWELL_FP8_MULTIPLIER", "1.2"))
 
-# ============================================================
-# MINERU CONFIGURATION (OPCIONAL)
-# ============================================================
-
-MINERU_ENABLED = os.getenv("MINERU_ENABLED", "true").lower() == "true"
-"""Si está disponible, usar MinerU para PDFs complejos"""
-
-MINERU_COMPLEXITY_THRESHOLD = float(os.getenv("MINERU_COMPLEXITY_THRESHOLD", "0.6"))
-"""
-Score 0.0-1.0 para usar MinerU
-- < 0.6: Usar Unstructured.io (más rápido)
-- >= 0.6: Usar MinerU (más preciso)
-"""
-
-MINERU_CHECK_PAGES = int(os.getenv("MINERU_CHECK_PAGES", "3"))
-"""Número de páginas a analizar para detectar complejidad"""
 
 # ============================================================
 # CACHÉ SQLITES
@@ -78,39 +61,9 @@ VLLM_URL = os.getenv("VLLM_URL", "http://vllm:8000")
 VLLM_TIMEOUT = int(os.getenv("VLLM_TIMEOUT", "60"))
 
 # ============================================================
-# EXTRACCIÓN
-# ============================================================
-
-MAX_CHUNKS_PER_FILE = int(os.getenv("MAX_CHUNKS_PER_FILE", "3"))
-
-MIN_IMAGE_WIDTH = int(os.getenv("MIN_IMAGE_WIDTH", "100"))
-MIN_IMAGE_HEIGHT = int(os.getenv("MIN_IMAGE_HEIGHT", "100"))
-
-LLM_ANALYSIS_TEMPERATURE = float(os.getenv("LLM_ANALYSIS_TEMPERATURE", "0.3"))
-
-# ============================================================
 # QDRANT
 # ============================================================
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
 QDRANT_BATCH_SIZE = int(os.getenv("QDRANT_BATCH_SIZE", "100"))
 
-# ============================================================
-# LOGGING
-# ============================================================
-
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
-# ============================================================
-# MÉTRICAS
-# ============================================================
-
-SAVE_EXTRACTION_METRICS = os.getenv("SAVE_EXTRACTION_METRICS", "true").lower() == "true"
-"""Guardar métricas de cada extracción en SQLite"""
-
-# ============================================================
-# DEBUG
-# ============================================================
-
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
-VERBOSE_EXTRACTION = os.getenv("VERBOSE_EXTRACTION", "false").lower() == "true"
