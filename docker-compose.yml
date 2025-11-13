@@ -173,6 +173,7 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 16gb
+    cpu_count: 10 
     env_file: .env
     environment:
       - HF_HOME=/models_cache
@@ -184,8 +185,8 @@ services:
       - MIN_IMAGE_WIDTH=100
       - MIN_IMAGE_HEIGHT=100
       - LLM_ANALYSIS_TEMPERATURE=0.3
-      - TOKENIZERS_PARALLELISM=false
-      - OMP_NUM_THREADS=1
+      - TOKENIZERS_PARALLELISM=true
+      - OMP_NUM_THREADS=10
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
