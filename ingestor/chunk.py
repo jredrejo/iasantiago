@@ -201,7 +201,7 @@ class ContextAwareChunker:
         self.min_chunk_size = min_chunk_size
         self.page_detector = AdvancedPageBoundaryDetector()
         # Use cached tokenizer (avoids repeated import overhead)
-        self.sent_tokenize = get_sentence_tokenizer()
+        self.sent_tokenize = get_sent_tokenizer()
 
         # Try to import NLTK for sentence tokenization
         try:
