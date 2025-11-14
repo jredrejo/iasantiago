@@ -914,7 +914,13 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         state.mark_as_failed(pdf_path, str(e))
         return False
 
-    texts = [c["text"] for c in chunks]
+    texts = [c["text"] for c in chunks if c.get("text", "").strip()]
+
+    # Check if we have any text to encode
+    if not texts:
+        logger.error(f"[ERROR] No text extracted from chunks in {Path(pdf_path).name}")
+        state.mark_as_failed(pdf_path, "No text content extracted from PDF")
+        return False
 
     logger.info(f"Encoding {len(texts)} chunks...")
     try:
