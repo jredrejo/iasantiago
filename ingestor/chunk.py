@@ -59,6 +59,27 @@ def ensure_nltk_data():
 
 # Call this function at module import
 nltk_available = ensure_nltk_data()
+_cached_sent_tokenizer = None
+
+
+def get_sent_tokenizer():
+    """Get cached sentence tokenizer"""
+    global _cached_sent_tokenizer
+    if _cached_sent_tokenizer is None:
+        try:
+            from nltk.tokenize import sent_tokenize
+
+            # Ensure data is available
+            try:
+                nltk.data.find("tokenizers/punkt")
+            except LookupError:
+                nltk.download("punkt", quiet=True)
+            _cached_sent_tokenizer = sent_tokenize
+            logger.info("[NLTK] Sentence tokenizer loaded")
+        except Exception as e:
+            logger.warning(f"[NLTK] Failed to load, using fallback: {e}")
+            _cached_sent_tokenizer = ContextAwareChunker._fallback_sentence_split
+    return _cached_sent_tokenizer
 
 
 # ============================================================
@@ -179,6 +200,8 @@ class ContextAwareChunker:
         self.overlap = overlap
         self.min_chunk_size = min_chunk_size
         self.page_detector = AdvancedPageBoundaryDetector()
+        # Use cached tokenizer (avoids repeated import overhead)
+        self.sent_tokenize = get_sentence_tokenizer()
 
         # Try to import NLTK for sentence tokenization
         try:
@@ -200,8 +223,15 @@ class ContextAwareChunker:
         """
         # Detect page boundaries if PDF path is provided
         boundaries = {}
-        if pdf_path and pdf_path.lower().endswith(".pdf"):
+        if (
+            pdf_path
+            and pdf_path.lower().endswith(".pdf")
+            and not hasattr(self, "_cached_boundaries")
+        ):
             boundaries = self.page_detector.detect_boundaries(pdf_path)
+            self._cached_boundaries = boundaries
+        elif hasattr(self, "_cached_boundaries"):
+            boundaries = self._cached_boundaries
 
         # Group elements by page with enhanced page detection
         page_groups = self._group_by_page_enhanced(elements, boundaries)
@@ -947,6 +977,8 @@ class AdaptiveChunkingStrategySelector:
 class RobustPageExtractor:
     """Multi-strategy page number extraction with validation"""
 
+    _cache = {}  # Add class-level cache
+
     @staticmethod
     def extract_page_number(elem, pdf_path: str = None, fallback_page: int = 1) -> int:
         """
@@ -958,32 +990,41 @@ class RobustPageExtractor:
         4. Text content analysis (page markers)
         5. Fallback to default
         """
+        # Create cache key
+        elem_id = id(elem)
+        if elem_id in RobustPageExtractor._cache:
+            return RobustPageExtractor._cache[elem_id]
 
         # Strategy 1: Direct metadata extraction
         page = RobustPageExtractor._extract_from_metadata(elem)
         if page is not None:
+            RobustPageExtractor._cache[elem_id] = page
             return page
 
         # Strategy 2: Coordinate-based extraction (PDF specific)
         if pdf_path and pdf_path.lower().endswith(".pdf"):
             page = RobustPageExtractor._extract_from_coordinates(elem)
             if page is not None:
+                RobustPageExtractor._cache[elem_id] = page
                 return page
 
         # Strategy 3: Text content analysis (look for page markers)
         page = RobustPageExtractor._extract_from_text_content(elem)
         if page is not None:
+            RobustPageExtractor._cache[elem_id] = page
             return page
 
         # Strategy 4: Element position in document
         page = RobustPageExtractor._infer_from_position(elem)
         if page is not None:
+            RobustPageExtractor._cache[elem_id] = page
             return page
 
         logger.warning(
             f"[PAGE] Could not extract page for {elem.__class__.__name__}, "
             f"using fallback: {fallback_page}"
         )
+        RobustPageExtractor._cache[elem_id] = fallback_page
         return fallback_page
 
     @staticmethod
@@ -1523,7 +1564,7 @@ def extract_elements_from_pdf(pdf_path: str) -> List[Dict[str, Any]]:
         # Use unstructured for initial extraction
         raw_elements = partition_pdf(
             filename=pdf_path,
-            strategy="hi_res",
+            strategy="fast",
             infer_table_structure=True,
             extract_images_in_pdf=True,
         )

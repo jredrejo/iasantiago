@@ -37,8 +37,8 @@ os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 # ============================================================
 # QDRANT CLIENT INITIALIZATION
@@ -95,9 +95,6 @@ class BlackwellOptimizedGPUManager:
             )
 
             # Get current memory state
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-
             info["memory_free_gb"] = torch.cuda.mem_get_info()[0] / 1e9
             info["memory_allocated_gb"] = torch.cuda.memory_allocated(0) / 1e9
 
@@ -890,16 +887,6 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             elements, chunk_size=900, overlap=120, pdf_path=pdf_path
         )
 
-        # ADD: Secondary validation pass
-        chunks, issues = PageSequenceValidator.validate_and_fix(chunks)
-
-        if issues and len(issues) > 30:  # Too many issues = reject file
-            error_msg = f"Page validation failed: {len(issues)} critical issues"
-            logger.error(f"[ERROR] {error_msg}")
-            logger.error(f"[ERROR] Issues: {issues[:10]}")  # Log first 10
-            state.mark_as_failed(pdf_path, error_msg)
-            return False
-
         # ADD: Log page distribution for audit
         page_counts = {}
         for chunk in chunks:
@@ -958,7 +945,10 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         )
 
         # Validate vectors
-        vecs = validate_and_fix_vectors(vecs, dims)
+        if not isinstance(vecs, list) or any(
+            len(v) != dims for v in vecs[: min(10, len(vecs))]
+        ):
+            vecs = validate_and_fix_vectors(vecs, dims)
 
         logger.info(f"[OK] Encoded {len(vecs)} vectors")
         logger.info(f"[DEBUG] Vector dimension: {len(vecs[0])}")
