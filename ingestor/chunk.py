@@ -1507,7 +1507,7 @@ def pdf_to_chunks_with_enhanced_validation(
     if validate_pages:
         chunks, issues = PageSequenceValidator.validate_and_fix(chunks)
 
-        if issues and len(issues) > 5:  # Too many issues = reject file
+        if issues and len(issues) > 30:  # Too many issues = reject file
             raise ValueError(
                 f"Page validation failed: {len(issues)} critical issues: {issues[:10]}"
             )

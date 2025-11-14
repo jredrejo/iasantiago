@@ -35,7 +35,11 @@ os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 # ============================================================
 
 logger = logging.getLogger(__name__)
-
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 # ============================================================
 # QDRANT CLIENT INITIALIZATION
 # ============================================================
@@ -889,7 +893,7 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         # ADD: Secondary validation pass
         chunks, issues = PageSequenceValidator.validate_and_fix(chunks)
 
-        if issues and len(issues) > 5:  # Too many issues = reject file
+        if issues and len(issues) > 30:  # Too many issues = reject file
             error_msg = f"Page validation failed: {len(issues)} critical issues"
             logger.error(f"[ERROR] {error_msg}")
             logger.error(f"[ERROR] Issues: {issues[:10]}")  # Log first 10
@@ -1107,6 +1111,8 @@ def initial_scan():
             if state.is_already_processed(abs_pdf):
                 skipped_count += 1
                 continue
+
+            logger.info(f"Processing {abs_pdf}")
 
             pdf_count += 1
             try:
