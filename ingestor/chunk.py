@@ -27,6 +27,9 @@ import nltk
 
 
 logger = logging.getLogger(__name__)
+# Set Tesseract language for unstructured
+os.environ["TESSERACT_LANG"] = "spa+eng"  # Spanish + English
+os.environ["OCR_LANGUAGES"] = "spa+eng"  # Alternative env var
 os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"  # Spanish primero, luego English
 os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"  # English si no se puede Spanish
 
@@ -74,8 +77,17 @@ def get_sent_tokenizer():
                 nltk.data.find("tokenizers/punkt")
             except LookupError:
                 nltk.download("punkt", quiet=True)
-            _cached_sent_tokenizer = sent_tokenize
-            logger.info("[NLTK] Sentence tokenizer loaded")
+
+            # Create Spanish-first tokenizer
+            def spanish_tokenize(text):
+                # Try Spanish first, fallback to English
+                try:
+                    return sent_tokenize(text, language="spanish")
+                except:
+                    return sent_tokenize(text, language="english")
+
+            _cached_sent_tokenizer = spanish_tokenize
+            logger.info("[NLTK] Spanish sentence tokenizer loaded")
         except Exception as e:
             logger.warning(f"[NLTK] Failed to load, using fallback: {e}")
             _cached_sent_tokenizer = ContextAwareChunker._fallback_sentence_split
@@ -1567,6 +1579,8 @@ def extract_elements_from_pdf(pdf_path: str) -> List[Dict[str, Any]]:
             strategy="fast",
             infer_table_structure=True,
             extract_images_in_pdf=True,
+            languages=["spa", "eng"],
+            ocr_languages="spa+eng",
         )
 
         # Convert to our format with enhanced page detection

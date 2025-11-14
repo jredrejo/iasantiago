@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libpoppler-cpp-dev \
     libmagic1 \
+    tesseract-ocr-spa \
+    tesseract-ocr-eng \
     # PDF utilities
     ghostscript \
     # Build tools
