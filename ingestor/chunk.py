@@ -7,24 +7,25 @@ Enhanced chunking with NLTK + Hierarchical with heading tracking + Context-aware
 Enhanced page number validation and adaptive chunking strategies
 """
 
-import os
 import logging
+import os
 import re
-from unstructured.partition.auto import partition
-from unstructured.partition.pdf import partition_pdf
-from unstructured.partition.docx import partition_docx
-from unstructured.partition.pptx import partition_pptx
-
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 import sqlite3
+import ssl
 import threading
 from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import nltk
 import numpy as np
 import pdfplumber
-import ssl
-import nltk
-
+import PyPDF2
+from unstructured.partition.auto import partition
+from unstructured.partition.docx import partition_docx
+from unstructured.partition.pdf import partition_pdf
+from unstructured.partition.pptx import partition_pptx
+from paddleocr import PaddleOCR
 
 logger = logging.getLogger(__name__)
 # Set Tesseract language for unstructured
@@ -1214,7 +1215,7 @@ class PageSequenceValidator:
             gap = sorted_unique[i] - sorted_unique[i - 1]
             if gap > 10:  # Large gap
                 issues.append(
-                    f"Large gap: {gap} pages between {sorted_unique[i-1]} and {sorted_unique[i]}"
+                    f"Large gap: {gap} pages between {sorted_unique[i - 1]} and {sorted_unique[i]}"
                 )
 
         return issues
@@ -1227,7 +1228,7 @@ class PageSequenceValidator:
         for i in range(1, len(pages)):
             if pages[i] < pages[i - 1]:
                 issues.append(
-                    f"Out of order: chunk {i-1} page {pages[i-1]} -> chunk {i} page {pages[i]}"
+                    f"Out of order: chunk {i - 1} page {pages[i - 1]} -> chunk {i} page {pages[i]}"
                 )
 
         return issues
@@ -1539,8 +1540,23 @@ def pdf_to_chunks_with_enhanced_validation(
     """
     Enhanced PDF to chunks conversion with improved page validation and chunking
     """
-    # Extract elements from PDF
-    elements = extract_elements_from_pdf(pdf_path)
+
+    # First, try to determine if this PDF likely has extractable text
+    has_extractable_text = check_pdf_has_text(pdf_path)
+
+    if has_extractable_text:
+        logger.info(
+            "PDF appears to have extractable text, attempting text extraction..."
+        )
+        chunks = extract_text_with_multiple_methods(pdf_path)
+        if chunks:
+            logger.info(f"Successfully extracted {len(chunks)} text chunks")
+            return chunks
+        else:
+            logger.warning("Text extraction methods failed, falling back to OCR...")
+
+    # If text extraction failed or PDF doesn't have extractable text, use OCR
+    elements = extract_elements_from_pdf_gpu(pdf_path)
 
     if not elements:
         raise ValueError(f"No elements extracted from PDF: {pdf_path}")
@@ -1568,41 +1584,491 @@ def pdf_to_chunks_with_enhanced_validation(
     return chunks
 
 
-def extract_elements_from_pdf(pdf_path: str) -> List[Dict[str, Any]]:
-    """Extract elements from PDF with enhanced page detection"""
-    elements = []
+def check_pdf_has_text(pdf_path: Path) -> bool:
+    """
+    Check if PDF likely has extractable text using multiple methods
+    """
+    try:
+        # Method 1: Try with PyPDF2 first (fastest check)
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            page_count = len(pdf_reader.pages)
+
+            # Check first few pages for text
+            for i in range(min(3, page_count)):
+                page = pdf_reader.pages[i]
+                text = page.extract_text()
+                if text and len(text.strip()) > 50:  # If we find substantial text
+                    logger.info(f"PyPDF2 detected text on page {i+1}")
+                    return True
+
+        # Method 2: Try with pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            for i, page in enumerate(pdf.pages[:3]):  # Check first 3 pages
+                text = page.extract_text()
+                if text and len(text.strip()) > 50:
+                    logger.info(f"pdfplumber detected text on page {i+1}")
+                    return True
+
+        logger.info("No extractable text detected in PDF")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking for extractable text: {e}")
+        # Default to assuming text might be present
+        return True
+
+
+def extract_with_pdfminer(pdf_path: Path) -> List[Dict[str, Any]]:
+    """
+    Extract text using pdfminer.six
+    """
+    try:
+        from pdfminer.high_level import extract_text
+
+        logger.info("Trying pdfminer.six...")
+
+        text = extract_text(str(pdf_path))
+        if text and len(text.strip()) > 100:
+            logger.info(f"pdfminer.six extracted {len(text)} characters")
+            return [
+                {
+                    "type": "text",
+                    "text": text,
+                    "page": 1,  # pdfminer doesn't easily provide page numbers
+                    "source": "pdfminer",
+                }
+            ]
+    except Exception as e:
+        logger.warning(f"pdfminer.six failed: {e}")
+
+    return []
+
+
+def extract_text_with_multiple_methods(pdf_path: Path) -> List[Dict[str, Any]]:
+    """
+    Try multiple text extraction methods in order of preference
+    """
+    # Method 1: Try with unstructured partition_pdf
+    try:
+        logger.info("Trying unstructured partition_pdf...")
+        elements = partition_pdf(
+            filename=str(pdf_path),
+            strategy="fast",  # Use fast strategy to avoid OCR
+            infer_table_structure=True,
+            extract_images_in_pdf=False,
+            extract_tables=True,
+        )
+
+        if elements and len(elements) > 0:
+            # Check if we got meaningful text
+            text_content = "\n".join([str(e) for e in elements if hasattr(e, "text")])
+            if len(text_content.strip()) > 100:  # If we got substantial text
+                logger.info(
+                    f"unstructured partition_pdf extracted {len(elements)} elements"
+                )
+                return process_elements_to_chunks(elements)
+    except Exception as e:
+        logger.warning(f"unstructured partition_pdf failed: {e}")
+
+    # Method 2: Try with pdfminer.six
+    pdfminer_result = extract_with_pdfminer(pdf_path)
+    if pdfminer_result:
+        return pdfminer_result
+
+    # Method 3: Try with pdfplumber directly (with improved error handling)
+    try:
+        logger.info("Trying pdfplumber directly...")
+        with pdfplumber.open(pdf_path) as pdf:
+            elements = []
+            for i, page in enumerate(pdf.pages):
+                # Extract text
+                text = page.extract_text()
+                if text and len(text.strip()) > 10:
+                    elements.append(
+                        {
+                            "type": "text",
+                            "text": text,
+                            "page": i + 1,
+                            "source": "pdfplumber",
+                        }
+                    )
+
+                # Extract tables with improved error handling
+                try:
+                    for table in page.extract_tables():
+                        if table:
+                            # Handle None values in table cells
+                            processed_table = []
+                            for row in table:
+                                # Convert all cells to strings, replace None with empty string
+                                processed_row = [
+                                    str(cell) if cell is not None else ""
+                                    for cell in row
+                                ]
+                                processed_table.append(processed_row)
+
+                            # Join the processed table into text
+                            table_text = "\n".join(
+                                ["\t".join(row) for row in processed_table]
+                            )
+                            elements.append(
+                                {
+                                    "type": "table",
+                                    "text": table_text,
+                                    "page": i + 1,
+                                    "source": "pdfplumber",
+                                }
+                            )
+                except Exception as table_error:
+                    logger.warning(
+                        f"Error extracting table from page {i+1}: {table_error}"
+                    )
+                    continue
+
+            if elements:
+                logger.info(f"pdfplumber extracted {len(elements)} elements")
+                return elements
+    except Exception as e:
+        logger.warning(f"pdfplumber failed: {e}")
+
+    # Method 4: Try with PyPDF2 as last resort
+    try:
+        logger.info("Trying PyPDF2...")
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            elements = []
+
+            for i, page in enumerate(pdf_reader.pages):
+                text = page.extract_text()
+                if text and len(text.strip()) > 10:
+                    elements.append(
+                        {
+                            "type": "text",
+                            "text": text,
+                            "page": i + 1,
+                            "source": "PyPDF2",
+                        }
+                    )
+
+            if elements:
+                logger.info(f"PyPDF2 extracted {len(elements)} elements")
+                return elements
+    except Exception as e:
+        logger.warning(f"PyPDF2 failed: {e}")
+
+    logger.warning("All text extraction methods failed")
+    return []
+
+
+class PaddleOCRProcessor:
+    """GPU-accelerated OCR using PaddlePaddle with CUDA 13"""
+
+    def __init__(self, use_gpu=True, gpu_mem=8000):
+        """
+        Optimized for RTX 5090 with CUDA 13
+
+        Args:
+            use_gpu: Enable GPU acceleration (recommended)
+            gpu_mem: GPU memory to allocate (MB) - 8GB is safe for RTX 5090
+        """
+
+        # Verify CUDA availability
+        try:
+            import paddle
+
+            cuda_available = paddle.device.is_compiled_with_cuda()
+            if not cuda_available:
+                logger.warning("[PADDLE] CUDA not available, falling back to CPU")
+                use_gpu = False
+        except Exception as e:
+            logger.error(f"[PADDLE] Failed to check CUDA: {e}")
+            use_gpu = False
+
+        self.use_gpu = use_gpu
+
+        try:
+            self.ocr = PaddleOCR(
+                use_angle_cls=True,
+                lang="es",  # Spanish primary
+                use_gpu=use_gpu,
+                gpu_mem=gpu_mem,
+                show_log=False,
+                # Performance optimizations for RTX 5090
+                det_db_thresh=0.3,
+                rec_batch_num=32,  # Increased for RTX 5090
+                drop_score=0.5,
+                use_dilation=True,
+                # Multi-language support
+                lang_list=["es", "en"],
+            )
+
+            device = "GPU (CUDA 13)" if use_gpu else "CPU"
+            logger.info(f"[PADDLE] OCR initialized on {device}")
+
+        except Exception as e:
+            logger.error(f"[PADDLE] Initialization failed: {e}")
+            raise
+
+    def extract_text_from_image(self, image_path: str) -> str:
+        """Extract text from image using GPU"""
+        try:
+            result = self.ocr.ocr(image_path, cls=True)
+
+            if not result or not result[0]:
+                return ""
+
+            # Combine all detected text with confidence filtering
+            text_lines = []
+            for line in result[0]:
+                text, confidence = line[1]
+                # Only include high-confidence text
+                if confidence > 0.6:
+                    text_lines.append(text)
+
+            return "\n".join(text_lines)
+
+        except Exception as e:
+            logger.error(f"[PADDLE] OCR failed for {image_path}: {e}")
+            return ""
+
+    def process_pdf_page_batch(self, pdf_path: str, page_nums: list) -> dict:
+        """
+        Process multiple PDF pages in batch for better GPU utilization
+        Returns: {page_num: text}
+        """
+        from pdf2image import convert_from_path
+        import tempfile
+
+        # Convert multiple pages at once
+        images = convert_from_path(
+            pdf_path,
+            first_page=min(page_nums),
+            last_page=max(page_nums),
+            dpi=300,
+            thread_count=4,  # Parallel image conversion
+        )
+
+        results = {}
+        temp_files = []
+
+        try:
+            # Save all images first
+            for page_num, image in zip(page_nums, images):
+                tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                image.save(tmp.name)
+                temp_files.append((page_num, tmp.name))
+
+            # Process batch on GPU
+            for page_num, tmp_path in temp_files:
+                text = self.extract_text_from_image(tmp_path)
+                results[page_num] = text
+
+        finally:
+            # Cleanup temp files
+            for _, tmp_path in temp_files:
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+
+        return results
+
+
+def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
+    """
+    Extract PDF elements using GPU-accelerated OCR with batch processing
+    Optimized for RTX 5090 with CUDA 13
+    """
+
+    # First try standard text extraction (fastest)
+    try:
+        elements = partition_pdf(
+            filename=pdf_path,
+            strategy="hi_res",
+            extract_images_in_pdf=True,
+            extract_tables=True,
+        )
+
+        text_elements = [
+            e for e in elements if e.get("type") == "text" and e.get("text", "").strip()
+        ]
+
+        if text_elements:
+            logger.info(f"[GPU-OCR] Standard extraction successful")
+            return [
+                elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
+                for elem in elements
+            ]
+    except:
+        pass
+
+    # Fallback to GPU OCR (PaddleOCR)
+    logger.info(f"[GPU-OCR] Using PaddleOCR with CUDA 13")
+
+    from pdf2image import convert_from_path
+    import pdfplumber
 
     try:
-        # Use unstructured for initial extraction
-        raw_elements = partition_pdf(
+        ocr_processor = PaddleOCRProcessor(use_gpu=True, gpu_mem=8000)
+
+        # Get page count
+        with pdfplumber.open(pdf_path) as pdf:
+            num_pages = len(pdf.pages)
+
+        # Process in batches for better GPU utilization
+        BATCH_SIZE = 8  # Process 8 pages at once on RTX 5090
+        elements = []
+
+        for batch_start in range(1, num_pages + 1, BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, num_pages + 1)
+            page_nums = list(range(batch_start, batch_end))
+
+            logger.info(
+                f"[GPU-OCR] Processing pages {batch_start}-{batch_end-1}/{num_pages}"
+            )
+
+            # Batch process
+            page_texts = ocr_processor.process_pdf_page_batch(pdf_path, page_nums)
+
+            for page_num, text in page_texts.items():
+                if text.strip():
+                    elements.append(
+                        {
+                            "text": text,
+                            "type": "text",
+                            "page": page_num,
+                            "source": "gpu_ocr_paddle_cuda13",
+                        }
+                    )
+
+        logger.info(
+            f"[GPU-OCR] Extracted {len(elements)} elements from {num_pages} pages"
+        )
+        return elements
+
+    except Exception as e:
+        logger.error(f"[GPU-OCR] PaddleOCR failed: {e}")
+        logger.info("[GPU-OCR] Falling back to Tesseract")
+
+        # Last resort: Tesseract
+        elements = partition_pdf(
             filename=pdf_path,
-            strategy="fast",
-            infer_table_structure=True,
-            extract_images_in_pdf=True,
+            strategy="ocr_only",
             languages=["spa", "eng"],
             ocr_languages="spa+eng",
         )
 
-        # Convert to our format with enhanced page detection
-        for elem in raw_elements:
-            elem_dict = {
-                "text": str(elem),
-                "type": (
-                    str(elem.category).lower()
-                    if hasattr(elem, "category")
-                    else "unknown"
-                ),
-                "page": RobustPageExtractor.extract_page_number(elem, pdf_path),
-                "metadata": (
-                    elem.metadata.to_dict()
-                    if hasattr(elem, "metadata") and hasattr(elem.metadata, "to_dict")
-                    else {}
-                ),
-            }
-            elements.append(elem_dict)
+        return [
+            elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
+            for elem in elements
+        ]
+
+
+def extract_elements_from_pdf(
+    pdf_path: str, num_processes: int = None
+) -> List[Dict[str, Any]]:
+    """
+    Extract elements from PDF with parallel processing and GPU acceleration
+
+    Args:
+        pdf_path: Path to PDF file
+        num_processes: Number of parallel processes (default: CPU count - 2)
+    """
+    import multiprocessing
+
+    # Auto-detect optimal number of processes
+    if num_processes is None:
+        cpu_count = multiprocessing.cpu_count()
+        # Use 80% of available cores, leaving some for system
+        num_processes = max(1, int(cpu_count * 0.8))
+
+    logger.info(f"[PDF] Using {num_processes} parallel processes for extraction")
+
+    elements = []
+
+    try:
+        # First attempt with parallel hi_res strategy
+        try:
+            elements = partition_pdf(
+                filename=pdf_path,
+                infer_table_structure=True,
+                languages=["spa", "eng"],
+                strategy="hi_res",
+                extract_images_in_pdf=True,
+                extract_tables=True,
+                chunking_strategy="by_title",
+                max_characters=4000,
+                new_after_n_chars=3800,
+                combine_text_under_n_chars=2000,
+                # PARALLEL PROCESSING OPTIONS
+                multipage_sections=True,  # Process pages independently
+                n_jobs=num_processes,  # Number of parallel jobs
+                # PERFORMANCE OPTIMIZATIONS
+                pdf_infer_table_structure=True,
+                strategy_kwargs={
+                    "hi_res_model_name": "yolox",  # Faster model
+                },
+            )
+
+            text_elements = [
+                e
+                for e in elements
+                if e.get("type") == "text" and e.get("text", "").strip()
+            ]
+            if not text_elements:
+                logger.warning("[PDF] No text found with hi_res, trying OCR...")
+                raise ValueError("No text elements found")
+
+        except Exception as first_error:
+            logger.warning(f"[PDF] Hi-res extraction failed: {first_error}")
+
+            # Fallback to parallel OCR
+            try:
+                elements = partition_pdf(
+                    filename=pdf_path,
+                    infer_table_structure=True,
+                    languages=["spa", "eng"],
+                    strategy="ocr_only",
+                    extract_images_in_pdf=True,
+                    extract_tables=True,
+                    ocr_languages="spa+eng",
+                    ocr_mode="entire_page",
+                    # PARALLEL OCR
+                    n_jobs=num_processes,
+                    multipage_sections=True,
+                )
+
+                text_elements = [
+                    e
+                    for e in elements
+                    if e.get("type") == "text" and e.get("text", "").strip()
+                ]
+                if not text_elements:
+                    raise ValueError("OCR extraction failed")
+
+            except Exception as second_error:
+                logger.warning(f"[PDF] OCR extraction failed: {second_error}")
+
+                # Last resort with parallel auto
+                elements = partition_pdf(
+                    filename=pdf_path,
+                    strategy="auto",
+                    n_jobs=num_processes,
+                    multipage_sections=True,
+                )
 
     except Exception as e:
-        logger.error(f"Error extracting elements from PDF: {e}")
-        raise
+        logger.error(f"[PDF] All extraction strategies failed: {e}")
+        raise ValueError(f"PDF extraction failed: {e}")
 
-    return elements
+    # Convert to dict format
+    element_dicts = []
+    for elem in elements:
+        elem_dict = elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
+        elem_dict["type"] = elem.category if hasattr(elem, "category") else "unknown"
+        element_dicts.append(elem_dict)
+
+    logger.info(
+        f"[PDF] Extracted {len(element_dicts)} elements using {num_processes} processes"
+    )
+    return element_dicts

@@ -29,5 +29,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY . .
+COPY constraint.txt /etc/pip/constraint.txt
 RUN pip3 install --no-cache-dir -r requirements.txt
 ENTRYPOINT ["python", "main.py"]
