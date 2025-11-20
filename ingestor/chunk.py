@@ -21,10 +21,7 @@ import nltk
 import numpy as np
 import pdfplumber
 import PyPDF2
-from unstructured.partition.auto import partition
-from unstructured.partition.docx import partition_docx
 from unstructured.partition.pdf import partition_pdf
-from unstructured.partition.pptx import partition_pptx
 from paddleocr import PaddleOCR
 
 logger = logging.getLogger(__name__)
@@ -1642,6 +1639,35 @@ def extract_with_pdfminer(pdf_path: Path) -> List[Dict[str, Any]]:
         logger.warning(f"pdfminer.six failed: {e}")
 
     return []
+
+
+def process_elements_to_chunks(elements: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Process unstructured elements into chunks
+    """
+    chunks = []
+
+    for element in elements:
+        chunk = {
+            "type": element.category if hasattr(element, "category") else "unknown",
+            "text": str(element),
+            "page": (
+                element.metadata.page_number
+                if hasattr(element, "metadata") and element.metadata
+                else 1
+            ),
+        }
+
+        # Add additional metadata if available
+        if hasattr(element, "metadata") and element.metadata:
+            if hasattr(element.metadata, "coordinates"):
+                chunk["coordinates"] = element.metadata.coordinates
+            if hasattr(element.metadata, "filename"):
+                chunk["source_file"] = element.metadata.filename
+
+        chunks.append(chunk)
+
+    return chunks
 
 
 def extract_text_with_multiple_methods(pdf_path: Path) -> List[Dict[str, Any]]:
