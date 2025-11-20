@@ -13,6 +13,7 @@ import re
 import sqlite3
 import ssl
 import threading
+import torch
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -964,7 +965,7 @@ class AdaptiveChunkingStrategySelector:
 
         logger.info(f"[CHUNK] Selected strategy: {strategy} ({analysis['reason']})")
 
-        # NEW: Choose appropriate chunker
+        # Choose appropriate chunker
         if strategy == "semantic_boundary":
             # Import here to avoid circular imports
             from main import model_cache
@@ -972,6 +973,16 @@ class AdaptiveChunkingStrategySelector:
             embed_model = model_cache.get_model(
                 "intfloat/multilingual-e5-large-instruct"
             )
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            try:
+                embed_model = embed_model.to(device)
+                logger.info(f"Model moved to {device.upper()}")
+            except Exception as e:
+                logger.error(f"Failed to move model to {device}: {e}")
+                device = "cpu"  # Fallback to CPU
+                embed_model = embed_model.to(device)
+
             chunker = SemanticAwareChunker(
                 chunk_size,
                 overlap,
