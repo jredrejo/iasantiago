@@ -33,14 +33,19 @@ sentence-transformers==5.1.2
 #pillow==12.0.0
 pillow-heif==1.1.1
 
-# OCR
-pytesseract==0.3.13
 
 # Detección de tipo MIME
 python-magic==0.4.27
 
 # Utilidades
 watchdog==4.0.1
+
+# OCR
+pytesseract==0.3.13
+#--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
+#paddlepaddle-gpu==3.2.1
+paddleocr
+
 
 # ============================================================
 # NOTAS:

@@ -1,4 +1,5 @@
-import os, glob
+import os
+import glob
 import torch
 import logging
 import json
@@ -7,18 +8,11 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
-from qdrant_client import models
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 from settings import *
-from chunk import (
-    AdaptiveChunkingStrategySelector,
-    extract_elements_from_pdf,
-    PageSequenceValidator,
-)
-from typing import Dict, Any, Optional
+from chunk import pdf_to_chunks_with_enhanced_validation
 from whoosh import index
 from whoosh.fields import Schema, ID, TEXT, NUMERIC
-import time
 
 # ============================================================
 # CRITICAL: Configure model cache directory BEFORE imports
@@ -31,376 +25,25 @@ os.environ["HF_HOME"] = MODEL_CACHE_DIR
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 
 # ============================================================
-# GPU DETECTION AND CONFIGURATION
+# EMBEDDINGS DEVICE: Todo en GPU con float16
+# - Modelo en GPU con float16 (~650MB vs 1.3GB en float32)
+# - Inference en GPU
+# - Total: LLaVA 16.7GB + embeddings 650MB = ~17.4GB (cabe)
 # ============================================================
+EMBEDDING_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+EMBEDDING_DTYPE = "float16"
 
-logger = logging.getLogger(__name__)
+# Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-# ============================================================
-# QDRANT CLIENT INITIALIZATION
-# ============================================================
+logger = logging.getLogger(__name__)
 
-# Initialize Qdrant client
-try:
-    client = QdrantClient(url=QDRANT_URL)
-    logger.info(f"[QDRANT] Connected to Qdrant at {QDRANT_URL}")
-except Exception as e:
-    logger.error(f"[QDRANT] Failed to connect to Qdrant: {e}")
-    client = None
+logger.info(f"[CONFIG] Embedding device: {EMBEDDING_DEVICE}")
+logger.info(f"[CACHE] Model cache directory: {MODEL_CACHE_DIR}")
+logger.info(f"[CACHE] HF_HOME: {os.environ['HF_HOME']}")
 
-
-class BlackwellOptimizedGPUManager:
-    """
-    Enhanced GPU manager optimized for RTX 5090 and RTX 5070 Ti (Blackwell architecture)
-    """
-
-    def __init__(self):
-        self.gpu_info = self._detect_gpu_detailed()
-        self.memory_monitor = GPUMemoryMonitor()
-        self._apply_optimal_settings()
-
-    def _detect_gpu_detailed(self) -> Dict[str, Any]:
-        """Enhanced GPU detection with Blackwell-specific optimizations"""
-        info = {
-            "available": torch.cuda.is_available(),
-            "name": "CPU",
-            "memory_total_gb": 0,
-            "memory_free_gb": 0,
-            "compute_capability": (0, 0),
-            "tensor_cores": False,
-            "architecture": "Unknown",
-            "optimal_dtype": torch.float32,
-            "supports_flash_attention": False,
-            "recommended_batch_size": 16,
-            "max_batch_size": 32,
-        }
-
-        if not info["available"]:
-            logger.warning("[GPU] CUDA not available, using CPU")
-            return info
-
-        try:
-            props = torch.cuda.get_device_properties(0)
-            info.update(
-                {
-                    "name": props.name,
-                    "memory_total_gb": props.total_memory / 1e9,
-                    "compute_capability": (props.major, props.minor),
-                    "multiprocessor_count": props.multi_processor_count,
-                }
-            )
-
-            # Get current memory state
-            info["memory_free_gb"] = torch.cuda.mem_get_info()[0] / 1e9
-            info["memory_allocated_gb"] = torch.cuda.memory_allocated(0) / 1e9
-
-            # Determine architecture and capabilities
-            major, minor = info["compute_capability"]
-
-            # RTX 5090 (Blackwell) - Compute 10.0
-            if major >= 10 or "5090" in info["name"]:
-                info.update(
-                    {
-                        "architecture": "Blackwell",
-                        "tensor_cores": True,
-                        "supports_flash_attention": True,
-                        "optimal_dtype": torch.bfloat16,  # BF16 superior on Blackwell
-                        "recommended_batch_size": 64,
-                        "max_batch_size": 128,
-                    }
-                )
-                logger.info(
-                    "[GPU] 🚀 RTX 5090 (Blackwell) detected - Ultra performance mode"
-                )
-
-            # RTX 5070 Ti (Blackwell) - Compute 10.0
-            elif "5070" in info["name"]:
-                info.update(
-                    {
-                        "architecture": "Blackwell",
-                        "tensor_cores": True,
-                        "supports_flash_attention": True,
-                        "optimal_dtype": torch.bfloat16,
-                        "recommended_batch_size": 32,
-                        "max_batch_size": 64,
-                    }
-                )
-                logger.info(
-                    "[GPU] ⚡ RTX 5070 Ti (Blackwell) detected - High performance mode"
-                )
-
-            # RTX 40xx (Ada Lovelace) - Compute 8.9
-            elif major == 8 and minor == 9:
-                info.update(
-                    {
-                        "architecture": "Ada Lovelace",
-                        "tensor_cores": True,
-                        "supports_flash_attention": True,
-                        "optimal_dtype": torch.float16,
-                        "recommended_batch_size": 24,
-                        "max_batch_size": 48,
-                    }
-                )
-
-            # RTX 30xx (Ampere) - Compute 8.6
-            elif major == 8 and minor == 6:
-                info.update(
-                    {
-                        "architecture": "Ampere",
-                        "tensor_cores": True,
-                        "supports_flash_attention": True,
-                        "optimal_dtype": torch.float16,
-                        "recommended_batch_size": 16,
-                        "max_batch_size": 32,
-                    }
-                )
-
-            # Blackwell-specific optimizations
-            if info["architecture"] == "Blackwell":
-                # Enable additional Blackwell features
-                info.update(
-                    {
-                        "supports_fp8": True,  # FP8 precision support
-                        "supports_tma": True,  # Tensor Memory Accelerator
-                        "supports_transformer_engine": True,
-                        "recommended_batch_size": int(
-                            info["recommended_batch_size"] * BLACKWELL_BATCH_MULTIPLIER
-                        ),
-                        "max_batch_size": int(
-                            info["max_batch_size"] * BLACKWELL_BATCH_MULTIPLIER
-                        ),
-                    }
-                )
-
-                logger.info("[GPU] 🚀 Blackwell-specific optimizations enabled")
-
-                # Enable FP8 precision for embeddings if available
-                if hasattr(torch, "float8_e5m2"):
-                    info["optimal_dtype"] = torch.float8_e5m2
-                    logger.info("[GPU] ✓ FP8 precision enabled for embeddings")
-
-            # Adjust for memory constraints
-            if info["memory_total_gb"] < 12:
-                info["recommended_batch_size"] = max(
-                    8, info["recommended_batch_size"] // 2
-                )
-                info["max_batch_size"] = max(16, info["max_batch_size"] // 2)
-
-            logger.info(f"[GPU] {info['name']}")
-            logger.info(
-                f"[GPU] Memory: {info['memory_total_gb']:.1f}GB total, "
-                f"{info['memory_free_gb']:.1f}GB free"
-            )
-            logger.info(f"[GPU] Compute: {major}.{minor} ({info['architecture']})")
-            logger.info(f"[GPU] Optimal dtype: {info['optimal_dtype']}")
-            logger.info(
-                f"[GPU] Batch size: {info['recommended_batch_size']} "
-                f"(max: {info['max_batch_size']})"
-            )
-
-        except Exception as e:
-            logger.error(f"[GPU] Detection error: {e}", exc_info=True)
-            info["available"] = False
-
-        return info
-
-    def _apply_optimal_settings(self):
-        """Apply optimal CUDA settings for detected GPU"""
-        if not self.gpu_info["available"]:
-            return
-
-        try:
-            # Enable TF32 for Ampere+ (huge speedup for FP32)
-            if self.gpu_info["compute_capability"][0] >= 8:
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-                logger.info("[GPU] ✓ TF32 enabled for matmul")
-
-            # Enable cuDNN benchmarking for consistent input sizes
-            torch.backends.cudnn.benchmark = True
-
-            # Optimize memory allocator
-            if hasattr(torch.cuda, "set_per_process_memory_fraction"):
-                # Reserve 90% for RTX 5090, 85% for others
-                fraction = 0.90 if "5090" in self.gpu_info["name"] else 0.85
-                torch.cuda.set_per_process_memory_fraction(fraction, device=0)
-                logger.info(f"[GPU] Memory fraction: {fraction:.0%}")
-
-            # Enable memory efficient attention if available (PyTorch 2.0+)
-            if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
-                # Flash Attention 2 for Blackwell/Ada
-                os.environ["TORCH_CUDNN_SDPA_ENABLED"] = "1"
-                logger.info("[GPU] ✓ Flash Attention enabled")
-
-            # Optimize CUDA allocator for large models
-            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
-
-            torch.cuda.empty_cache()
-
-        except Exception as e:
-            logger.error(f"[GPU] Error applying settings: {e}")
-
-    def get_optimal_batch_size(
-        self, model_name: str, sequence_length: int, current_memory_usage: float = 0
-    ) -> int:
-        """Calculate optimal batch size with Blackwell-specific adjustments"""
-        base_batch = self.gpu_info["recommended_batch_size"]
-
-        # Adjust for model size
-        if "large" in model_name.lower():
-            base_batch = int(base_batch * 0.7)
-        elif "xlarge" in model_name.lower() or "xxl" in model_name.lower():
-            base_batch = int(base_batch * 0.5)
-        elif "small" in model_name.lower() or "mini" in model_name.lower():
-            base_batch = int(base_batch * 1.3)
-
-        # Adjust for sequence length
-        if sequence_length > 512:
-            factor = 512 / sequence_length
-            base_batch = int(base_batch * max(0.5, factor))
-
-        # Adjust for current memory usage
-        free_memory_gb = self.gpu_info["memory_free_gb"] - current_memory_usage
-        memory_ratio = free_memory_gb / self.gpu_info["memory_total_gb"]
-
-        if memory_ratio < 0.3:  # Less than 30% free
-            base_batch = max(4, int(base_batch * 0.5))
-            logger.warning(
-                f"[GPU] Low memory ({memory_ratio:.0%}), reducing batch size"
-            )
-        elif memory_ratio > 0.7:  # More than 70% free
-            base_batch = min(self.gpu_info["max_batch_size"], int(base_batch * 1.3))
-
-        # Additional adjustments for Blackwell
-        if self.gpu_info["architecture"] == "Blackwell":
-            # Increase batch size for smaller models on Blackwell
-            if "small" in model_name.lower() or "mini" in model_name.lower():
-                base_batch = int(base_batch * BLACKWELL_SMALL_MODEL_MULTIPLIER)
-
-            # Further increase for models that benefit from FP8
-            if self.gpu_info.get("supports_fp8", False):
-                base_batch = int(base_batch * BLACKWELL_FP8_MULTIPLIER)
-
-        return max(4, base_batch)  # Minimum 4
-
-    def should_use_mixed_precision(self, model_name: str) -> tuple[bool, torch.dtype]:
-        """Determine if mixed precision should be used"""
-        if not self.gpu_info["tensor_cores"]:
-            return False, torch.float32
-
-        # Blackwell (RTX 50xx): BF16 is optimal
-        if self.gpu_info["architecture"] == "Blackwell":
-            return True, torch.bfloat16
-
-        # Ada/Ampere: FP16 is optimal
-        if self.gpu_info["architecture"] in ["Ada Lovelace", "Ampere"]:
-            return True, torch.float16
-
-        return False, torch.float32
-
-    def optimize_model_loading(self, model):
-        """Apply Blackwell-specific optimizations after model loading"""
-        model = (
-            super().optimize_model_loading(model)
-            if hasattr(super(), "optimize_model_loading")
-            else model
-        )
-
-        if (
-            not self.gpu_info["available"]
-            or self.gpu_info["architecture"] != "Blackwell"
-        ):
-            return model
-
-        try:
-            # Enable Transformer Engine for compatible models
-            if self.gpu_info.get("supports_transformer_engine", False):
-                try:
-                    from transformer_engine.pytorch import enable as te_enable
-
-                    te_enable()
-                    logger.info("[GPU] ✓ Transformer Engine enabled")
-                except ImportError:
-                    logger.debug("[GPU] Transformer Engine not available")
-
-            # Enable TMA (Tensor Memory Accelerator) if available
-            if self.gpu_info.get("supports_tma", False):
-                try:
-                    # This would require specific CUDA libraries
-                    # Placeholder for TMA optimization
-                    logger.info("[GPU] ✓ TMA optimizations applied")
-                except Exception as e:
-                    logger.debug(f"[GPU] TMA optimization failed: {e}")
-
-            return model
-
-        except Exception as e:
-            logger.error(f"[GPU] Blackwell optimization error: {e}")
-            return model
-
-    def get_memory_stats(self) -> Dict[str, float]:
-        """Get current GPU memory statistics"""
-        if not self.gpu_info["available"]:
-            return {}
-
-        try:
-            allocated = torch.cuda.memory_allocated(0) / 1e9
-            reserved = torch.cuda.memory_reserved(0) / 1e9
-            free = torch.cuda.mem_get_info()[0] / 1e9
-
-            return {
-                "allocated_gb": allocated,
-                "reserved_gb": reserved,
-                "free_gb": free,
-                "total_gb": self.gpu_info["memory_total_gb"],
-                "utilization": allocated / self.gpu_info["memory_total_gb"],
-            }
-        except:
-            return {}
-
-
-class GPUMemoryMonitor:
-    """Monitor GPU memory and provide warnings"""
-
-    def __init__(self, warning_threshold: float = 0.85):
-        self.warning_threshold = warning_threshold
-        self.peak_memory = 0
-
-    def check_memory(self) -> Optional[str]:
-        """Check memory and return warning if needed"""
-        if not torch.cuda.is_available():
-            return None
-
-        try:
-            allocated = torch.cuda.memory_allocated(0)
-            total = torch.cuda.get_device_properties(0).total_memory
-
-            self.peak_memory = max(self.peak_memory, allocated)
-
-            ratio = allocated / total
-
-            if ratio > self.warning_threshold:
-                return (
-                    f"⚠️  High GPU memory usage: {ratio:.1%} "
-                    f"({allocated/1e9:.1f}GB / {total/1e9:.1f}GB)"
-                )
-
-            return None
-
-        except:
-            return None
-
-    def get_peak_memory_gb(self) -> float:
-        """Get peak memory usage"""
-        return self.peak_memory / 1e9
-
-
-gpu_manager = BlackwellOptimizedGPUManager()
-
+client = QdrantClient(url=QDRANT_URL)
 
 # ============================================================
 # STATE TRACKING: Rastrear archivos ya procesados
@@ -460,11 +103,6 @@ class ProcessingState:
             logger.error(f"[STATE] Failed to calculate hash for {file_path}: {e}")
             return None
 
-    def get_file_info(self, file_path: str) -> Optional[Dict]:
-        """Get detailed info about a processed file"""
-        file_path = str(file_path)
-        return self.state["processed"].get(file_path)
-
     def is_already_processed(self, file_path: str) -> bool:
         """Verifica si un archivo ya fue procesado"""
         file_path = str(file_path)
@@ -491,18 +129,17 @@ class ProcessingState:
         logger.info(f"[STATE] Skipping already processed: {Path(file_path).name}")
         return True
 
-    def mark_as_processed(self, file_path: str, topic: str, chunk_count: int = 0):
-        """Enhanced processing marker with metadata"""
+    def mark_as_processed(self, file_path: str, topic: str):
+        """Marca archivo como procesado exitosamente"""
         file_path = str(file_path)
         self.state["processed"][file_path] = {
             "hash": self.get_file_hash(file_path),
             "timestamp": datetime.now().isoformat(),
             "topic": topic,
             "status": "success",
-            "chunk_count": chunk_count,  # NEW: track chunks
-            "file_size_mb": Path(file_path).stat().st_size / 1e6,  # NEW: file size
         }
         self._save_state()
+        logger.info(f"[STATE] Marked as processed: {Path(file_path).name}")
 
     def mark_as_failed(self, file_path: str, error: str):
         """Marca archivo como fallido"""
@@ -552,52 +189,72 @@ state = ProcessingState()
 # VECTOR VALIDATION: Asegurar vectores válidos para Qdrant
 # ============================================================
 def validate_and_fix_vectors(vecs, dims):
-    """Enhanced vector validation with detailed logging"""
-
+    """
+    Valida y corrige vectores para Qdrant
+    - Elimina NaN, Inf
+    - Asegura tipo correcto (list of floats)
+    - Asegura dimensión correcta
+    """
     if isinstance(vecs, torch.Tensor):
         vecs = vecs.float().cpu().numpy()
 
     if isinstance(vecs, np.ndarray):
         vecs = vecs.tolist()
 
+    if not isinstance(vecs, list):
+        raise ValueError(f"Vectors must be list, got {type(vecs)}")
+
     valid_vecs = []
-    issues = {"wrong_dimension": 0, "nan_inf": 0, "type_error": 0, "total_fixed": 0}
+    invalid_count = 0
 
     for i, vec in enumerate(vecs):
-        # Convert to list if needed
-        if isinstance(vec, (np.ndarray, torch.Tensor)):
-            vec = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+        # Convertir a lista si es necesario
+        if isinstance(vec, np.ndarray):
+            vec = vec.tolist()
+        elif isinstance(vec, torch.Tensor):
+            vec = vec.float().cpu().numpy().tolist()
 
-        # Check dimension
+        # Verificar dimensión
         if len(vec) != dims:
-            issues["wrong_dimension"] += 1
+            logger.warning(f"Vector {i} has wrong dimension: {len(vec)} != {dims}")
+            invalid_count += 1
+            # Rellenar o truncar
             if len(vec) < dims:
                 vec = vec + [0.0] * (dims - len(vec))
             else:
                 vec = vec[:dims]
 
-        # Validate each value
+        # Verificar y corregir valores inválidos
         valid_vec = []
+        has_invalid = False
         for val in vec:
+            if isinstance(val, (list, np.ndarray)):
+                val = float(val[0]) if len(val) > 0 else 0.0
+
+            # Convertir a float
             try:
                 val = float(val)
-                if not np.isfinite(val):
-                    val = 0.0
-                    issues["nan_inf"] += 1
-                valid_vec.append(val)
             except (TypeError, ValueError):
-                valid_vec.append(0.0)
-                issues["type_error"] += 1
+                val = 0.0
+                has_invalid = True
+
+            # Verificar NaN/Inf
+            if not np.isfinite(val):
+                val = 0.0
+                has_invalid = True
+
+            valid_vec.append(val)
+
+        if has_invalid:
+            invalid_count += 1
+            logger.warning(
+                f"Vector {i} contained invalid values (NaN/Inf), replaced with 0.0"
+            )
 
         valid_vecs.append(valid_vec)
 
-    issues["total_fixed"] = sum(issues.values())
-
-    if issues["total_fixed"] > 0:
-        logger.warning(f"[VECTOR] Fixed {issues['total_fixed']} vector issues:")
-        for issue_type, count in issues.items():
-            if count > 0 and issue_type != "total_fixed":
-                logger.warning(f"  - {issue_type}: {count}")
+    if invalid_count > 0:
+        logger.warning(f"Fixed {invalid_count}/{len(vecs)} invalid vectors")
 
     return valid_vecs
 
@@ -605,132 +262,138 @@ def validate_and_fix_vectors(vecs, dims):
 # ============================================================
 # MODEL CACHE: Carga modelos con caché persistente
 # ============================================================
+class ModelCache:
+    """Gestiona caché de modelos SentenceTransformer"""
 
-
-class OptimizedModelCache:
     def __init__(self):
         self.models = {}
-        self.gpu_manager = gpu_manager
-        self.use_gpu = self.gpu_manager.gpu_info["available"]
-        self.gpu_failed = False
+        self.cache_info_file = os.path.join(MODEL_CACHE_DIR, ".model_cache_info.json")
+        self.use_gpu = torch.cuda.is_available()
+        self.gpu_failed = False  # Track si GPU falló
+        logger.info("[CACHE] Initializing model cache")
 
-    def get_model(self, model_name: str, device: str = None) -> SentenceTransformer:
-        """Enhanced model loading with GPU optimizations"""
-
-        if device is None:
-            device = "cuda" if self.use_gpu else "cpu"
-
+    def get_model(self, model_name: str, device: str = "cpu") -> SentenceTransformer:
+        """Obtiene modelo del caché o lo descarga"""
+        # Si GPU falló antes, usar CPU directamente
         if self.gpu_failed and device == "cuda":
             logger.warning("[CACHE] GPU failed previously, using CPU")
             device = "cpu"
 
-        # Determine optimal dtype
-        use_amp, optimal_dtype = self.gpu_manager.should_use_mixed_precision(model_name)
-
-        cache_key = f"{model_name}_{device}_{optimal_dtype}"
+        cache_key = f"{model_name}_{device}_{EMBEDDING_DTYPE}"
 
         if cache_key in self.models:
             logger.info(f"[CACHE] Using cached model: {model_name}")
             return self.models[cache_key]
 
-        logger.info(f"[CACHE] Loading model: {model_name}")
-        logger.info(f"[CACHE] Device: {device}, Dtype: {optimal_dtype}")
+        logger.info(f"[CACHE] Loading model (may download if first time): {model_name}")
+        logger.info(f"[CACHE] Cache directory: {MODEL_CACHE_DIR}")
+        logger.info(f"[CACHE] Device: {device}")
+        logger.info(f"[CACHE] Dtype: {EMBEDDING_DTYPE}")
 
+        start_time = datetime.now().timestamp()
         try:
+            # HF_HOME already set in environment
             model = SentenceTransformer(
                 model_name,
                 trust_remote_code=True,
                 device=device,
             )
 
-            # Apply GPU optimizations
-            if self.use_gpu and device == "cuda":
-                model = self.gpu_manager.optimize_model_loading(model)
+            # Convertir a float16 SOLO si es GPU y no ha fallado antes
+            if (
+                device == "cuda"
+                and EMBEDDING_DTYPE == "float16"
+                and not self.gpu_failed
+            ):
+                try:
+                    # Test simple para verificar que float16 funciona
+                    test_tensor = torch.randn(1, 10).half().to(device)
+                    _ = test_tensor * 2  # Operación simple
 
+                    model = model.half()
+                    logger.info(f"[CACHE] Model converted to float16")
+                except Exception as e:
+                    logger.warning(f"[CACHE] float16 conversion failed: {e}")
+                    logger.warning(f"[CACHE] Keeping model in float32")
+
+            elapsed = datetime.now().timestamp() - start_time
+            logger.info(f"[CACHE] Model loaded in {elapsed:.2f}s")
+
+            # Cache en memoria
             self.models[cache_key] = model
-            return model
 
+            return model
         except Exception as e:
-            logger.error(f"[CACHE] Failed to load model: {e}", exc_info=True)
+            logger.error(
+                f"[CACHE] Failed to load model {model_name}: {e}", exc_info=True
+            )
             raise
 
-    def encode_with_gpu_optimization(
-        self, model: SentenceTransformer, texts: list, batch_size: int = None
+    def encode_with_gpu(
+        self, model: SentenceTransformer, texts: list, batch_size: int = 32
     ):
-        """Enhanced encoding with dynamic batch sizing"""
-
+        """Encode textos con GPU/CPU fallback automático"""
         device = str(model.device)
-
-        if self.gpu_failed and device == "cuda":
-            logger.warning("[CACHE] GPU failed previously, skipping to CPU fallback")
-            return self._encode_cpu_fallback(model, texts)
-
-        # Get current memory usage
-        mem_stats = self.gpu_manager.get_memory_stats()
-        current_usage = mem_stats.get("allocated_gb", 0)
-
-        # Calculate optimal batch size
-        if batch_size is None:
-            avg_length = sum(len(text) for text in texts) / len(texts)
-            batch_size = self.gpu_manager.get_optimal_batch_size(
-                model._modules["0"].auto_model.name_or_path,
-                int(avg_length),
-                current_usage,
-            )
-
-        logger.info(f"[CACHE] Encoding {len(texts)} texts with batch size {batch_size}")
-
-        # Monitor memory during encoding
-        warning = self.gpu_manager.memory_monitor.check_memory()
-        if warning:
-            logger.warning(warning)
+        logger.info(f"[CACHE] Encoding {len(texts)} texts on {device}")
 
         try:
+            # Intenta encoding en dispositivo actual
             vecs = model.encode(
                 texts,
                 normalize_embeddings=True,
                 batch_size=batch_size,
                 show_progress_bar=True,
                 convert_to_tensor=True,
-                device=device,
             )
 
+            # Convierte a float32 numpy array
             if torch.is_tensor(vecs):
-                vecs = vecs.cpu().numpy()
-
-            # Log peak memory
-            peak = self.gpu_manager.memory_monitor.get_peak_memory_gb()
-            logger.info(f"[CACHE] Peak GPU memory: {peak:.1f}GB")
+                vecs = vecs.float().cpu().numpy()
 
             return vecs
 
         except RuntimeError as e:
-            if "CUDA" in str(e) or "cuda" in str(e):
+            error_msg = str(e)
+
+            # Si es error de CUDA, intentar fallback a CPU
+            if "CUDA" in error_msg or "cuda" in error_msg:
                 logger.error(f"[CACHE] GPU encoding failed: {e}")
+                logger.warning("[CACHE] Falling back to CPU encoding...")
+
+                # Marcar GPU como fallida
                 self.gpu_failed = True
 
-                # Fallback to CPU
-                return self._encode_cpu_fallback(model, texts)
-            raise
+                try:
+                    # Mover modelo a CPU
+                    model = model.cpu()
+                    if hasattr(model, "half"):
+                        model = model.float()  # Volver a float32
 
-    def _encode_cpu_fallback(self, model, texts):
-        """CPU fallback with smaller batch size"""
-        logger.warning("[CACHE] Falling back to CPU encoding...")
+                    # Reintentar en CPU
+                    vecs = model.encode(
+                        texts,
+                        normalize_embeddings=True,
+                        batch_size=batch_size,
+                        show_progress_bar=True,
+                        convert_to_tensor=True,
+                    )
 
-        model = model.cpu().float()
+                    if torch.is_tensor(vecs):
+                        vecs = vecs.float().cpu().numpy()
 
-        vecs = model.encode(
-            texts,
-            normalize_embeddings=True,
-            batch_size=8,  # Smaller for CPU
-            show_progress_bar=True,
-        )
+                    logger.info("[CACHE] Successfully encoded on CPU")
+                    return vecs
 
-        return np.array(vecs)
+                except Exception as cpu_error:
+                    logger.error(f"[CACHE] CPU fallback also failed: {cpu_error}")
+                    raise
+            else:
+                # Otro tipo de error, propagar
+                raise
 
 
 # Instancia global de caché de modelos
-model_cache = OptimizedModelCache()
+model_cache = ModelCache()
 
 
 def topic_collection(topic: str) -> str:
@@ -738,9 +401,6 @@ def topic_collection(topic: str) -> str:
 
 
 def ensure_qdrant(topic: str, d: int):
-    if client is None:
-        logger.error("[QDRANT] Client not initialized - cannot ensure collection")
-        return False
     coll = topic_collection(topic)
 
     if not client.collection_exists(collection_name=coll):
@@ -797,36 +457,8 @@ def ensure_whoosh(topic: str):
         logger.info(f"[WHOOSH] Index at {path} already exists")
 
 
-def log_gpu_diagnostics():
-    """Log GPU diagnostics information"""
-    if not torch.cuda.is_available():
-        logger.info("[GPU] CUDA not available")
-        return
-
-    try:
-        logger.info("[GPU] Diagnostics:")
-        logger.info(f"  - CUDA version: {torch.version.cuda}")
-        logger.info(f"  - PyTorch version: {torch.__version__}")
-        logger.info(f"  - Number of GPUs: {torch.cuda.device_count()}")
-
-        for i in range(torch.cuda.device_count()):
-            props = torch.cuda.get_device_properties(i)
-            memory_total = props.total_memory / 1e9
-            memory_reserved = torch.cuda.memory_reserved(i) / 1e9
-            memory_allocated = torch.cuda.memory_allocated(i) / 1e9
-
-            logger.info(f"  - GPU {i}: {props.name}")
-            logger.info(f"    - Compute capability: {props.major}.{props.minor}")
-            logger.info(f"    - Total memory: {memory_total:.2f} GB")
-            logger.info(f"    - Reserved memory: {memory_reserved:.2f} GB")
-            logger.info(f"    - Allocated memory: {memory_allocated:.2f} GB")
-            logger.info(f"    - Multiprocessors: {props.multi_processor_count}")
-    except Exception as e:
-        logger.error(f"[GPU] Error getting diagnostics: {e}")
-
-
 def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = None):
-    """Index a single PDF file to both Qdrant and Whoosh with enhanced chunking"""
+    """Index a single PDF file to both Qdrant and Whoosh"""
 
     if state.is_already_processed(pdf_path):
         return True
@@ -836,24 +468,28 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     logger.info(f"Topic: {topic}")
     logger.info(f"{'=' * 60}")
 
-    # Use GPU if available
-    device = "cuda" if model_cache.use_gpu else "cpu"
+    # Use CPU for embeddings (vLLM-LLaVA uses GPU)
+    device = EMBEDDING_DEVICE
     logger.info(f"Device: {device}")
 
     if device == "cuda":
-        gpu_info = gpu_manager.gpu_info
-        logger.info(f"GPU: {gpu_info['name']}")
-        logger.info(f"GPU Memory: {gpu_info['memory_total_gb']:.1f} GB")
-        logger.info(f"Compute Capability: {gpu_info['compute_capability']}")
-        logger.info(f"Recommended Batch Size: {gpu_info['recommended_batch_size']}")
-
         try:
+            logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
+            logger.info(
+                f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB"
+            )
+            logger.info(f"CUDA version: {torch.version.cuda}")
+            logger.info(f"PyTorch version: {torch.__version__}")
+
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        except Exception as e:
-            logger.warning(f"CUDA sync error: {e}")
 
-    # Load embedding model with GPU optimization
+        except Exception as e:
+            logger.warning(f"CUDA info error: {e}")
+
+    # ============================================================
+    # USE MODEL CACHE: Obtener modelo desde caché
+    # ============================================================
     embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     logger.info(f"Loading embedding model: {embed_name}")
 
@@ -876,26 +512,10 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             "LLAVA_CACHE_DB", "/tmp/llava_cache/llava_cache.db"
         )
 
-        # Use enhanced chunking with strategy selection
-        strategy_selector = AdaptiveChunkingStrategySelector()
-
-        # First extract elements
-        elements = extract_elements_from_pdf(pdf_path)
-
-        # Select and apply optimal chunking strategy
-        chunks = strategy_selector.select_and_apply_strategy(
-            elements, chunk_size=900, overlap=120, pdf_path=pdf_path
+        chunks = pdf_to_chunks_with_enhanced_validation(
+            pdf_path, vllm_url=vllm_url, cache_db=cache_db
         )
-
-        # ADD: Log page distribution for audit
-        page_counts = {}
-        for chunk in chunks:
-            page = chunk.get("page", 1)
-            page_counts[page] = page_counts.get(page, 0) + 1
-
-        logger.info(
-            f"[PAGE] Distribution across {len(page_counts)} pages: {page_counts}"
-        )
+        logger.info(f"[OK] Extracted {len(chunks)} chunks")
 
         text_count = sum(1 for c in chunks if c.get("type") == "text")
         table_count = sum(1 for c in chunks if c.get("type") == "table")
@@ -904,30 +524,21 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         logger.info(f"  - Tables: {table_count}")
         logger.info(f"  - Images: {image_count}")
 
-    except ValueError as e:
-        # Page validation failed - REJECT
-        logger.error(f"[ERROR] Chunk validation failed: {e}")
-        state.mark_as_failed(pdf_path, str(e))
-        return False
     except Exception as e:
         logger.error(f"[ERROR] Failed to extract text from PDF: {e}", exc_info=True)
         state.mark_as_failed(pdf_path, str(e))
         return False
 
-    texts = [c["text"] for c in chunks if c.get("text", "").strip()]
-
-    # Check if we have any text to encode
-    if not texts:
-        logger.error(f"[ERROR] No text extracted from chunks in {Path(pdf_path).name}")
-        state.mark_as_failed(pdf_path, "No text content extracted from PDF")
-        return False
+    texts = [c["text"] for c in chunks]
 
     logger.info(f"Encoding {len(texts)} chunks...")
     try:
+        # Usa GPU inference si está disponible
+        # ✅ IMPORTANTE: intfloat/multilingual-e5-large-instruct requiere prefixes específicos
         embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
 
         if "e5" in embed_name.lower():
-            # Use prefix for e5 models
+            # Usa prefix de documento para indexación
             texts_to_encode = [
                 f"Represent this document for retrieval: {text}" for text in texts
             ]
@@ -936,28 +547,21 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             texts_to_encode = texts
             logger.info(f"[EMBED] No prefix needed for {embed_name}")
 
-        # Calculate optimal batch size based on GPU and text length
-        avg_text_length = sum(len(text) for text in texts) / len(texts)
-        optimal_batch_size = gpu_manager.get_optimal_batch_size(
-            embed_name, int(avg_text_length)
-        )
-
-        logger.info(f"[CACHE] Using optimized batch size: {optimal_batch_size}")
-
-        vecs = model_cache.encode_with_gpu_optimization(
+        vecs = model_cache.encode_with_gpu(
             model,
-            texts_to_encode,
-            batch_size=optimal_batch_size,
+            texts_to_encode,  # ← CON PREFIXES
+            batch_size=32,
         )
 
-        # Validate vectors
-        if not isinstance(vecs, list) or any(
-            len(v) != dims for v in vecs[: min(10, len(vecs))]
-        ):
-            vecs = validate_and_fix_vectors(vecs, dims)
+        # CRÍTICO: Validar y corregir vectores antes de enviar a Qdrant
+        vecs = validate_and_fix_vectors(vecs, dims)
 
+        # DEBUG: Verifica dimensión y tipo
         logger.info(f"[OK] Encoded {len(vecs)} vectors")
+        logger.info(f"[DEBUG] Vector type: {type(vecs)}")
+        logger.info(f"[DEBUG] First vector type: {type(vecs[0])}")
         logger.info(f"[DEBUG] Vector dimension: {len(vecs[0])}")
+        logger.info(f"[DEBUG] First value type: {type(vecs[0][0])}")
 
     except Exception as e:
         logger.error(f"[ERROR] Failed to encode chunks: {e}", exc_info=True)
@@ -966,10 +570,16 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
 
     payloads = []
     for idx, c in enumerate(chunks):
+        # Validate page number
+        page = c.get("page", 1)
+        if not isinstance(page, int) or page < 1:
+            logger.warning(f"[MAIN] Invalid page {page} in chunk {idx}, using 1")
+            page = 1
+
         payloads.append(
             {
                 "file_path": pdf_path,
-                "page": c.get("page", 1),
+                "page": page,
                 "chunk_id": idx,
                 "text": c["text"],
                 "chunk_type": c.get("type", "text"),
@@ -978,7 +588,7 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             }
         )
 
-    total_chunks = len(vecs)
+      total_chunks = len(vecs)
     logger.info(
         f"Upserting {total_chunks} vectors to Qdrant in batches of {QDRANT_BATCH_SIZE}..."
     )
@@ -1025,9 +635,15 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         writer = idx.writer(limitmb=512, procs=0, multisegment=True)
 
         for i, c in enumerate(chunks):
+            # Validate page number for BM25 indexing
+            page = c.get("page", 1)
+            if not isinstance(page, int) or page < 1:
+                logger.warning(f"[MAIN] Invalid page {page} in chunk {i} for BM25, using 1")
+                page = 1
+
             writer.update_document(
                 file_path=pdf_path,
-                page=c.get("page", 1),
+                page=page,
                 chunk_id=i,
                 text=c["text"],
                 chunk_type=c.get("type", "text"),
@@ -1041,27 +657,20 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         state.mark_as_failed(pdf_path, str(e))
         return False
 
-    # Get page distribution
-    page_counts = {}
-    for chunk in chunks:
-        page = chunk.get("page", 1)
-        page_counts[page] = page_counts.get(page, 0) + 1
-
     logger.info(f"{'=' * 60}")
     logger.info(f"[SUCCESS] {Path(pdf_path).name}")
     logger.info(f"  - Total Chunks: {len(chunks)}")
     logger.info(f"  - Vectors: {len(vecs)}")
     logger.info(f"  - Topic: {topic}")
     logger.info(f"  - Collection: {topic_collection(topic)}")
-    logger.info(f"  - Page distribution: {page_counts}")
     logger.info(f"{'=' * 60}\n")
 
-    state.mark_as_processed(pdf_path, topic, len(chunks))
+    state.mark_as_processed(pdf_path, topic)
     return True
 
 
 def initial_scan():
-    """Scan all topic directories and index PDFs with GPU diagnostics"""
+    """Scan all topic directories and index PDFs"""
     logger.info("\n" + "=" * 60)
     logger.info("STARTING INITIAL SCAN")
     logger.info("=" * 60)
@@ -1082,8 +691,16 @@ def initial_scan():
     if stats["last_scan"]:
         logger.info(f"  - Last scan: {stats['last_scan']}")
 
-    # Log GPU diagnostics
-    log_gpu_diagnostics()
+    logger.info(f"\nPyTorch version: {torch.__version__}")
+    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        try:
+            logger.info(f"CUDA version: {torch.version.cuda}")
+            logger.info(f"Number of GPUs: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                logger.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+        except:
+            pass
 
     logger.info(f"\nTopics to scan: {', '.join(TOPIC_LABELS)}")
     logger.info("=" * 60 + "\n")
@@ -1091,7 +708,7 @@ def initial_scan():
     pdf_count = 0
     skipped_count = 0
     error_count = 0
-    start_time = time.time()
+    start_time = datetime.now().timestamp()
 
     for t in TOPIC_LABELS:
         tdir = os.path.join(TOPIC_BASE_DIR, t)
@@ -1108,8 +725,6 @@ def initial_scan():
                 skipped_count += 1
                 continue
 
-            logger.info(f"Processing {abs_pdf}")
-
             pdf_count += 1
             try:
                 success = index_pdf(t, abs_pdf, vllm_url=vllm_url, cache_db=cache_db)
@@ -1124,7 +739,7 @@ def initial_scan():
                 state.mark_as_failed(abs_pdf, str(e))
                 error_count += 1
 
-    elapsed_time = time.time() - start_time
+    elapsed_time = datetime.now().timestamp() - start_time
     state.update_scan_time()
 
     logger.info("\n" + "=" * 60)
@@ -1143,9 +758,6 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
     """
     Borra un PDF específico de Qdrant y Whoosh
     """
-    if client is None:
-        logger.error("[QDRANT] Client not initialized - cannot delete from Qdrant")
-        return False
     pdf_path = str(pdf_path)
     logger.info(f"\n{'=' * 60}")
     logger.info("DELETING PDF FROM INDEXES")
@@ -1166,11 +778,11 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
         # Busca TODOS los puntos con este file_path
         points_result = client.scroll(
             collection_name=coll,
-            limit=10000,
+            limit=10000,  # Asumir máx 10k puntos por archivo
             with_payload=True,
         )
 
-        points = points_result[0]
+        points = points_result[0]  # scroll retorna (points, next_page_offset)
 
         point_ids_to_delete = []
         for point in points:
@@ -1183,7 +795,7 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
                 collection_name=coll,
                 points_selector=point_ids_to_delete,
             )
-            logger.info(f"✓ Deleted {len(point_ids_to_delete)} points from Qdrant")
+            logger.info(f"✅ Deleted {len(point_ids_to_delete)} points from Qdrant")
         else:
             logger.warning(f"No points found in Qdrant for {Path(pdf_path).name}")
 
@@ -1206,7 +818,7 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
 
         writer.commit()
 
-        logger.info(f"✓ Deleted {deleted_count} documents from Whoosh")
+        logger.info(f"✅ Deleted {deleted_count} documents from Whoosh")
 
     except Exception as e:
         logger.error(f"Error deleting from Whoosh: {e}", exc_info=True)
@@ -1218,7 +830,7 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
     try:
         state.state["processed"].pop(pdf_path, None)
         state._save_state()
-        logger.info(f"✓ Reset processing state for {Path(pdf_path).name}")
+        logger.info(f"✅ Reset processing state for {Path(pdf_path).name}")
     except Exception as e:
         logger.error(f"Error updating state: {e}")
 
@@ -1232,10 +844,17 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
 # ============================================================
 # CLI: Para ejecutar manualmente
 # ============================================================
+"""
+Para borrar manualmente un archivo ya indexado:
+docker exec -it ingestor python /app/main.py delete Modelo "/topics/Modelo/nombre_archivo.pdf"
+Por ejemplo:
+docker exec -it ingestor python /app/main.py delete Electricidad "/topics/Electricidad/Normas de Construcción de cuadros de automatización.pdf"
+"""
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "delete":
+        # Uso: python main.py delete "Electricidad" "/topics/Electricidad/archivo.pdf"
         if len(sys.argv) < 4:
             print("Usage: python main.py delete <topic> <pdf_path>")
             print(
