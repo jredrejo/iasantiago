@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 import nltk
 import numpy as np
 import pdfplumber
-import PyPDF2
+import pypdf
 from unstructured.partition.pdf import partition_pdf
 
 logger = logging.getLogger(__name__)
@@ -1637,9 +1637,9 @@ def check_pdf_has_text(pdf_path: Path) -> bool:
     Check if PDF likely has extractable text using multiple methods
     """
     try:
-        # Method 1: Try with PyPDF2 first (fastest check)
+        # Method 1: Try with pypdf first (fastest check)
         with open(pdf_path, "rb") as file:
-            pdf_reader = PyPDF2.PdfReader(file)
+            pdf_reader = pypdf.PdfReader(file)
             page_count = len(pdf_reader.pages)
 
             # Check first few pages for text
@@ -1647,7 +1647,7 @@ def check_pdf_has_text(pdf_path: Path) -> bool:
                 page = pdf_reader.pages[i]
                 text = page.extract_text()
                 if text and len(text.strip()) > 50:  # If we find substantial text
-                    logger.info(f"PyPDF2 detected text on page {i+1}")
+                    logger.info(f"pypdf detected text on page {i+1}")
                     return True
 
         # Method 2: Try with pdfplumber
@@ -1802,11 +1802,11 @@ def extract_text_with_multiple_methods(pdf_path: Path) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"pdfplumber failed: {e}")
 
-    # Method 4: Try with PyPDF2 as last resort
+    # Method 4: Try with pypdf as last resort
     try:
-        logger.info("Trying PyPDF2...")
+        logger.info("Trying pypdf...")
         with open(pdf_path, "rb") as file:
-            pdf_reader = PyPDF2.PdfReader(file)
+            pdf_reader = pypdf.PdfReader(file)
             elements = []
 
             for i, page in enumerate(pdf_reader.pages):
@@ -1817,15 +1817,15 @@ def extract_text_with_multiple_methods(pdf_path: Path) -> List[Dict[str, Any]]:
                             "type": "text",
                             "text": text,
                             "page": i + 1,
-                            "source": "PyPDF2",
+                            "source": "pypdf",
                         }
                     )
 
             if elements:
-                logger.info(f"PyPDF2 extracted {len(elements)} elements")
+                logger.info(f"pypdf extracted {len(elements)} elements")
                 return elements
     except Exception as e:
-        logger.warning(f"PyPDF2 failed: {e}")
+        logger.warning(f"pypdf failed: {e}")
 
     logger.warning("All text extraction methods failed")
     return []
@@ -2106,13 +2106,13 @@ def fast_partition_pdf(pdf_path: str, strategy: str = "auto") -> List[Any]:
     if strategy == "hi_res":
         kwargs = {
             "infer_table_structure": False,  # Skip table detection (major speedup)
-            "extract_images_in_pdf": False,   # Skip image extraction
-            "extract_tables": False,          # Skip table extraction
-            "chunking_strategy": None,        # Skip internal chunking
-            "max_characters": 10000,          # Larger chunks
+            "extract_images_in_pdf": False,  # Skip image extraction
+            "extract_tables": False,  # Skip table extraction
+            "chunking_strategy": None,  # Skip internal chunking
+            "max_characters": 10000,  # Larger chunks
             "languages": ["spa", "eng"],
             "strategy": "hi_res",
-            "model_name": "yolox",            # Faster model
+            "model_name": "yolox",  # Faster model
             "skip_infer_table_types": ["pdf", "jpg", "png"],
         }
     elif strategy == "ocr_only":
@@ -2120,23 +2120,23 @@ def fast_partition_pdf(pdf_path: str, strategy: str = "auto") -> List[Any]:
             "languages": ["spa", "eng"],
             "strategy": "ocr_only",
             "ocr_languages": "spa+eng",
-            "ocr_mode": "entire_page",       # Faster than individual blocks
+            "ocr_mode": "entire_page",  # Faster than individual blocks
             "extract_images_in_pdf": False,
             "extract_tables": False,
             "infer_table_structure": False,
-            "keep_extra_chars": False,       # Skip character cleanup
-            "max_characters": 12000,         # Larger chunks for OCR
-            "ocr_kwargs": {"config": '--oem 3 --psm 6'},  # Fast PSM mode
+            "keep_extra_chars": False,  # Skip character cleanup
+            "max_characters": 12000,  # Larger chunks for OCR
+            "ocr_kwargs": {"config": "--oem 3 --psm 6"},  # Fast PSM mode
         }
     else:  # auto
         kwargs = {
             "languages": ["spa", "eng"],
             "strategy": "auto",
             "extract_images_in_pdf": False,  # Major speedup
-            "extract_tables": False,         # Major speedup
+            "extract_tables": False,  # Major speedup
             "infer_table_structure": False,  # Major speedup
-            "max_characters": 15000,         # Large chunks
-            "keep_extra_chars": False,       # Skip cleanup
+            "max_characters": 15000,  # Large chunks
+            "keep_extra_chars": False,  # Skip cleanup
         }
 
     return partition_pdf(filename=pdf_path, **kwargs)
@@ -2188,24 +2188,26 @@ def batch_unstructured_processing(pdf_path: str) -> List[Any]:
                 pages=list(range(batch_start, batch_end + 1)),
                 strategy="auto",
                 languages=["spa", "eng"],
-                extract_images_in_pdf=False,    # Skip images (major speedup)
-                extract_tables=False,           # Skip tables (major speedup)
-                infer_table_structure=False,    # Skip table detection (major speedup)
+                extract_images_in_pdf=False,  # Skip images (major speedup)
+                extract_tables=False,  # Skip tables (major speedup)
+                infer_table_structure=False,  # Skip table detection (major speedup)
                 skip_infer_table_types=["pdf", "jpg", "png", "tiff"],
-                keep_extra_chars=False,        # Skip post-processing
-                max_characters=8000,            # Larger chunks
+                keep_extra_chars=False,  # Skip post-processing
+                max_characters=8000,  # Larger chunks
             )
 
             # Adjust page numbers if needed
             for elem in elements:
-                if hasattr(elem, 'metadata') and hasattr(elem.metadata, 'page_number'):
+                if hasattr(elem, "metadata") and hasattr(elem.metadata, "page_number"):
                     # Elements are already correctly numbered by unstructured
                     pass
 
             all_elements.extend(elements)
 
         except Exception as e:
-            logger.warning(f"[UNSTRUCTURED] Batch {batch_start}-{batch_end} failed: {e}")
+            logger.warning(
+                f"[UNSTRUCTURED] Batch {batch_start}-{batch_end} failed: {e}"
+            )
             # Fallback to single page processing
             for page_num in range(batch_start, batch_end + 1):
                 try:
