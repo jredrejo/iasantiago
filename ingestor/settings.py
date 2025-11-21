@@ -73,7 +73,7 @@ os.environ["TESSERACT_NUM_THREADS"] = str(max(1, multiprocessing.cpu_count() - 2
 # PSM 6 = Single uniform block (fastest)
 # PSM 11 = Sparse text (good for academic papers)
 # PSM 12 = Sparse text with OSD
-os.environ["TESSERACT_PSM"] = "11"  # Faster for academic/technical docs
+os.environ["TESSERACT_PSM"] = "6"  # Single uniform block - FASTEST
 
 # Enable neural network acceleration (if compiled with support)
 os.environ["TESSERACT_ENABLE_LSTM"] = "1"  # LSTM networks are faster
