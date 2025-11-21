@@ -21,7 +21,16 @@ import numpy as np
 import pdfplumber
 import PyPDF2
 from unstructured.partition.pdf import partition_pdf
-from paddleocr import PaddleOCR
+
+# EasyOCR import (GPU-accelerated, PyTorch-compatible)
+try:
+    import easyocr
+
+    EASYOCR_AVAILABLE = True
+    logger.info("[EASYOCR] EasyOCR imported successfully")
+except ImportError:
+    EASYOCR_AVAILABLE = False
+    logger.warning("[EASYOCR] EasyOCR not available, install with: pip install easyocr")
 
 logger = logging.getLogger(__name__)
 # Set Tesseract language for unstructured
@@ -29,7 +38,6 @@ os.environ["TESSERACT_LANG"] = "spa+eng"  # Spanish + English
 os.environ["OCR_LANGUAGES"] = "spa+eng"  # Alternative env var
 os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"  # Spanish primero, luego English
 os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"  # English si no se puede Spanish
-
 
 
 # Try to download punkt data with error handling
@@ -1094,21 +1102,30 @@ class RobustPageExtractor:
             if pdf_path:
                 try:
                     import pdfplumber
+
                     # Try to get actual page heights for better accuracy
                     with pdfplumber.open(pdf_path) as pdf:
                         if len(pdf.pages) > 0:
                             # Calculate cumulative page heights to find the correct page
                             cumulative_height = 0
                             for i, page in enumerate(pdf.pages):
-                                if cumulative_height <= min_y < cumulative_height + page.height:
+                                if (
+                                    cumulative_height
+                                    <= min_y
+                                    < cumulative_height + page.height
+                                ):
                                     estimated_page = i + 1  # Pages are 1-indexed
-                                    logger.debug(f"[PAGE] Using actual PDF layout: page {estimated_page}")
+                                    logger.debug(
+                                        f"[PAGE] Using actual PDF layout: page {estimated_page}"
+                                    )
                                     break
                                 cumulative_height += page.height
                             else:
                                 # If y-coordinate exceeds all pages, use last page
                                 estimated_page = len(pdf.pages)
-                                logger.debug(f"[PAGE] Y-coordinate beyond pages, using page {estimated_page}")
+                                logger.debug(
+                                    f"[PAGE] Y-coordinate beyond pages, using page {estimated_page}"
+                                )
                         else:
                             # Fallback to standard A4 height
                             estimated_page = max(1, int(min_y / 842) + 1)
@@ -1807,90 +1824,82 @@ def extract_text_with_multiple_methods(pdf_path: Path) -> List[Dict[str, Any]]:
     return []
 
 
-class PaddleOCRProcessor:
-    """GPU-accelerated OCR using PaddlePaddle with CUDA 13"""
+class EasyOCRProcessor:
+    """GPU-accelerated OCR using EasyOCR with PyTorch backend"""
 
-    def __init__(self, use_gpu=True, gpu_mem=8000):
+    def __init__(self, use_gpu=True, gpu_id=0):
         """
-        Optimized for RTX 5090 with CUDA 13
+        Initialize EasyOCR with GPU support
 
         Args:
             use_gpu: Enable GPU acceleration (recommended)
-            gpu_mem: GPU memory to allocate (MB) - 8GB is safe for RTX 5090
+            gpu_id: GPU device ID (default: 0)
         """
+        self.use_gpu = use_gpu and torch.cuda.is_available()
 
-        # Verify CUDA availability
-        try:
-            import paddle
-
-            cuda_available = paddle.device.is_compiled_with_cuda()
-            if not cuda_available:
-                logger.warning("[PADDLE] CUDA not available, falling back to CPU")
-                use_gpu = False
-        except Exception as e:
-            logger.error(f"[PADDLE] Failed to check CUDA: {e}")
-            use_gpu = False
-
-        self.use_gpu = use_gpu
+        if not self.use_gpu and use_gpu:
+            logger.warning("[EASYOCR] CUDA not available, falling back to CPU")
 
         try:
-            self.ocr = PaddleOCR(
-                use_angle_cls=True,
-                lang="es",  # Spanish primary
-                use_gpu=use_gpu,
-                gpu_mem=gpu_mem,
-                show_log=False,
-                # Performance optimizations for RTX 5090
-                det_db_thresh=0.3,
-                rec_batch_num=32,  # Increased for RTX 5090
-                drop_score=0.5,
-                use_dilation=True,
-                # Multi-language support
-                lang_list=["es", "en"],
+            # Initialize EasyOCR reader with Spanish and English support
+            self.reader = easyocr.Reader(
+                ["es", "en"],  # Spanish and English languages
+                gpu=self.use_gpu,
+                detector=True,
+                recognizer=True,
+                verbose=False,
             )
 
-            device = "GPU (CUDA 13)" if use_gpu else "CPU"
-            logger.info(f"[PADDLE] OCR initialized on {device}")
+            device = "GPU" if self.use_gpu else "CPU"
+            logger.info(f"[EASYOCR] Initialized on {device}")
 
         except Exception as e:
-            logger.error(f"[PADDLE] Initialization failed: {e}")
+            logger.error(f"[EASYOCR] Initialization failed: {e}")
             raise
 
     def extract_text_from_image(self, image_path: str) -> str:
-        """Extract text from image using GPU"""
+        """Extract text from image using EasyOCR"""
         try:
-            result = self.ocr.ocr(image_path, cls=True)
+            # Use EasyOCR to read the image
+            results = self.reader.readtext(image_path)
 
-            if not result or not result[0]:
+            if not results:
                 return ""
 
             # Combine all detected text with confidence filtering
             text_lines = []
-            for line in result[0]:
-                text, confidence = line[1]
-                # Only include high-confidence text
+            for bbox, text, confidence in results:
+                # Only include high-confidence text (>60% confidence)
                 if confidence > 0.6:
-                    text_lines.append(text)
+                    text_lines.append(text.strip())
 
             return "\n".join(text_lines)
 
         except Exception as e:
-            logger.error(f"[PADDLE] OCR failed for {image_path}: {e}")
+            logger.error(f"[EASYOCR] Failed to process {image_path}: {e}")
             return ""
 
     def process_pdf_page_batch(self, pdf_path: str, page_nums: list) -> dict:
         """
         Process multiple PDF pages in batch for better GPU utilization
         Returns: {page_num: text}
+        Ensures accurate page numbering matching PDF structure
         """
         from pdf2image import convert_from_path
         import tempfile
 
-        # Convert multiple pages at once
+        logger.debug(
+            f"[EASYOCR] Processing pages {page_nums} for {os.path.basename(pdf_path)}"
+        )
+
+        # Convert multiple pages at once with exact page range
+        first_page = min(page_nums)
+        last_page = max(page_nums)
+
         images = convert_from_path(
             pdf_path,
-            first_page=min(page_nums),
-            last_page=max(page_nums),
+            first_page=first_page,
+            last_page=last_page,
             dpi=300,
             thread_count=4,  # Parallel image conversion
         )
@@ -1899,16 +1908,27 @@ class PaddleOCRProcessor:
         temp_files = []
 
         try:
-            # Save all images first
-            for page_num, image in zip(page_nums, images):
-                tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-                image.save(tmp.name)
-                temp_files.append((page_num, tmp.name))
+            # Save all images with page-aware naming
+            for idx, image in enumerate(images):
+                # Calculate actual page number (first_page + idx)
+                actual_page_num = first_page + idx
+                if actual_page_num in page_nums:
+                    tmp = tempfile.NamedTemporaryFile(
+                        suffix=f"_page_{actual_page_num}.png", delete=False
+                    )
+                    image.save(tmp.name)
+                    temp_files.append((actual_page_num, tmp.name))
+                    logger.debug(
+                        f"[EASYOCR] Created temp file for page {actual_page_num}"
+                    )
 
-            # Process batch on GPU
+            # Process each image and map back to correct page numbers
             for page_num, tmp_path in temp_files:
                 text = self.extract_text_from_image(tmp_path)
                 results[page_num] = text
+                logger.debug(
+                    f"[EASYOCR] Extracted {len(text)} chars from page {page_num}"
+                )
 
         finally:
             # Cleanup temp files
@@ -1918,14 +1938,39 @@ class PaddleOCRProcessor:
                 except:
                     pass
 
+        # Validate we got results for all requested pages
+        missing_pages = [p for p in page_nums if p not in results]
+        if missing_pages:
+            logger.warning(
+                f"[EASYOCR] Failed to extract text from pages: {missing_pages}"
+            )
+
+        logger.debug(
+            f"[EASYOCR] Successfully processed {len(results)}/{len(page_nums)} pages"
+        )
         return results
 
 
 def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
     """
-    Extract PDF elements using GPU-accelerated OCR with batch processing
-    Optimized for RTX 5090 with CUDA 13
+    Extract PDF elements using optimized OCR pipeline with accurate page numbering
+    1. Get PDF page count once (optimization)
+    2. Try standard text extraction (fastest)
+    3. Try EasyOCR with GPU acceleration
+    4. Fallback to optimized Tesseract processing
+    5. Apply page validation once to final results
     """
+
+    # Get PDF page count once to avoid redundant file opening
+    total_pages = None
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(pdf_path) as pdf:
+            total_pages = len(pdf.pages)
+        logger.debug(f"[PDF] Document has {total_pages} pages")
+    except Exception as e:
+        logger.warning(f"[PDF] Could not get page count: {e}")
 
     # First try standard text extraction (fastest)
     try:
@@ -1941,74 +1986,260 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
         ]
 
         if text_elements:
-            logger.info(f"[GPU-OCR] Standard extraction successful")
-            return [
+            logger.info(f"[OCR] Standard extraction successful")
+            processed_elements = [
                 elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
                 for elem in elements
             ]
+            # Apply page validation once with known page count
+            return validate_page_numbers_with_count(
+                processed_elements, pdf_path, total_pages
+            )
     except:
         pass
 
-    # Fallback to GPU OCR (PaddleOCR)
-    logger.info(f"[GPU-OCR] Using PaddleOCR with CUDA 13")
+    # Try EasyOCR with GPU acceleration (fast & accurate)
+    if EASYOCR_AVAILABLE:
+        logger.info(f"[OCR] Using EasyOCR GPU acceleration")
+        try:
+            import pdfplumber
 
-    from pdf2image import convert_from_path
-    import pdfplumber
+            # Initialize EasyOCR processor
+            ocr_processor = EasyOCRProcessor(use_gpu=True, gpu_id=0)
 
-    try:
-        ocr_processor = PaddleOCRProcessor(use_gpu=True, gpu_mem=8000)
+            # Use cached page count instead of reopening PDF
+            num_pages = total_pages or 1  # Fallback to 1 if we couldn't get page count
+            logger.info(f"[EASYOCR] Processing {num_pages} pages")
 
-        # Get page count
-        with pdfplumber.open(pdf_path) as pdf:
-            num_pages = len(pdf.pages)
+            # Process in batches for better GPU utilization
+            BATCH_SIZE = 8  # Process 8 pages at once on RTX 5090
+            elements = []
 
-        # Process in batches for better GPU utilization
-        BATCH_SIZE = 8  # Process 8 pages at once on RTX 5090
-        elements = []
+            for batch_start in range(1, num_pages + 1, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, num_pages + 1)
+                page_nums = list(range(batch_start, batch_end))
 
-        for batch_start in range(1, num_pages + 1, BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, num_pages + 1)
-            page_nums = list(range(batch_start, batch_end))
+                logger.info(
+                    f"[EASYOCR] Processing batch pages {batch_start}-{batch_end-1}/{num_pages}"
+                )
+
+                # Batch process with accurate page mapping
+                page_texts = ocr_processor.process_pdf_page_batch(pdf_path, page_nums)
+
+                for page_num, text in page_texts.items():
+                    if text.strip():
+                        # Validate page number before creating element
+                        if 1 <= page_num <= num_pages:
+                            elements.append(
+                                {
+                                    "text": text,
+                                    "type": "text",
+                                    "page": page_num,  # Ensure correct page number
+                                    "source": "easyocr_gpu",
+                                }
+                            )
+                        else:
+                            logger.warning(
+                                f"[EASYOCR] Invalid page number {page_num}, skipping"
+                            )
+
+            # Validate total elements and page coverage
+            pages_processed = set(elem["page"] for elem in elements)
+            missing_pages = set(range(1, num_pages + 1)) - pages_processed
+
+            if missing_pages:
+                logger.info(
+                    f"[EASYOCR] No text extracted from pages: {sorted(missing_pages)}"
+                )
 
             logger.info(
-                f"[GPU-OCR] Processing pages {batch_start}-{batch_end-1}/{num_pages}"
+                f"[EASYOCR] Extracted {len(elements)} elements from {len(pages_processed)}/{num_pages} pages"
             )
+            # Apply comprehensive page validation to EasyOCR results
+            return validate_page_numbers_with_count(elements, pdf_path, total_pages)
 
-            # Batch process
-            page_texts = ocr_processor.process_pdf_page_batch(pdf_path, page_nums)
+        except Exception as e:
+            logger.warning(f"[EASYOCR] GPU processing failed: {e}")
+            logger.info("[EASYOCR] Falling back to Tesseract")
+    else:
+        logger.warning("[EASYOCR] Not available, using Tesseract directly")
 
-            for page_num, text in page_texts.items():
-                if text.strip():
-                    elements.append(
-                        {
-                            "text": text,
-                            "type": "text",
-                            "page": page_num,
-                            "source": "gpu_ocr_paddle_cuda13",
-                        }
-                    )
+    # Fallback to optimized Tesseract processing
+    logger.info(f"[OCR] Using optimized Tesseract processing")
 
-        logger.info(
-            f"[GPU-OCR] Extracted {len(elements)} elements from {num_pages} pages"
-        )
-        return elements
+    try:
+        # Use cached page count for validation
+        if total_pages:
+            logger.info(f"[TESSERACT] Processing {total_pages} pages")
+        else:
+            logger.warning("[TESSERACT] No page count available, proceeding anyway")
 
-    except Exception as e:
-        logger.error(f"[GPU-OCR] PaddleOCR failed: {e}")
-        logger.info("[GPU-OCR] Falling back to Tesseract")
-
-        # Last resort: Tesseract
+        # Use optimized Tesseract settings from settings.py
         elements = partition_pdf(
             filename=pdf_path,
             strategy="ocr_only",
             languages=["spa", "eng"],
             ocr_languages="spa+eng",
+            # Performance optimizations
+            infer_table_structure=True,
+            extract_images_in_pdf=True,
+            extract_tables=True,
+            # Page-aware processing
+            multipage_sections=True,
         )
 
-        return [
-            elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
-            for elem in elements
-        ]
+        # Convert elements and validate page numbers
+        processed_elements = []
+        pages_seen = set()
+
+        for elem in elements:
+            elem_dict = (
+                elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
+            )
+
+            # Extract and validate page number
+            page_num = elem_dict.get("page", 1)
+            if isinstance(page_num, (int, float)):
+                page_num = int(page_num)
+            else:
+                # Try to extract page number from metadata
+                page_num = RobustPageExtractor.extract_page_number(elem, pdf_path, 1)
+                elem_dict["page"] = page_num
+
+            # Validate page number is within expected range
+            if 1 <= page_num <= total_pages:
+                elem_dict["source"] = "tesseract_ocr"
+                processed_elements.append(elem_dict)
+                pages_seen.add(page_num)
+            else:
+                logger.warning(
+                    f"[TESSERACT] Invalid page {page_num}, clamping to valid range"
+                )
+                elem_dict["page"] = max(1, min(page_num, total_pages))
+                elem_dict["source"] = "tesseract_ocr"
+                processed_elements.append(elem_dict)
+
+        # Report page coverage
+        missing_pages = set(range(1, total_pages + 1)) - pages_seen
+        if missing_pages:
+            logger.info(
+                f"[TESSERACT] No text from pages: {sorted(list(missing_pages))}"
+            )
+
+        logger.info(
+            f"[TESSERACT] Extracted {len(processed_elements)} elements from {len(pages_seen)}/{total_pages if total_pages else 'unknown'} pages"
+        )
+        # Apply comprehensive page validation to Tesseract results with cached page count
+        return validate_page_numbers_with_count(
+            processed_elements, pdf_path, total_pages
+        )
+
+    except Exception as e:
+        logger.error(f"[OCR] Tesseract extraction failed: {e}")
+        logger.info("[OCR] Trying last resort extraction")
+
+        # Last resort: basic text extraction with page validation
+        try:
+            elements = partition_pdf(
+                filename=pdf_path,
+                strategy="auto",
+            )
+
+            processed_elements = []
+            for elem in elements:
+                elem_dict = (
+                    elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
+                )
+                elem_dict["source"] = "basic_extraction"
+                processed_elements.append(elem_dict)
+
+            logger.info(
+                f"[OCR] Basic extraction completed with {len(processed_elements)} elements"
+            )
+            # Apply comprehensive page validation even to fallback results with cached page count
+            return validate_page_numbers_with_count(
+                processed_elements, pdf_path, total_pages
+            )
+
+        except Exception as fallback_e:
+            logger.error(f"[OCR] All extraction methods failed: {fallback_e}")
+            return []
+
+
+def validate_page_numbers(
+    elements: List[Dict[str, Any]], pdf_path: str
+) -> List[Dict[str, Any]]:
+    """Legacy function - use validate_page_numbers_with_count for optimization"""
+    return validate_page_numbers_with_count(elements, pdf_path, None)
+
+
+def validate_page_numbers_with_count(
+    elements: List[Dict[str, Any]], pdf_path: str, total_pages: int = None
+) -> List[Dict[str, Any]]:
+    """
+    Optimized comprehensive page number validation and correction
+    Uses cached page count to avoid redundant PDF opening
+
+    Args:
+        elements: List of extracted elements with page metadata
+        pdf_path: Path to PDF (for logging)
+        total_pages: Pre-computed total page count (optimization)
+
+    Returns:
+        Validated elements with corrected page numbers
+    """
+    if not elements:
+        return elements
+
+    # Only open PDF if page count not provided
+    if total_pages is None:
+        try:
+            import pdfplumber
+
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+        except Exception as e:
+            logger.warning(
+                f"[PAGE] Could not verify page count for {os.path.basename(pdf_path)}: {e}"
+            )
+            total_pages = None
+
+    validated_elements = []
+    page_issues = []
+
+    for i, elem in enumerate(elements):
+        page_num = elem.get("page", 1)
+
+        # Convert to integer if needed
+        if not isinstance(page_num, int):
+            try:
+                page_num = int(float(page_num))
+            except (ValueError, TypeError):
+                page_num = 1
+                page_issues.append(f"Element {i}: Invalid page type, using 1")
+
+        # Validate page range
+        if total_pages and (page_num < 1 or page_num > total_pages):
+            original_page = page_num
+            page_num = max(1, min(page_num, total_pages))
+            page_issues.append(
+                f"Element {i}: Page {original_page} -> {page_num} (clamped)"
+            )
+
+        # Ensure correct page number
+        elem["page"] = page_num
+        validated_elements.append(elem)
+
+    if page_issues:
+        logger.warning(
+            f"[PAGE] Fixed {len(page_issues)} page issues in {os.path.basename(pdf_path)}"
+        )
+        for issue in page_issues[:5]:  # Show first 5 issues
+            logger.warning(f"[PAGE]   {issue}")
+        if len(page_issues) > 5:
+            logger.warning(f"[PAGE]   ... and {len(page_issues) - 5} more")
+
+    return validated_elements
 
 
 def extract_elements_from_pdf(

@@ -588,7 +588,7 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             }
         )
 
-      total_chunks = len(vecs)
+    total_chunks = len(vecs)
     logger.info(
         f"Upserting {total_chunks} vectors to Qdrant in batches of {QDRANT_BATCH_SIZE}..."
     )
@@ -638,7 +638,9 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             # Validate page number for BM25 indexing
             page = c.get("page", 1)
             if not isinstance(page, int) or page < 1:
-                logger.warning(f"[MAIN] Invalid page {page} in chunk {i} for BM25, using 1")
+                logger.warning(
+                    f"[MAIN] Invalid page {page} in chunk {i} for BM25, using 1"
+                )
                 page = 1
 
             writer.update_document(

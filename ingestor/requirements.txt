@@ -42,9 +42,8 @@ watchdog==4.0.1
 
 # OCR
 pytesseract==0.3.13
-#--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
-#paddlepaddle-gpu==3.2.1
-paddleocr
+# EasyOCR (GPU-accelerated, safe with PyTorch)
+easyocr==1.7.1
 
 
 # ============================================================
