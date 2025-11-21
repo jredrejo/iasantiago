@@ -22,6 +22,8 @@ import pdfplumber
 import PyPDF2
 from unstructured.partition.pdf import partition_pdf
 
+logger = logging.getLogger(__name__)
+
 # EasyOCR import (GPU-accelerated, PyTorch-compatible)
 try:
     import easyocr
@@ -31,8 +33,6 @@ try:
 except ImportError:
     EASYOCR_AVAILABLE = False
     logger.warning("[EASYOCR] EasyOCR not available, install with: pip install easyocr")
-
-logger = logging.getLogger(__name__)
 # Set Tesseract language for unstructured
 os.environ["TESSERACT_LANG"] = "spa+eng"  # Spanish + English
 os.environ["OCR_LANGUAGES"] = "spa+eng"  # Alternative env var
