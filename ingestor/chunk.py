@@ -1986,8 +1986,12 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
             e for e in elements if e.get("type") == "text" and e.get("text", "").strip()
         ]
 
-        if text_elements:
-            logger.info(f"[OCR] Standard extraction successful")
+        # Calculate total text length to decide if extraction was truly successful
+        total_text_length = sum(len(e.get("text", "")) for e in text_elements)
+        logger.info(f"[OCR] Standard extraction found {len(text_elements)} text elements, {total_text_length} total characters")
+
+        if text_elements and total_text_length > 500:  # Require at least 500 characters
+            logger.info(f"[OCR] Standard extraction successful with sufficient text")
             processed_elements = [
                 elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
                 for elem in elements
@@ -1996,8 +2000,10 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
             return validate_page_numbers_with_count(
                 processed_elements, pdf_path, total_pages
             )
-    except:
-        pass
+        else:
+            logger.info(f"[OCR] Standard extraction insufficient text ({total_text_length} chars), proceeding to EasyOCR")
+    except Exception as first_error:
+        logger.warning(f"[OCR] Hi-res extraction failed: {first_error}")
 
     # Try EasyOCR with GPU acceleration (fast & accurate)
     if EASYOCR_AVAILABLE:
