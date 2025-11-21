@@ -1979,6 +1979,7 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
             strategy="hi_res",
             extract_images_in_pdf=True,
             extract_tables=True,
+            languages=["spa", "eng"],
         )
 
         text_elements = [
@@ -2143,6 +2144,7 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
             elements = partition_pdf(
                 filename=pdf_path,
                 strategy="auto",
+                languages=["spa", "eng"],
             )
 
             processed_elements = []
