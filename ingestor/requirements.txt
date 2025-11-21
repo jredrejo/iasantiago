@@ -42,9 +42,9 @@ watchdog==4.0.1
 
 # OCR
 pytesseract==0.3.13
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
-paddlepaddle-gpu==3.2.1
-paddleocr==3.3.2
+#--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
+#paddlepaddle-gpu==3.2.1
+paddleocr
 
 
 # ============================================================

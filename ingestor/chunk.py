@@ -1603,7 +1603,7 @@ def check_pdf_has_text(pdf_path: Path) -> bool:
             page_count = len(pdf_reader.pages)
 
             # Check first few pages for text
-            for i in range(min(3, page_count)):
+            for i in range(min(10, page_count)):
                 page = pdf_reader.pages[i]
                 text = page.extract_text()
                 if text and len(text.strip()) > 50:  # If we find substantial text
@@ -1612,7 +1612,7 @@ def check_pdf_has_text(pdf_path: Path) -> bool:
 
         # Method 2: Try with pdfplumber
         with pdfplumber.open(pdf_path) as pdf:
-            for i, page in enumerate(pdf.pages[:3]):  # Check first 3 pages
+            for i, page in enumerate(pdf.pages[:10]):  # Check first 10 pages
                 text = page.extract_text()
                 if text and len(text.strip()) > 50:
                     logger.info(f"pdfplumber detected text on page {i+1}")
