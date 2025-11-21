@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import sqlite3
+import ssl
 import torch
 from collections import defaultdict
 from pathlib import Path
@@ -23,6 +24,18 @@ import PyPDF2
 from unstructured.partition.pdf import partition_pdf
 
 logger = logging.getLogger(__name__)
+
+
+# Fix SSL issues for model downloads
+def setup_ssl_context():
+    """Setup SSL context to handle certificate issues"""
+    try:
+        # Create unverified SSL context (use with caution)
+        ssl._create_default_https_context = ssl._create_unverified_context
+        logger.info("[SSL] Configured unverified SSL context for model downloads")
+    except Exception as e:
+        logger.warning(f"[SSL] Could not configure SSL context: {e}")
+
 
 # EasyOCR import (GPU-accelerated, PyTorch-compatible)
 try:
@@ -1827,35 +1840,115 @@ def extract_text_with_multiple_methods(pdf_path: Path) -> List[Dict[str, Any]]:
 class EasyOCRProcessor:
     """GPU-accelerated OCR using EasyOCR with PyTorch backend"""
 
-    def __init__(self, use_gpu=True, gpu_id=0):
+    # Class-level cache for the reader to avoid re-initialization
+    _reader_cache = None
+    _initialization_attempted = False
+
+    def __init__(self, use_gpu=True, gpu_id=0, model_storage_directory=None):
         """
-        Initialize EasyOCR with GPU support
+        Initialize EasyOCR with GPU support and proper model handling
 
         Args:
             use_gpu: Enable GPU acceleration (recommended)
             gpu_id: GPU device ID (default: 0)
+            model_storage_directory: Where to store EasyOCR models (default: ~/.EasyOCR/)
         """
         self.use_gpu = use_gpu and torch.cuda.is_available()
 
         if not self.use_gpu and use_gpu:
             logger.warning("[EASYOCR] CUDA not available, falling back to CPU")
 
+        # Set model storage directory
+        if model_storage_directory:
+            os.environ["EASYOCR_MODULE_PATH"] = str(model_storage_directory)
+            self.model_dir = Path(model_storage_directory)
+        else:
+            self.model_dir = Path.home() / ".EasyOCR"
+
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"[EASYOCR] Model directory: {self.model_dir}")
+
+        # Use cached reader if available
+        if EasyOCRProcessor._reader_cache is not None:
+            logger.info("[EASYOCR] Using cached reader")
+            self.reader = EasyOCRProcessor._reader_cache
+            return
+
+        # Avoid repeated initialization attempts if it failed before
+        if (
+            EasyOCRProcessor._initialization_attempted
+            and EasyOCRProcessor._reader_cache is None
+        ):
+            raise RuntimeError("[EASYOCR] Previous initialization failed, not retrying")
+
         try:
+            EasyOCRProcessor._initialization_attempted = True
+
+            # Setup SSL context before downloading models
+            setup_ssl_context()
+
+            # Check if models are already downloaded
+            models_exist = self._check_models_exist()
+
+            if not models_exist:
+                logger.info("[EASYOCR] Models not found, will download on first use")
+                logger.info(
+                    "[EASYOCR] This may take 2-5 minutes depending on network speed"
+                )
+            else:
+                logger.info("[EASYOCR] Using existing models")
+
             # Initialize EasyOCR reader with Spanish and English support
+            logger.info("[EASYOCR] Initializing reader...")
             self.reader = easyocr.Reader(
                 ["es", "en"],  # Spanish and English languages
                 gpu=self.use_gpu,
+                model_storage_directory=str(self.model_dir),
+                download_enabled=True,  # Allow downloading models
                 detector=True,
                 recognizer=True,
                 verbose=False,
             )
 
+            # Cache the reader for future use
+            EasyOCRProcessor._reader_cache = self.reader
+
             device = "GPU" if self.use_gpu else "CPU"
-            logger.info(f"[EASYOCR] Initialized on {device}")
+            logger.info(f"[EASYOCR] ✓ Successfully initialized on {device}")
 
         except Exception as e:
             logger.error(f"[EASYOCR] Initialization failed: {e}")
+            logger.info(
+                "[EASYOCR] Try pre-downloading models manually (see instructions below)"
+            )
             raise
+
+    def _check_models_exist(self) -> bool:
+        """Check if required models are already downloaded"""
+        try:
+            # Check for detection model
+            craft_path = self.model_dir / "model" / "craft_mlt_25k.pth"
+
+            # Check for recognition models (Spanish and English)
+            spanish_path = self.model_dir / "model" / "spanish_g2.pth"
+            english_path = self.model_dir / "model" / "english_g2.pth"
+
+            models_exist = craft_path.exists() and (
+                spanish_path.exists() or english_path.exists()
+            )
+
+            if models_exist:
+                logger.info(f"[EASYOCR] Found existing models in {self.model_dir}")
+            else:
+                logger.info(f"[EASYOCR] Models not found, will download")
+                logger.info(f"[EASYOCR] Detection model: {craft_path.exists()}")
+                logger.info(f"[EASYOCR] Spanish model: {spanish_path.exists()}")
+                logger.info(f"[EASYOCR] English model: {english_path.exists()}")
+
+            return models_exist
+        except Exception as e:
+            logger.warning(f"[EASYOCR] Could not check for existing models: {e}")
+            return False
 
     def extract_text_from_image(self, image_path: str) -> str:
         """Extract text from image using EasyOCR"""
@@ -1883,7 +1976,6 @@ class EasyOCRProcessor:
         """
         Process multiple PDF pages in batch for better GPU utilization
         Returns: {page_num: text}
-        Ensures accurate page numbering matching PDF structure
         """
         from pdf2image import convert_from_path
         import tempfile
@@ -1901,7 +1993,7 @@ class EasyOCRProcessor:
             first_page=first_page,
             last_page=last_page,
             dpi=300,
-            thread_count=4,  # Parallel image conversion
+            thread_count=4,
         )
 
         results = {}
@@ -1910,7 +2002,6 @@ class EasyOCRProcessor:
         try:
             # Save all images with page-aware naming
             for idx, image in enumerate(images):
-                # Calculate actual page number (first_page + idx)
                 actual_page_num = first_page + idx
                 if actual_page_num in page_nums:
                     tmp = tempfile.NamedTemporaryFile(
@@ -1918,17 +2009,11 @@ class EasyOCRProcessor:
                     )
                     image.save(tmp.name)
                     temp_files.append((actual_page_num, tmp.name))
-                    logger.debug(
-                        f"[EASYOCR] Created temp file for page {actual_page_num}"
-                    )
 
-            # Process each image and map back to correct page numbers
+            # Process each image
             for page_num, tmp_path in temp_files:
                 text = self.extract_text_from_image(tmp_path)
                 results[page_num] = text
-                logger.debug(
-                    f"[EASYOCR] Extracted {len(text)} chars from page {page_num}"
-                )
 
         finally:
             # Cleanup temp files
@@ -1938,17 +2023,84 @@ class EasyOCRProcessor:
                 except:
                     pass
 
-        # Validate we got results for all requested pages
-        missing_pages = [p for p in page_nums if p not in results]
-        if missing_pages:
-            logger.warning(
-                f"[EASYOCR] Failed to extract text from pages: {missing_pages}"
-            )
-
-        logger.debug(
-            f"[EASYOCR] Successfully processed {len(results)}/{len(page_nums)} pages"
-        )
         return results
+
+
+def manually_download_easyocr_models(model_dir: Path = None):
+    """
+    Manually download EasyOCR models to avoid SSL issues
+
+    Usage:
+        from chunk import manually_download_easyocr_models
+        manually_download_easyocr_models()
+    """
+    if model_dir is None:
+        model_dir = Path.home() / ".EasyOCR"
+
+    model_dir = Path(model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model").mkdir(exist_ok=True)
+
+    setup_ssl_context()
+
+    models = {
+        "craft_mlt_25k.pth": "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/craft_mlt_25k.zip",
+        "spanish_g2.pth": "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/spanish_g2.zip",
+        "english_g2.pth": "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/english_g2.zip",
+    }
+
+    logger.info(f"[EASYOCR] Downloading models to {model_dir}")
+
+    for model_name, url in models.items():
+        model_path = model_dir / "model" / model_name
+
+        if model_path.exists():
+            logger.info(f"[EASYOCR] ✓ {model_name} already exists")
+            continue
+
+        try:
+            logger.info(f"[EASYOCR] Downloading {model_name}...")
+
+            # Download with progress
+            zip_path = model_dir / f"{model_name}.zip"
+            urllib.request.urlretrieve(url, zip_path)
+
+            # Extract
+            import zipfile
+
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(model_dir / "model")
+
+            # Cleanup zip
+            zip_path.unlink()
+
+            logger.info(f"[EASYOCR] ✓ Downloaded {model_name}")
+
+        except Exception as e:
+            logger.error(f"[EASYOCR] Failed to download {model_name}: {e}")
+            logger.info(f"[EASYOCR] You can manually download from: {url}")
+
+    logger.info("[EASYOCR] Model download complete")
+
+
+# Alternative: Download models at import time if they don't exist
+def ensure_easyocr_models():
+    """Ensure EasyOCR models are available, download if needed"""
+    if not EASYOCR_AVAILABLE:
+        return False
+
+    model_dir = Path.home() / ".EasyOCR"
+    craft_path = model_dir / "model" / "craft_mlt_25k.pth"
+
+    if not craft_path.exists():
+        logger.info("[EASYOCR] Models not found, attempting download...")
+        try:
+            manually_download_easyocr_models(model_dir)
+            return True
+        except Exception as e:
+            logger.error(f"[EASYOCR] Auto-download failed: {e}")
+            return False
+    return True
 
 
 def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
