@@ -1956,7 +1956,7 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
     Extract PDF elements using optimized OCR pipeline with accurate page numbering
     1. Get PDF page count once (optimization)
     2. Try standard text extraction (fastest)
-    3. Try EasyOCR with GPU acceleration
+    3. Try EasyOCR with GPU acceleration if insufficient text
     4. Fallback to optimized Tesseract processing
     5. Apply page validation once to final results
     """
@@ -1974,6 +1974,7 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
 
     # First try standard text extraction (fastest)
     try:
+        logger.info(f"[OCR] Attempting standard text extraction...")
         elements = partition_pdf(
             filename=pdf_path,
             strategy="hi_res",
@@ -1988,9 +1989,28 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
 
         # Calculate total text length to decide if extraction was truly successful
         total_text_length = sum(len(e.get("text", "")) for e in text_elements)
-        logger.info(f"[OCR] Standard extraction found {len(text_elements)} text elements, {total_text_length} total characters")
 
-        if text_elements and total_text_length > 500:  # Require at least 500 characters
+        # Calculate average text per page to detect if we're just getting headers/footers
+        avg_text_per_page = (
+            total_text_length / total_pages if total_pages else total_text_length
+        )
+
+        logger.info(
+            f"[OCR] Standard extraction: {len(text_elements)} elements, "
+            f"{total_text_length} total chars, "
+            f"{avg_text_per_page:.1f} avg chars/page"
+        )
+
+        # More stringent check: require both sufficient total text AND reasonable text per page
+        # This prevents cases where we only extract headers/footers/metadata
+        MIN_TOTAL_CHARS = 500
+        MIN_AVG_CHARS_PER_PAGE = 100  # At least 100 chars per page on average
+
+        if (
+            text_elements
+            and total_text_length > MIN_TOTAL_CHARS
+            and avg_text_per_page > MIN_AVG_CHARS_PER_PAGE
+        ):
             logger.info(f"[OCR] Standard extraction successful with sufficient text")
             processed_elements = [
                 elem.to_dict() if hasattr(elem, "to_dict") else {"text": str(elem)}
@@ -2001,16 +2021,21 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
                 processed_elements, pdf_path, total_pages
             )
         else:
-            logger.info(f"[OCR] Standard extraction insufficient text ({total_text_length} chars), proceeding to EasyOCR")
+            logger.info(
+                f"[OCR] Standard extraction insufficient: "
+                f"total_chars={total_text_length} (need >{MIN_TOTAL_CHARS}), "
+                f"avg_per_page={avg_text_per_page:.1f} (need >{MIN_AVG_CHARS_PER_PAGE}), "
+                f"proceeding to EasyOCR"
+            )
     except Exception as first_error:
-        logger.warning(f"[OCR] Hi-res extraction failed: {first_error}")
+        logger.warning(
+            f"[OCR] Hi-res extraction failed: {first_error}, proceeding to EasyOCR"
+        )
 
     # Try EasyOCR with GPU acceleration (fast & accurate)
     if EASYOCR_AVAILABLE:
         logger.info(f"[OCR] Using EasyOCR GPU acceleration")
         try:
-            import pdfplumber
-
             # Initialize EasyOCR processor
             ocr_processor = EasyOCRProcessor(use_gpu=True, gpu_id=0)
 
@@ -2059,11 +2084,23 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
                     f"[EASYOCR] No text extracted from pages: {sorted(missing_pages)}"
                 )
 
+            # Check if EasyOCR was successful
+            total_easyocr_text = sum(len(elem["text"]) for elem in elements)
             logger.info(
-                f"[EASYOCR] Extracted {len(elements)} elements from {len(pages_processed)}/{num_pages} pages"
+                f"[EASYOCR] Extracted {len(elements)} elements from "
+                f"{len(pages_processed)}/{num_pages} pages, "
+                f"{total_easyocr_text} total chars"
             )
-            # Apply comprehensive page validation to EasyOCR results
-            return validate_page_numbers_with_count(elements, pdf_path, total_pages)
+
+            # If EasyOCR got reasonable results, return them
+            if elements and total_easyocr_text > 200:
+                logger.info(f"[EASYOCR] Successfully extracted text, returning results")
+                return validate_page_numbers_with_count(elements, pdf_path, total_pages)
+            else:
+                logger.warning(
+                    f"[EASYOCR] Insufficient text extracted ({total_easyocr_text} chars), "
+                    f"falling back to Tesseract"
+                )
 
         except Exception as e:
             logger.warning(f"[EASYOCR] GPU processing failed: {e}")
@@ -2114,7 +2151,7 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
                 elem_dict["page"] = page_num
 
             # Validate page number is within expected range
-            if 1 <= page_num <= total_pages:
+            if total_pages and 1 <= page_num <= total_pages:
                 elem_dict["source"] = "tesseract_ocr"
                 processed_elements.append(elem_dict)
                 pages_seen.add(page_num)
@@ -2122,19 +2159,21 @@ def extract_elements_from_pdf_gpu(pdf_path: str) -> List[Dict[str, Any]]:
                 logger.warning(
                     f"[TESSERACT] Invalid page {page_num}, clamping to valid range"
                 )
-                elem_dict["page"] = max(1, min(page_num, total_pages))
+                elem_dict["page"] = max(1, min(page_num, total_pages or 1))
                 elem_dict["source"] = "tesseract_ocr"
                 processed_elements.append(elem_dict)
 
         # Report page coverage
-        missing_pages = set(range(1, total_pages + 1)) - pages_seen
-        if missing_pages:
-            logger.info(
-                f"[TESSERACT] No text from pages: {sorted(list(missing_pages))}"
-            )
+        if total_pages:
+            missing_pages = set(range(1, total_pages + 1)) - pages_seen
+            if missing_pages:
+                logger.info(
+                    f"[TESSERACT] No text from pages: {sorted(list(missing_pages))}"
+                )
 
         logger.info(
-            f"[TESSERACT] Extracted {len(processed_elements)} elements from {len(pages_seen)}/{total_pages if total_pages else 'unknown'} pages"
+            f"[TESSERACT] Extracted {len(processed_elements)} elements from "
+            f"{len(pages_seen)}/{total_pages if total_pages else 'unknown'} pages"
         )
         # Apply comprehensive page validation to Tesseract results with cached page count
         return validate_page_numbers_with_count(
