@@ -36,7 +36,6 @@ EMBED_DEFAULT = os.getenv(
 )
 
 
-
 # ============================================================
 # CACHÉ SQLITES
 # ============================================================
@@ -71,13 +70,18 @@ os.environ["OMP_THREAD_LIMIT"] = str(multiprocessing.cpu_count())
 os.environ["TESSERACT_NUM_THREADS"] = str(max(1, multiprocessing.cpu_count() - 2))
 
 # Use faster PSM (Page Segmentation Mode) if possible
-# PSM 3 = Fully automatic page segmentation (default, but slower)
-# PSM 6 = Assume a single uniform block of text (faster)
-# PSM 1 = Automatic page segmentation with OSD (slowest, most accurate)
-os.environ["TESSERACT_PSM"] = "6"  # Faster mode
+# PSM 6 = Single uniform block (fastest)
+# PSM 11 = Sparse text (good for academic papers)
+# PSM 12 = Sparse text with OSD
+os.environ["TESSERACT_PSM"] = "6"  # Single uniform block - FASTEST
 
 # Enable neural network acceleration (if compiled with support)
 os.environ["TESSERACT_ENABLE_LSTM"] = "1"  # LSTM networks are faster
+
+# Additional Tesseract optimizations
+os.environ["TESSERACT_OEM_ENGINE"] = "1"  # Use LSTM engine only
+os.environ["TESSERACT_USER_DEFINED_DPI"] = "300"  # Standard DPI
+os.environ["TESSERACT_MAX_RECOGNITION_TIME"] = "10"  # Limit per page
 
 # Configure language priority (Spanish first for your use case)
 os.environ["TESSERACT_LANG"] = "spa+eng"
@@ -103,4 +107,3 @@ PDF_BATCH_SIZE = 4  # Process 4 PDFs in parallel
 # Uncomment these lines:
 # os.environ["TESSERACT_USE_GPU"] = "1"
 # os.environ["TESSERACT_GPU_DEVICE"] = "0"  # Use first GPU
-
