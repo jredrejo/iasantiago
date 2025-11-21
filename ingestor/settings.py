@@ -35,16 +35,6 @@ EMBED_DEFAULT = os.getenv(
     "EMBED_MODEL_DEFAULT", "intfloat/multilingual-e5-large-instruct"
 )
 
-# ============================================================
-# BLACKWELL (RTX 50XX) SPECIFIC SETTINGS
-# ============================================================
-
-# Batch size multipliers for Blackwell
-BLACKWELL_BATCH_MULTIPLIER = float(os.getenv("BLACKWELL_BATCH_MULTIPLIER", "1.5"))
-BLACKWELL_SMALL_MODEL_MULTIPLIER = float(
-    os.getenv("BLACKWELL_SMALL_MODEL_MULTIPLIER", "1.5")
-)
-BLACKWELL_FP8_MULTIPLIER = float(os.getenv("BLACKWELL_FP8_MULTIPLIER", "1.2"))
 
 
 # ============================================================

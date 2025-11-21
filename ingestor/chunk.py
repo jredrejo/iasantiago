@@ -11,8 +11,6 @@ import logging
 import os
 import re
 import sqlite3
-import ssl
-import threading
 import torch
 from collections import defaultdict
 from pathlib import Path
@@ -32,12 +30,6 @@ os.environ["OCR_LANGUAGES"] = "spa+eng"  # Alternative env var
 os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"  # Spanish primero, luego English
 os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"  # English si no se puede Spanish
 
-try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
 
 
 # Try to download punkt data with error handling
@@ -285,8 +277,8 @@ class ContextAwareChunker:
             if boundaries:
                 page = self.page_detector.assign_precise_page(elem, boundaries)
             else:
-                # Fall back to standard page extraction
-                page = RobustPageExtractor.extract_page_number(elem)
+                # Fall back to standard page extraction with PDF path
+                page = RobustPageExtractor.extract_page_number(elem, pdf_path)
 
             # Validate page number
             if not isinstance(page, int) or page < 1:
@@ -1024,7 +1016,7 @@ class RobustPageExtractor:
 
         # Strategy 2: Coordinate-based extraction (PDF specific)
         if pdf_path and pdf_path.lower().endswith(".pdf"):
-            page = RobustPageExtractor._extract_from_coordinates(elem)
+            page = RobustPageExtractor._extract_from_coordinates(elem, pdf_path)
             if page is not None:
                 RobustPageExtractor._cache[elem_id] = page
                 return page
@@ -1078,7 +1070,7 @@ class RobustPageExtractor:
         return None
 
     @staticmethod
-    def _extract_from_coordinates(elem) -> Optional[int]:
+    def _extract_from_coordinates(elem, pdf_path: str = None) -> Optional[int]:
         """Extract page from element coordinates"""
         try:
             if not hasattr(elem, "metadata") or not hasattr(
@@ -1098,12 +1090,35 @@ class RobustPageExtractor:
             # Use minimum y-coordinate (top of element)
             min_y = min(y_coords)
 
-            # Standard page height approximations (in points)
-            # A4: ~842 points, Letter: ~792 points
-            # Use conservative estimate
-            APPROX_PAGE_HEIGHT = 800
-
-            estimated_page = max(1, int(min_y / APPROX_PAGE_HEIGHT) + 1)
+            # Get actual page dimensions from the PDF if available
+            if pdf_path:
+                try:
+                    import pdfplumber
+                    # Try to get actual page heights for better accuracy
+                    with pdfplumber.open(pdf_path) as pdf:
+                        if len(pdf.pages) > 0:
+                            # Calculate cumulative page heights to find the correct page
+                            cumulative_height = 0
+                            for i, page in enumerate(pdf.pages):
+                                if cumulative_height <= min_y < cumulative_height + page.height:
+                                    estimated_page = i + 1  # Pages are 1-indexed
+                                    logger.debug(f"[PAGE] Using actual PDF layout: page {estimated_page}")
+                                    break
+                                cumulative_height += page.height
+                            else:
+                                # If y-coordinate exceeds all pages, use last page
+                                estimated_page = len(pdf.pages)
+                                logger.debug(f"[PAGE] Y-coordinate beyond pages, using page {estimated_page}")
+                        else:
+                            # Fallback to standard A4 height
+                            estimated_page = max(1, int(min_y / 842) + 1)
+                except Exception as e:
+                    logger.debug(f"[PAGE] PDF analysis failed: {e}")
+                    # Fallback to standard A4 height
+                    estimated_page = max(1, int(min_y / 842) + 1)
+            else:
+                # No PDF path available, use standard A4 height
+                estimated_page = max(1, int(min_y / 842) + 1)
 
             # Sanity check: page shouldn't be > 10000
             if estimated_page > 10000:
@@ -1285,7 +1300,6 @@ class SQLiteCacheManager:
     def __init__(self, cache_db: str = "/tmp/llava_cache/llava_cache.db"):
         self.cache_db = Path(cache_db)
         self.cache_db.parent.mkdir(parents=True, exist_ok=True)
-        self.lock = threading.RLock()
         self._init_db()
         logger.info(f"Cache database: {self.cache_db}")
 
@@ -1346,28 +1360,27 @@ class SQLiteCacheManager:
     def load_image_cache(self, image_hash: str) -> Optional[Dict[str, Any]]:
         """Carga descripción en caché de imagen"""
         try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT description, width, height FROM image_cache WHERE image_hash = ?",
+                    (image_hash,),
+                )
+                row = cursor.fetchone()
+
+                if row:
                     cursor.execute(
-                        "SELECT description, width, height FROM image_cache WHERE image_hash = ?",
+                        "UPDATE image_cache SET accessed_at = CURRENT_TIMESTAMP, hit_count = hit_count + 1 WHERE image_hash = ?",
                         (image_hash,),
                     )
-                    row = cursor.fetchone()
+                    conn.commit()
+                    logger.debug(f"Cache hit (imagen): {image_hash}")
 
-                    if row:
-                        cursor.execute(
-                            "UPDATE image_cache SET accessed_at = CURRENT_TIMESTAMP, hit_count = hit_count + 1 WHERE image_hash = ?",
-                            (image_hash,),
-                        )
-                        conn.commit()
-                        logger.debug(f"Cache hit (imagen): {image_hash}")
-
-                        return {
-                            "description": row["description"],
-                            "width": row["width"],
-                            "height": row["height"],
-                        }
+                    return {
+                        "description": row["description"],
+                        "width": row["width"],
+                        "height": row["height"],
+                    }
         except Exception as e:
             logger.error(f"Error loading image cache: {e}")
 
@@ -1376,24 +1389,23 @@ class SQLiteCacheManager:
     def load_table_cache(self, table_hash: str) -> Optional[Dict[str, Any]]:
         """Carga análisis en caché de tabla"""
         try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT analysis FROM table_cache WHERE table_hash = ?",
+                    (table_hash,),
+                )
+                row = cursor.fetchone()
+
+                if row:
                     cursor.execute(
-                        "SELECT analysis FROM table_cache WHERE table_hash = ?",
+                        "UPDATE table_cache SET accessed_at = CURRENT_TIMESTAMP, hit_count = hit_count + 1 WHERE table_hash = ?",
                         (table_hash,),
                     )
-                    row = cursor.fetchone()
+                    conn.commit()
+                    logger.debug(f"Cache hit (tabla): {table_hash}")
 
-                    if row:
-                        cursor.execute(
-                            "UPDATE table_cache SET accessed_at = CURRENT_TIMESTAMP, hit_count = hit_count + 1 WHERE table_hash = ?",
-                            (table_hash,),
-                        )
-                        conn.commit()
-                        logger.debug(f"Cache hit (tabla): {table_hash}")
-
-                        return {"analysis": row["analysis"]}
+                    return {"analysis": row["analysis"]}
         except Exception as e:
             logger.error(f"Error loading table cache: {e}")
 
@@ -1404,17 +1416,16 @@ class SQLiteCacheManager:
     ) -> None:
         """Guarda descripción de imagen en caché"""
         try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO image_cache
-                           (image_hash, description, width, height, accessed_at, hit_count)
-                           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)""",
-                        (image_hash, description, width, height),
-                    )
-                    conn.commit()
-                    logger.debug(f"Cache saved (imagen): {image_hash}")
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """INSERT OR REPLACE INTO image_cache
+                       (image_hash, description, width, height, accessed_at, hit_count)
+                       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)""",
+                    (image_hash, description, width, height),
+                )
+                conn.commit()
+                logger.debug(f"Cache saved (imagen): {image_hash}")
         except Exception as e:
             logger.error(f"Error saving image cache: {e}")
 
@@ -1423,17 +1434,16 @@ class SQLiteCacheManager:
     ) -> None:
         """Guarda análisis de tabla en caché"""
         try:
-            with self.lock:
-                with self._get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO table_cache
-                           (table_hash, analysis, rows, cols, accessed_at, hit_count)
-                           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)""",
-                        (table_hash, analysis, rows, cols),
-                    )
-                    conn.commit()
-                    logger.debug(f"Cache saved (tabla): {table_hash}")
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """INSERT OR REPLACE INTO table_cache
+                       (table_hash, analysis, rows, cols, accessed_at, hit_count)
+                       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)""",
+                    (table_hash, analysis, rows, cols),
+                )
+                conn.commit()
+                logger.debug(f"Cache saved (tabla): {table_hash}")
         except Exception as e:
             logger.error(f"Error saving table cache: {e}")
 
