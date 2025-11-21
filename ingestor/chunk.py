@@ -2105,9 +2105,9 @@ def fast_partition_pdf(pdf_path: str, strategy: str = "auto") -> List[Any]:
     # Speed-optimized kwargs for different strategies
     if strategy == "hi_res":
         kwargs = {
-            "infer_table_structure": False,  # Skip table detection (major speedup)
-            "extract_images_in_pdf": False,  # Skip image extraction
-            "extract_tables": False,  # Skip table extraction
+            "infer_table_structure": True,
+            "extract_images_in_pdf": True,
+            "extract_tables": True,
             "chunking_strategy": None,  # Skip internal chunking
             "max_characters": 10000,  # Larger chunks
             "languages": ["spa", "eng"],
@@ -2122,8 +2122,8 @@ def fast_partition_pdf(pdf_path: str, strategy: str = "auto") -> List[Any]:
             "ocr_languages": "spa+eng",
             "ocr_mode": "entire_page",  # Faster than individual blocks
             "extract_images_in_pdf": False,
-            "extract_tables": False,
-            "infer_table_structure": False,
+            "extract_tables": True,
+            "infer_table_structure": True,
             "keep_extra_chars": False,  # Skip character cleanup
             "max_characters": 12000,  # Larger chunks for OCR
             "ocr_kwargs": {"config": "--oem 3 --psm 6"},  # Fast PSM mode
@@ -2133,8 +2133,8 @@ def fast_partition_pdf(pdf_path: str, strategy: str = "auto") -> List[Any]:
             "languages": ["spa", "eng"],
             "strategy": "auto",
             "extract_images_in_pdf": False,  # Major speedup
-            "extract_tables": False,  # Major speedup
-            "infer_table_structure": False,  # Major speedup
+            "extract_tables": True,
+            "infer_table_structure": True,
             "max_characters": 15000,  # Large chunks
             "keep_extra_chars": False,  # Skip cleanup
         }
