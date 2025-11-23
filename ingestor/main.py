@@ -1,4 +1,5 @@
-import os, glob
+import os
+import glob
 import torch
 import logging
 import json
@@ -9,10 +10,9 @@ from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient, models
 from settings import *
-from chunk import pdf_to_chunks
+from chunk import pdf_to_chunks_with_enhanced_validation
 from whoosh import index
 from whoosh.fields import Schema, ID, TEXT, NUMERIC
-import time
 
 # ============================================================
 # CRITICAL: Configure model cache directory BEFORE imports
@@ -290,7 +290,7 @@ class ModelCache:
         logger.info(f"[CACHE] Device: {device}")
         logger.info(f"[CACHE] Dtype: {EMBEDDING_DTYPE}")
 
-        start_time = time.time()
+        start_time = datetime.now().timestamp()
         try:
             # HF_HOME already set in environment
             model = SentenceTransformer(
@@ -316,7 +316,7 @@ class ModelCache:
                     logger.warning(f"[CACHE] float16 conversion failed: {e}")
                     logger.warning(f"[CACHE] Keeping model in float32")
 
-            elapsed = time.time() - start_time
+            elapsed = datetime.now().timestamp() - start_time
             logger.info(f"[CACHE] Model loaded in {elapsed:.2f}s")
 
             # Cache en memoria
@@ -512,7 +512,9 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             "LLAVA_CACHE_DB", "/tmp/llava_cache/llava_cache.db"
         )
 
-        chunks = pdf_to_chunks(pdf_path, vllm_url=vllm_url, cache_db=cache_db)
+        chunks = pdf_to_chunks_with_enhanced_validation(
+            pdf_path, vllm_url=vllm_url, cache_db=cache_db
+        )
         logger.info(f"[OK] Extracted {len(chunks)} chunks")
 
         text_count = sum(1 for c in chunks if c.get("type") == "text")
@@ -568,10 +570,16 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
 
     payloads = []
     for idx, c in enumerate(chunks):
+        # Validate page number
+        page = c.get("page", 1)
+        if not isinstance(page, int) or page < 1:
+            logger.warning(f"[MAIN] Invalid page {page} in chunk {idx}, using 1")
+            page = 1
+
         payloads.append(
             {
                 "file_path": pdf_path,
-                "page": c.get("page", 1),
+                "page": page,
                 "chunk_id": idx,
                 "text": c["text"],
                 "chunk_type": c.get("type", "text"),
@@ -580,7 +588,6 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             }
         )
 
-    QDRANT_BATCH_SIZE = 100
     total_chunks = len(vecs)
     logger.info(
         f"Upserting {total_chunks} vectors to Qdrant in batches of {QDRANT_BATCH_SIZE}..."
@@ -628,9 +635,17 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         writer = idx.writer(limitmb=512, procs=0, multisegment=True)
 
         for i, c in enumerate(chunks):
+            # Validate page number for BM25 indexing
+            page = c.get("page", 1)
+            if not isinstance(page, int) or page < 1:
+                logger.warning(
+                    f"[MAIN] Invalid page {page} in chunk {i} for BM25, using 1"
+                )
+                page = 1
+
             writer.update_document(
                 file_path=pdf_path,
-                page=c.get("page", 1),
+                page=page,
                 chunk_id=i,
                 text=c["text"],
                 chunk_type=c.get("type", "text"),
@@ -695,7 +710,7 @@ def initial_scan():
     pdf_count = 0
     skipped_count = 0
     error_count = 0
-    start_time = time.time()
+    start_time = datetime.now().timestamp()
 
     for t in TOPIC_LABELS:
         tdir = os.path.join(TOPIC_BASE_DIR, t)
@@ -726,7 +741,7 @@ def initial_scan():
                 state.mark_as_failed(abs_pdf, str(e))
                 error_count += 1
 
-    elapsed_time = time.time() - start_time
+    elapsed_time = datetime.now().timestamp() - start_time
     state.update_scan_time()
 
     logger.info("\n" + "=" * 60)

@@ -184,8 +184,11 @@ services:
       - MIN_IMAGE_WIDTH=100
       - MIN_IMAGE_HEIGHT=100
       - LLM_ANALYSIS_TEMPERATURE=0.3
-      - TOKENIZERS_PARALLELISM=false
-      - OMP_NUM_THREADS=1
+      - TOKENIZERS_PARALLELISM=true
+      - OMP_NUM_THREADS=10
+      - NUMBA_NUM_THREADS=10        # Para NumPy/numba
+      - MKL_NUM_THREADS=10          # Para Intel MKL
+      - OPENBLAS_NUM_THREADS=10     # Para OpenBLAS
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
