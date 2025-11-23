@@ -47,8 +47,7 @@ LLAVA_CACHE_DB = os.getenv("LLAVA_CACHE_DB", "/tmp/llava_cache/llava_cache.db")
 # vLLM (ANÁLISIS CON LLAVA)
 # ============================================================
 
-VLLM_URL = os.getenv("VLLM_URL", "http://vllm:8000")
-VLLM_TIMEOUT = int(os.getenv("VLLM_TIMEOUT", "60"))
+VLLM_URL = os.getenv("VLLM_URL", "http://vllm-llava:8000")
 
 # ============================================================
 # QDRANT
@@ -89,21 +88,3 @@ os.environ["OCR_LANGUAGES"] = "spa+eng"
 os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"
 os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"
 
-# ============================================================
-# UNSTRUCTURED PERFORMANCE SETTINGS
-# ============================================================
-
-# Number of parallel processes for unstructured
-UNSTRUCTURED_PARALLEL_PROCESSES = max(1, multiprocessing.cpu_count() - 2)
-
-# Batch size for processing multiple PDFs
-PDF_BATCH_SIZE = 4  # Process 4 PDFs in parallel
-
-# ============================================================
-# GPU-ACCELERATED OCR (Optional - requires special build)
-# ============================================================
-
-# If you have a GPU-enabled Tesseract build (requires compilation with CUDA)
-# Uncomment these lines:
-# os.environ["TESSERACT_USE_GPU"] = "1"
-# os.environ["TESSERACT_GPU_DEVICE"] = "0"  # Use first GPU

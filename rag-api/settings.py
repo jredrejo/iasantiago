@@ -81,12 +81,6 @@ RESPONSE_MAX_TOKENS_PERCENT = get_int_env(
 # Mínimo absoluto de tokens para respuesta (safety)
 MIN_RESPONSE_TOKENS = get_int_env("MIN_RESPONSE_TOKENS", 512)
 
-# ============================================================
-# TIMEOUTS Y HEALTH CHECKS
-# ============================================================
-VLLM_HEALTH_CHECK_TIMEOUT = get_int_env("VLLM_HEALTH_CHECK_TIMEOUT", 15)
-VLLM_CONNECT_TIMEOUT = get_int_env("VLLM_CONNECT_TIMEOUT", 20)
-VLLM_STREAM_TIMEOUT = get_int_env("VLLM_STREAM_TIMEOUT", 600)
 
 # ============================================================
 # TELEMETRÍA

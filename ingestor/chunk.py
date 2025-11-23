@@ -1483,110 +1483,6 @@ class SQLiteCacheManager:
         except Exception as e:
             logger.error(f"Error saving table cache: {e}")
 
-<<<<<<< HEAD
-
-# ============================================================
-# SIMPLE EXTRACTOR
-# ============================================================
-
-
-class SimpleExtractor:
-    """Extractor simple: Unstructured.io (sin CUDA)"""
-
-    SUPPORTED_FORMATS = {
-        ".pdf": "PDF",
-        ".docx": "Word",
-        ".doc": "Word",
-        ".pptx": "PowerPoint",
-        ".ppt": "PowerPoint",
-        ".html": "HTML",
-        ".htm": "HTML",
-        ".md": "Markdown",
-        ".txt": "Text",
-        ".png": "Image",
-        ".jpg": "Image",
-        ".jpeg": "Image",
-    }
-
-    def __init__(
-        self,
-        vllm_url: str = "http://vllm-llava:8000",
-        cache_db: str = "/tmp/llava_cache/llava_cache.db",
-    ):
-        self.vllm_url = vllm_url
-        self.cache = SQLiteCacheManager(cache_db=cache_db)
-        self.stats = {
-            "text_chunks": 0,
-            "tables_processed": 0,
-            "tables_cached": 0,
-            "images_processed": 0,
-            "images_cached": 0,
-        }
-
-    def extract_document(self, file_path: str) -> List[Dict[str, Any]]:
-        """Extrae documento con Unstructured.io (usa OCR solo si es necesario)"""
-        file_path = str(file_path)
-        ext = Path(file_path).suffix.lower()
-
-        logger.info(f"Extracting: {Path(file_path).name}")
-
-        if not self.is_supported(ext):
-            logger.warning(f"Format not supported: {ext}")
-            return []
-
-        try:
-            elements = []
-            ocr_used = False  # 🔹 Detecta si se usó OCR
-
-            # ============================================================
-            # PDF: modo híbrido (texto directo + OCR cuando hace falta)
-            # ============================================================
-            if ext == ".pdf":
-                from unstructured.partition.pdf import partition_pdf
-
-                # Primer intento: extracción directa
-                elements = partition_pdf(
-                    filename=file_path,
-                    strategy="fast",  # texto directo (sin OCR)
-                    infer_table_structure=True,
-                    extract_image_block_types=["Image"],
-                    extract_strategy="auto",
-                    languages=["es", "en"],
-                    split_pdf_pages=True,
-                )
-
-                # Si no hay texto significativo, repetir con OCR
-                text_count = sum(
-                    1 for e in elements if hasattr(e, "text") and e.text.strip()
-                )
-                if text_count == 0:
-                    logger.warning(
-                        "[PDF] Sin texto embebido detectado, aplicando OCR (hi_res)..."
-                    )
-                    elements = partition_pdf(
-                        filename=file_path,
-                        strategy="hi_res",  # usa OCR cuando es necesario
-                        infer_table_structure=True,
-                        extract_image_block_types=["Image"],
-                        ocr_languages="spa+eng",
-                        extract_strategy="auto",
-                        split_pdf_pages=True,
-                    )
-                    ocr_used = True
-
-            # ============================================================
-            # Otros formatos (Word, PowerPoint, HTML, etc.)
-            # ============================================================
-            elif ext in [".docx", ".doc"]:
-                elements = partition_docx(file_path, infer_table_structure=False)
-            elif ext in [".pptx", ".ppt"]:
-                elements = partition_pptx(file_path, infer_table_structure=False)
-            else:
-                elements = partition(
-                    file_path,
-                    infer_table_structure=False,
-                    languages=["es", "en"],
-=======
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
         try:
@@ -1602,24 +1498,9 @@ class SimpleExtractor:
                 # Table stats
                 cursor.execute(
                     "SELECT COUNT(*) as count, SUM(hit_count) as hits FROM table_cache"
->>>>>>> chunking
                 )
                 table_row = cursor.fetchone()
 
-<<<<<<< HEAD
-            logger.info(f"Found {len(elements)} elements")
-            if ocr_used:
-                logger.info("[INFO] OCR activado para este documento.")
-            else:
-                logger.info("[INFO] Extracción directa sin OCR.")
-
-            # Procesamiento
-            chunks = self._process_elements(elements)
-            self._log_stats()
-
-            return chunks
-
-=======
                 return {
                     "images": {
                         "cached": img_row["count"] or 0,
@@ -1630,7 +1511,6 @@ class SimpleExtractor:
                         "hits": table_row["hits"] or 0,
                     },
                 }
->>>>>>> chunking
         except Exception as e:
             logger.error(f"Error getting cache stats: {e}")
             return {

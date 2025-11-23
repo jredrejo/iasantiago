@@ -507,10 +507,8 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
 
     try:
         logger.info(f"Extracting chunks from PDF...")
-        vllm_url = vllm_url or os.getenv("VLLM_URL", "http://vllm-llava:8000")
-        cache_db = cache_db or os.getenv(
-            "LLAVA_CACHE_DB", "/tmp/llava_cache/llava_cache.db"
-        )
+        vllm_url = vllm_url or VLLM_URL
+        cache_db = cache_db or LLAVA_CACHE_DB
 
         chunks = pdf_to_chunks_with_enhanced_validation(
             pdf_path, vllm_url=vllm_url, cache_db=cache_db
