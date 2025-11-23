@@ -1,18 +1,27 @@
-import os, json, asyncio, httpx, time, logging
-from fastapi import FastAPI, Request, Response, HTTPException, Header
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
+import asyncio
+import json
+import logging
+import os
+import re
+import time
+from typing import Any, Dict, List, Optional
+
+import httpx
+from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
-from settings import *
 from retrieval import (
-    choose_retrieval,
     attach_citations,
-    soft_trim_context,
-    rerank_passages,
-    telemetry_log,
+    choose_retrieval,
+    choose_retrieval_enhanced,
     count_tokens,
+    rerank_passages,
+    soft_trim_context,
+    telemetry_log,
 )
+from settings import *
 from token_utils import extract_topic_from_model_name
+
 from eval import aggregate_eval
 
 # Setup logging
@@ -21,14 +30,70 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================
+# VARIABLES GLOBALES PARA TRACKING DE MODELO
+# ============================================================
+_current_vllm_model = None
+_model_check_lock = asyncio.Lock()
+
+
+def detect_generative_intent(user_message: str) -> bool:
+    """
+    Detecta si el usuario quiere GENERAR contenido (examen, ejercicios, etc.)
+    vs. simplemente RESPONDER una pregunta con el contexto.
+    """
+    generative_keywords = [
+        # Creación de exámenes
+        r"\b(crea|elabora|genera|diseña|prepara|haz|hacer)\b.*\b(examen|test|prueba|evaluaci[oó]n)\b",
+        r"\b(preguntas?)\b.*\b(sobre|de|acerca)\b",
+        r"\b\d+\s*(preguntas?|ejercicios?|cuestiones?)\b",  # "10 preguntas"
+        # Creación de ejercicios
+        r"\b(ejercicios?|actividades?|pr[aá]cticas?)\b",
+        # Creación de contenido educativo
+        r"\b(resume|sintetiza|organiza)\b.*\b(en|como)\b.*\b(esquema|mapa|lista)\b",
+        r"\blistado\b.*\b(de|con)\b",
+        # Comandos explícitos
+        r"^(crea|elabora|genera|diseña|prepara|haz)\b",
+    ]
+
+    message_lower = user_message.lower()
+
+    for pattern in generative_keywords:
+        if re.search(pattern, message_lower):
+            logger.info(f"🎯 Intención GENERATIVA detectada: '{pattern}'")
+            return True
+
+    logger.info("💬 Intención de RESPUESTA detectada (default)")
+    return False
+
+
+def load_system_prompt(is_generative: bool) -> str:
+    """Carga el prompt correcto según la intención"""
+    if is_generative:
+        path = "/app/templates/system_prompts/generative.txt"
+        logger.info("📝 Usando prompt GENERATIVO (crear contenido)")
+    else:
+        path = "/app/templates/system_prompts/default.txt"
+        logger.info("💬 Usando prompt DEFAULT (responder con contexto)")
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.error(f"❌ Prompt no encontrado: {path}")
+        with open(
+            "/app/templates/system_prompts/default.txt", "r", encoding="utf-8"
+        ) as f:
+            return f.read()
+
 
 def ensure_models_loaded():
     """Intenta cargar modelos al startup"""
     logger.info("Checking if embedding models are available...")
 
     try:
-        from settings import EMBED_PER_TOPIC, EMBED_DEFAULT, RERANK_MODEL
         from retrieval import get_embedder, get_reranker
+        from settings import EMBED_DEFAULT, EMBED_PER_TOPIC, RERANK_MODEL
 
         # Pre-load embedders
         for topic in EMBED_PER_TOPIC.keys():
@@ -85,13 +150,98 @@ class ChatRequest(BaseModel):
     iasantiago_mode: Optional[str] = "explica"  # "explica" | "guia" | "examen"
 
 
+# ============================================================
+# FUNCIONES PARA MANEJO DE MODELOS EN vLLM
+# ============================================================
+
+
+async def wait_for_model_ready(
+    model_name: str, max_wait_seconds: int = 300, check_interval: float = 2.0
+) -> bool:
+    """
+    Espera a que un modelo esté listo en vLLM.
+    """
+    vllm_url = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
+    vllm_base_url = vllm_url.replace("/v1", "")
+    timeout = httpx.Timeout(10.0, connect=5.0)
+
+    elapsed = 0
+    attempt = 0
+
+    logger.info(
+        f"⏳ Waiting for model '{model_name}' to be ready (max {max_wait_seconds}s)..."
+    )
+
+    while elapsed < max_wait_seconds:
+        attempt += 1
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                try:
+                    health_resp = await client.get(f"{vllm_base_url}/health")
+                    if health_resp.status_code != 200:
+                        logger.debug(
+                            f"[{attempt}] vLLM health check failed (status {health_resp.status_code})"
+                        )
+                        await asyncio.sleep(check_interval)
+                        elapsed += check_interval
+                        continue
+                except Exception as e:
+                    logger.debug(f"[{attempt}] vLLM health check error: {e}")
+                    await asyncio.sleep(check_interval)
+                    elapsed += check_interval
+                    continue
+
+                try:
+                    models_resp = await client.get(f"{vllm_url}/models")
+                    if models_resp.status_code != 200:
+                        logger.debug(
+                            f"[{attempt}] Could not fetch models list (status {models_resp.status_code})"
+                        )
+                        await asyncio.sleep(check_interval)
+                        elapsed += check_interval
+                        continue
+
+                    models_data = models_resp.json()
+                    available_models = [m["id"] for m in models_data.get("data", [])]
+
+                    if model_name in available_models:
+                        logger.info(
+                            f"✅ Model '{model_name}' is READY (took {elapsed}s)"
+                        )
+                        return True
+                    else:
+                        logger.debug(
+                            f"[{attempt}] Model '{model_name}' not in list yet. "
+                            f"Available: {available_models}. "
+                            f"Waiting... ({elapsed}s/{max_wait_seconds}s)"
+                        )
+                        await asyncio.sleep(check_interval)
+                        elapsed += check_interval
+
+                except Exception as e:
+                    logger.debug(f"[{attempt}] Error parsing models response: {e}")
+                    await asyncio.sleep(check_interval)
+                    elapsed += check_interval
+
+        except Exception as e:
+            logger.debug(f"[{attempt}] Unexpected error checking model readiness: {e}")
+            await asyncio.sleep(check_interval)
+            elapsed += check_interval
+
+    logger.error(
+        f"❌ Model '{model_name}' did not become ready after {max_wait_seconds}s"
+    )
+    return False
+
+
 async def check_vllm_health(max_retries=3) -> bool:
     """Verifica si vLLM está disponible antes de enviar requests"""
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
                 resp = await client.get(
-                    f"{UPSTREAM_OPENAI_URL.replace('/v1', '')}/health"
+                    f"{UPSTREAM_OPENAI_URL.replace('/v1', '')}/health",
+                    timeout=httpx.Timeout(10.0),
                 )
                 if resp.status_code == 200:
                     return True
@@ -131,7 +281,7 @@ async def call_vllm_with_retry(
                     status_code=503, detail=f"vLLM service unavailable: {str(e)}"
                 )
 
-            wait_time = 2**attempt  # Backoff exponencial: 1s, 2s, 4s
+            wait_time = 2**attempt
             logger.warning(
                 f"vLLM connection failed (attempt {attempt + 1}/{max_retries}), "
                 f"retrying in {wait_time}s... Error: {type(e).__name__}: {e}"
@@ -155,18 +305,67 @@ async def chat_completions(
     logger.info(f"👤 Usuario: {x_email}")
     logger.info(f"📨 Mensajes recibidos: {len(req.messages)}")
 
+    # ============================================================
+    # DETECTAR Y ESPERAR A CAMBIO DE MODELO
+    # ============================================================
+    global _current_vllm_model
+
+    requested_model = VLLM_MODEL
+
+    async with _model_check_lock:
+        if _current_vllm_model is None:
+            _current_vllm_model = requested_model
+            logger.info(f"🎯 Initial model set to: {_current_vllm_model}")
+        elif _current_vllm_model != requested_model:
+            logger.warning(
+                f"⚠️  Model change detected: {_current_vllm_model} → {requested_model}"
+            )
+            logger.info(f"⏳ Waiting for model to be ready...")
+
+            model_ready = await wait_for_model_ready(
+                requested_model, max_wait_seconds=300
+            )
+
+            if not model_ready:
+                logger.error(f"❌ Model '{requested_model}' failed to load in time")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Model '{requested_model}' is not ready. "
+                    f"It is currently loading (changing from '{_current_vllm_model}'). "
+                    f"Please try again in a moment.",
+                )
+
+            _current_vllm_model = requested_model
+            logger.info(f"✅ Switched to model: {_current_vllm_model}")
+
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
 
     # Obtener último mensaje del usuario para retrieval
     user_msg = next((m.content for m in req.messages[::-1] if m.role == "user"), "")
 
     # System prompt
-    sys_prompt = open(
-        "/app/templates/system_prompts/default.txt", "r", encoding="utf-8"
-    ).read()
+    is_generative = detect_generative_intent(user_msg)
+    sys_prompt = load_system_prompt(is_generative)
+
+    # Ajustar límites de contexto según el modo
+    if is_generative:
+        context_token_limit = CTX_TOKENS_GENERATIVE
+        # En generativo, reservar espacio para la respuesta larga
+        # Reducir contexto si es necesario para dejar espacio
+        max_context_for_generation = (
+            VLLM_MAX_MODEL_LEN - VLLM_MAX_TOKENS - 1000
+        )  # 1000 tokens para system prompt
+        context_token_limit = min(context_token_limit, max_context_for_generation)
+        logger.info(
+            f"🎯 Modo GENERATIVO: Límite de contexto ajustado a {context_token_limit} tokens"
+        )
+    else:
+        context_token_limit = CTX_TOKENS_SOFT_LIMIT
+
+    # Retrieval con parámetros ajustados
+    retrieved, meta = choose_retrieval_enhanced(topic, user_msg, is_generative)
 
     # Retrieval
-    retrieved, meta = choose_retrieval(topic, user_msg)
     logger.info(f"📚 Retrieved {len(retrieved)} chunks for topic '{topic}'")
     if retrieved:
         logger.info(
@@ -176,7 +375,7 @@ async def chat_completions(
         logger.info(
             f"After rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
         )
-        retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
+        retrieved = soft_trim_context(retrieved, context_token_limit)
 
     context_text, cited = attach_citations(retrieved, topic)
 
@@ -241,13 +440,14 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
 
     # 2. TODO el historial de conversación del usuario
     for msg in req.messages:
-        # Filtrar system prompts que venga del cliente (Open WebUI)
         if msg.role != "system":
             messages.append({"role": msg.role, "content": msg.content})
 
     # ============================================================
-    # ANÁLISIS DE TOKENS Y WARNINGS
+    # CÁLCULO DINÁMICO DE max_tokens - 100% DESDE .env
     # ============================================================
+
+    # Calcular tokens de input
     system_tokens = count_tokens(enhanced_system)
     context_tokens = count_tokens(context_text)
     history_tokens = sum(
@@ -255,18 +455,90 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
     )
     total_input_tokens = system_tokens + history_tokens
 
+    # Margen de seguridad
+    safety_margin = 100
+    available_tokens = VLLM_MAX_MODEL_LEN - total_input_tokens - safety_margin
+
+    # Cálculo desde .env - sin hardcodeo
+    if is_generative:
+        # Modo generativo: usar el % configurado en .env
+        desired_max_tokens = min(
+            VLLM_MAX_TOKENS,
+            int(VLLM_MAX_MODEL_LEN * (GENERATIVE_MAX_TOKENS_PERCENT / 100.0)),
+        )
+
+        # CRÍTICO: En modo generativo, garantizar MÍNIMO tokens para respuesta
+        # Para 40 preguntas necesitamos ~15k tokens mínimo
+        min_tokens_for_generation = int(VLLM_MAX_MODEL_LEN * 0.45)  # 45% del modelo
+        desired_max_tokens = max(desired_max_tokens, min_tokens_for_generation)
+
+        logger.info(
+            f"🎯 MODO GENERATIVO: "
+            f"Objetivo {desired_max_tokens} tokens "
+            f"({GENERATIVE_MAX_TOKENS_PERCENT}% de {VLLM_MAX_MODEL_LEN}, "
+            f"mínimo garantizado: {min_tokens_for_generation})"
+        )
+    else:
+        # Modo respuesta: usar el % configurado en .env
+        desired_max_tokens = min(
+            VLLM_MAX_TOKENS,
+            int(VLLM_MAX_MODEL_LEN * (RESPONSE_MAX_TOKENS_PERCENT / 100.0)),
+        )
+        logger.info(
+            f"💬 MODO RESPUESTA: "
+            f"Objetivo {desired_max_tokens} tokens "
+            f"({RESPONSE_MAX_TOKENS_PERCENT}% de {VLLM_MAX_MODEL_LEN})"
+        )
+
+    # Usar el mínimo entre lo deseado y lo disponible
+    max_tokens = max(MIN_RESPONSE_TOKENS, min(desired_max_tokens, available_tokens))
+
+    # CRÍTICO: Si en modo generativo no tenemos suficientes tokens, es un problema
+    if is_generative and max_tokens < 10000:
+        logger.error(
+            f"❌ MODO GENERATIVO: Solo {max_tokens} tokens disponibles "
+            f"(se necesitan ~15k para 40 preguntas). "
+            f"Input: {total_input_tokens}, disponibles: {available_tokens}"
+        )
+        # Intentar liberar espacio reduciendo contexto RAG
+        logger.warning("⚠️  Considerar reducir CTX_TOKENS_GENERATIVE en .env")
+
+    # ============================================================
+    # ANÁLISIS DE TOKENS Y WARNINGS
+    # ============================================================
     logger.info(f"📊 Token breakdown:")
+    logger.info(f"   - Model max length: {VLLM_MAX_MODEL_LEN} tokens (from .env)")
+    logger.info(f"   - vLLM max_tokens limit: {VLLM_MAX_TOKENS} (from .env)")
     logger.info(f"   - System prompt: ~{system_tokens} tokens")
     logger.info(f"   - RAG context: ~{context_tokens} tokens")
     logger.info(f"   - Conversation history: ~{history_tokens} tokens")
     logger.info(f"   - TOTAL INPUT: ~{total_input_tokens} tokens")
+    logger.info(f"   - Available for response: {available_tokens} tokens")
+    logger.info(f"   - Desired max_tokens: {desired_max_tokens} tokens")
+    logger.info(f"   - FINAL max_tokens: {max_tokens} tokens ✅")
 
-    max_model_len = int(os.getenv("VLLM_MAX_MODEL_LEN", "8192"))
-    if total_input_tokens > max_model_len * 0.7:
+    # Validación crítica
+    if available_tokens < MIN_RESPONSE_TOKENS:
+        logger.error(
+            f"❌ Input demasiado largo: {total_input_tokens} tokens "
+            f"(límite modelo: {VLLM_MAX_MODEL_LEN}). "
+            f"Solo quedan {available_tokens} tokens para respuesta "
+            f"(mínimo requerido: {MIN_RESPONSE_TOKENS})."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"El contexto de entrada es demasiado largo ({total_input_tokens} tokens). "
+            f"El modelo solo soporta {VLLM_MAX_MODEL_LEN} tokens totales. "
+            f"Por favor, reduce el historial de conversación o el tamaño de la consulta.",
+        )
+
+    # Warning si estamos usando mucho del contexto
+    input_percent = (total_input_tokens / VLLM_MAX_MODEL_LEN) * 100
+    if input_percent > 70:
         logger.warning(
             f"⚠️  Input muy largo ({total_input_tokens} tokens, "
-            f"{(total_input_tokens / max_model_len) * 100:.1f}% del límite), "
-            f"podría causar OOM o respuestas truncadas"
+            f"{input_percent:.1f}% del límite), "
+            f"podría afectar calidad de respuesta"
         )
 
     logger.info(
@@ -274,25 +546,26 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
         f"(system + {len(req.messages)} historial)"
     )
 
-    # Verificar salud de vLLM antes de enviar
+    # Verificar salud de vLLM
     if not await check_vllm_health():
         raise HTTPException(
             status_code=503,
             detail="vLLM service is not responding. Please try again in a few moments.",
         )
 
-    # Payload para vLLM
+    # ============================================================
+    # PAYLOAD CON max_tokens CALCULADO DINÁMICAMENTE
+    # ============================================================
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     payload = {
-        "model": os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+        "model": VLLM_MODEL,
         "messages": messages,
         "temperature": req.temperature,
         "top_p": req.top_p,
         "stream": req.stream,
-        "max_tokens": int(os.getenv("VLLM_MAX_TOKENS", "8192")),
+        "max_tokens": max_tokens,
     }
 
-    # Log del tamaño del payload
     payload_size = len(json.dumps(payload))
     logger.info(
         f"📦 Payload size: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)"
@@ -301,16 +574,33 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
     async def stream_generator():
         """Generator que reenvía el stream SSE de vLLM con reintentos"""
         max_retries = 3
+        streaming_timeout = httpx.Timeout(600.0, connect=20.0)
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                async with httpx.AsyncClient(timeout=streaming_timeout) as client:
                     async with client.stream(
                         "POST",
                         f"{UPSTREAM_OPENAI_URL}/chat/completions",
                         headers=headers,
                         json=payload,
                     ) as r:
+                        if r.status_code == 404:
+                            logger.error(
+                                f"❌ 404: Model '{payload['model']}' not found or not ready"
+                            )
+                            error_data = {
+                                "error": {
+                                    "message": f"Model '{payload['model']}' is not available. "
+                                    f"It may still be loading after a model switch. "
+                                    f"Please try again.",
+                                    "type": "model_not_ready",
+                                    "code": 404,
+                                }
+                            }
+                            yield f"data: {json.dumps(error_data)}\n\n".encode()
+                            return
+
                         r.raise_for_status()
                         logger.info(
                             f"✓ Stream establecido con vLLM (attempt {attempt + 1})"
@@ -320,7 +610,7 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
                             yield chunk
 
                         logger.info("✓ Stream completado exitosamente")
-                        return  # Éxito, salir
+                        return
 
             except (
                 httpx.ConnectError,
@@ -349,12 +639,18 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
                 await asyncio.sleep(wait_time)
 
             except httpx.HTTPStatusError as e:
+                try:
+                    error_text = await e.response.aread()
+                    error_text = error_text.decode("utf-8", errors="ignore")
+                except Exception:
+                    error_text = "<unreadable>"
+
                 logger.error(
-                    f"❌ vLLM HTTP error: {e.response.status_code} - {e.response.text}"
+                    f"❌ vLLM HTTP error: {e.response.status_code} - {error_text}"
                 )
                 error_data = {
                     "error": {
-                        "message": f"vLLM error: {str(e)}",
+                        "message": f"vLLM error: HTTP {e.response.status_code} - {error_text}",
                         "type": "upstream_error",
                         "code": e.response.status_code,
                     }
@@ -404,7 +700,6 @@ async def eval_offline(cases: List[EvalCase]):
     rows = []
     for c in cases:
         retrieved, meta = choose_retrieval(c.topic, c.query)
-        # Attach citations with topic for proper URLs
         context_text, cited = attach_citations(retrieved, c.topic)
         rows.append(
             {
