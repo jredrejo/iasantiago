@@ -2115,7 +2115,7 @@ def fast_partition_pdf(pdf_path: str, strategy: str = "auto") -> List[Any]:
     if strategy == "hi_res":
         kwargs = {
             "infer_table_structure": True,
-            "extract_images_in_pdf": True,
+            "extract_images_in_pdf": False,
             "extract_tables": True,
             "chunking_strategy": None,  # Skip internal chunking
             "max_characters": 10000,  # Larger chunks
