@@ -29,19 +29,6 @@ def deduplicate_chunks(chunks: List[Dict]) -> List[Dict]:
     return dedup
 
 
-def deduplicate_chunks(chunks: List[Dict]) -> List[Dict]:
-    """Remove duplicate chunks (same file_path + chunk_id)"""
-    seen = set()
-    dedup = []
-    for c in chunks:
-        key = (c["file_path"], c["chunk_id"])
-        if key not in seen:
-            seen.add(key)
-            dedup.append(c)
-    logger.info(f"Deduplication: {len(chunks)} → {len(dedup)} chunks")
-    return dedup
-
-
 def get_embedder(topic: str):
     name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     if name not in _embedder_cache:
@@ -138,7 +125,7 @@ def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
     filtered = []
     for m in merged:
         cnt = file_counts.get(m["file_path"], 0)
-        if cnt < MAX_CHUNKS_PER_FILE:
+        if MAX_CHUNKS_PER_FILE == 0 or cnt < MAX_CHUNKS_PER_FILE:
             filtered.append(m)
             file_counts[m["file_path"]] = cnt + 1
         if len(filtered) >= FINAL_TOPK:
@@ -213,7 +200,7 @@ def hybrid_retrieve_enhanced(topic: str, query: str, final_topk: int):
     filtered = []
     for m in merged:
         cnt = file_counts.get(m["file_path"], 0)
-        if cnt < MAX_CHUNKS_PER_FILE:
+        if MAX_CHUNKS_PER_FILE == 0 or cnt < MAX_CHUNKS_PER_FILE:
             filtered.append(m)
             file_counts[m["file_path"]] = cnt + 1
         if len(filtered) >= final_topk:
@@ -237,7 +224,7 @@ def bm25_only(topic: str, query: str):
     file_counts, filtered = {}, []
     for h in hits:
         c = file_counts.get(h["file_path"], 0)
-        if c < MAX_CHUNKS_PER_FILE:
+        if MAX_CHUNKS_PER_FILE == 0 or c < MAX_CHUNKS_PER_FILE:
             filtered.append(h)
             file_counts[h["file_path"]] = c + 1
         if len(filtered) >= FINAL_TOPK:
@@ -253,7 +240,7 @@ def bm25_only_enhanced(topic: str, query: str, final_topk: int):
     file_counts, filtered = {}, []
     for h in hits:
         c = file_counts.get(h["file_path"], 0)
-        if c < MAX_CHUNKS_PER_FILE:
+        if MAX_CHUNKS_PER_FILE == 0 or c < MAX_CHUNKS_PER_FILE:
             filtered.append(h)
             file_counts[h["file_path"]] = c + 1
         if len(filtered) >= final_topk:
@@ -348,11 +335,10 @@ def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dic
         else:
             doc_url = f"/docs/{encoded_filename}#page={page}"
 
-        # FORMATO EXPLÍCITO: Mostrar la URL completa para que el modelo la copie
-        chunk_with_citation = f"""[FRAGMENTO {i}]
-{text}
+        # Solo el texto del documento, sin referencias internas
+        chunk_with_citation = f"""{text}
 
-FUENTE DE ESTE FRAGMENTO (copiar exactamente):
+FUENTE:
 [{filename}, p.{page}]({doc_url})"""
 
         context_parts.append(chunk_with_citation)
@@ -366,34 +352,46 @@ FUENTE DE ESTE FRAGMENTO (copiar exactamente):
     context_body += "\n\n".join(context_parts)
     context_body += "\n\n" + separator
 
-    # Instrucciones REFORZADAS para el LLM
+    # Instrucciones claras para el LLM - SIN referencias internas
     instructions = f"""
 
 {separator}
-INSTRUCCIONES CRÍTICAS DE CITACIÓN
+INSTRUCCIONES PARA RESPUESTAS CON FUENTES
 {separator}
 
-Cuando crees preguntas basadas en el contexto anterior:
+Usa la información de los documentos anteriores para responder:
 
-1. CADA FRAGMENTO tiene su fuente al final en este formato:
+1. Cada sección del texto incluye su fuente al final en este formato:
    [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
 
-2. DEBES copiar EXACTAMENTE ese formato en tus citas:
+2. Cuando uses información de un documento, cita la fuente EXACTAMENTE como aparece:
    Fuente: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
 
-3. NO modifiques la URL, NO omitas partes, NO cambies el formato
+3. 🔗 IMPORTANTE: Las citas deben ser enlaces clicables en formato markdown.
+   NO escribas las URLs como texto plano.
 
-4. SI usas información del FRAGMENTO 3, copia su fuente EXACTAMENTE
+4. NUNCA menciones "fragmento", "sección", "parte" o referencias internas.
+   Solo habla del contenido y cita el archivo y página.
 
-EJEMPLO:
-Si el FRAGMENTO 5 dice:
-   FUENTE: [Manual.pdf, p.42](/docs/Chemistry/Manual.pdf#page=42)
-
-Tu pregunta debe terminar con:
+5. Si usas información del documento Manual.pdf página 42, termina con:
    Fuente: [Manual.pdf, p.42](/docs/Chemistry/Manual.pdf#page=42)
 
-NO inventes información que no esté en los fragmentos anteriores.
-NO uses formato markdown (**, ##) en el texto de las preguntas.
+EJEMPLO DE RESPUESTA:
+"La ley de Ohm establece que V = I × R, donde V es el voltaje, I es la corriente y R es la resistencia.
+Esta relación fundamental permite calcular cualquier parámetro eléctrico si se conocen los otros dos.
+Fuente: [Electrónica_Básica.pdf, p.15](/docs/Electronics/Electrónica_Básica.pdf#page=15)"
+
+FORMATO CORRECTO DE CITAS:
+✅ Fuente: [archivo.pdf, p.25](/docs/TOPIC/archivo.pdf#page=25)  ← Enlace clicable
+❌ Fuente: [archivo.pdf, p.25]                             ← No es enlace
+❌ Fuente: archivo.pdf, p.25                             ← No es enlace
+
+REGLAS IMPORTANTES:
+- NO inventes información que no esté en los documentos
+- NO uses referencias internas como "según el documento 3" o "en el fragmento"
+- Sé natural y conversacional, solo citando las fuentes
+- SOLO permite markdown para: bloques de código (```), fórmulas LaTeX ($formula$) y citas [enlaces](/docs/...)
+- NO uses negritas (**), títulos (##) o listas (-)
 
 {separator}
 """

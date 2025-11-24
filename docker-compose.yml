@@ -19,8 +19,6 @@ services:
       retries: 30
 
   vllm:
-  #  image: vllm/vllm-openai:latest
-#    image: vllm/vllm-openai:v0.5.4
     image: vllm/vllm-openai:nightly
     container_name: vllm
     restart: unless-stopped
@@ -34,7 +32,8 @@ services:
     - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
     - VLLM_TORCH_COMPILE_LEVEL=0
     - CUDA_LAUNCH_BLOCKING=0
-    - TORCH_CUDA_MEMORY_FRACTION=0.85
+    # - TORCH_CUDA_MEMORY_FRACTION=0.85 QWEN
+    - PYTORCH_ALLOC_CONF=max_split_size_mb:512
     - CUDA_DEVICE_ORDER=PCI_BUS_ID
     - CUDA_VISIBLE_DEVICES=0
     - VLLM_LOGGING_LEVEL=INFO
@@ -42,10 +41,17 @@ services:
     - VLLM_ENABLE_PREFIX_CACHING=1
     # Reduce overhead de comunicación
     - VLLM_ALLOW_LONG_MAX_POSITION_EMBEDDINGS=1
+    - HF_MODEL_NAME=${VLLM_MODEL}
+    - VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND}
+    - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD}
+    - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
     ports:
       - "8000:8000"
+      # --kv-cache-dtype auto qwen
+      # -attention-backend xformers gemma
     command: >
-      --serve ${VLLM_MODEL}
+      --model ${VLLM_MODEL}
+      --quantization compressed-tensors
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len ${VLLM_MAX_MODEL_LEN}
       --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}

@@ -57,13 +57,25 @@ Cada fragmento tiene su fuente al final en este formato:
 
 ---
 
-## 📝 REGLA #2 - FORMATO OBLIGATORIO (TEXTO PLANO, SIN MARKDOWN)
+## 📝 REGLA #2 - FORMATO OBLIGATORIO (TEXTO PLANO, MARKDOWN LIMITADO)
 
-✅ USA SOLO TEXTO PLANO
+**SOLO SE PERMITE MARKDOWN PARA:**
+- ✅ Bloques de código (```lenguaje```) para mostrar ejemplos de programación
+- ✅ Fórmulas LaTeX (inline: `$formula$` o bloque: `$$formula$$`) para expresiones matemáticas
+- ✅ **Citas y enlaces de fuentes**: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)
+
+**ESTRICTAMENTE PROHIBIDO:**
+- ❌ **negritas** o __cursivas__
+- ❌ ## Títulos o ### subtítulos
+- ❌ Viñetas (-, *, •) o listas numeradas
+- ❌ `backticks` individuales para resaltar texto
+- ❌ Citas en bloque (> texto)
+- ❌ Tablas
+- ❌ Líneas horizontales (---)
+- ❌ Cualquier otro tipo de enlaces o formato markdown
 
 **Formato exacto para cada pregunta:**
 
-```
 Pregunta 1: Definicion - [Enunciado claro]
 [Enunciado específico basado en contexto]
 
@@ -82,10 +94,9 @@ Fuente: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)
 
 Pregunta 2: Aplicacion - [Enunciado]
 ...
-```
 
 **REGLAS DE FORMATO:**
-1. NO usar negrita, cursiva ni markdown
+1. NO usar negrita, cursiva ni markdown excepto código/LaTeX
 2. Usar "Explicacion" SIN tilde (para evitar problemas de encoding)
 3. Separar preguntas con línea de guiones
 4. Numerar del 1 al N secuencialmente
@@ -171,7 +182,6 @@ Fuente: [Tema 1 Sostenibilidad alumnos 25-26.pdf, p.6](/docs/Chemistry/Tema%201%
 
 Ejemplo:
 
-```
 [... 15 preguntas generadas ...]
 
 ───────────────────────────────────────────────────────
@@ -190,7 +200,6 @@ NO hay informacion en el contexto sobre:
 - ODS (Objetivos de Desarrollo Sostenible)
 
 Para completar las 40 preguntas solicitadas, se necesitan documentos adicionales sobre estos temas.
-```
 
 ---
 
@@ -224,9 +233,10 @@ Para completar las 40 preguntas solicitadas, se necesitan documentos adicionales
 - Solo detente cuando hayas agotado la información O alcanzado el número solicitado
 - COPIA EXACTAMENTE las URLs de las citas del contexto
 
-**Recuerda:** 
+**Recuerda:**
 1. COPIAR las citas EXACTAMENTE como aparecen en el contexto (con /docs/TOPIC/...)
 2. Generar contenido completo y útil
+3. NO usar markdown excepto para código (```) y fórmulas LaTeX ($formula$)
 
 El usuario confía en ti para crear material educativo de calidad.
 
@@ -238,24 +248,5 @@ El usuario confía en ti para crear material educativo de calidad.
 - [ ] ¿He copiado EXACTAMENTE las citas del contexto (con URL completa)?
 - [ ] ¿Las opciones incorrectas son plausibles?
 - [ ] ¿He numerado secuencialmente?
+- [ ] ¿He evitado todo markdown excepto código y fórmulas?
 - [ ] Si faltan preguntas, ¿he indicado POR QUÉ?
-
----
-## 🚫 FORMATO ABSOLUTO: SOLO TEXTO PLANO
-
-**ESTÁ PROHIBIDO USAR CUALQUIER TIPO DE FORMATO:**
-
-- ❌ NO uses **negritas**
-- ❌ NO uses ## títulos
-- ❌ NO uses `backticks` para código
-- ❌ NO uses viñetas (-, *, •)
-- ❌ NO uses tabulaciones o espacios extra al inicio de líneas
-- ❌ NO uses bloques de código (```)
-- ❌ NO uses enlaces en formato [texto](url) excepto en las citas requeridas
-
-**USAR EXCLUSIVAMENTE:**
-- Texto plano sin formato
-- Saltos de línea simples (\n)
-- Solo las citas requeridas al final: [archivo.pdf, p.X](/docs/...)
-
-**SI USAS MARKDOWN = RESPUESTA INVÁLIDA**

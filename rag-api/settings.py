@@ -1,9 +1,5 @@
 import os
 
-<<<<<<< HEAD
-=======
-
->>>>>>> mejora_rag
 # Helper para leer variables de entorno de forma segura
 def get_int_env(key: str, default: int) -> int:
     """Lee una variable de entorno como int, manejando casos de cadena vacía"""

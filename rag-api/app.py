@@ -436,6 +436,32 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
     else:
         enhanced_system = sys_prompt
 
+    # CRÍTICO: Verificar si el system prompt es demasiado largo y truncarlo si es necesario
+    max_system_tokens = int(VLLM_MAX_MODEL_LEN * 0.25)  # Máximo 25% del modelo para system prompt
+    current_system_tokens = count_tokens(enhanced_system)
+
+    if current_system_tokens > max_system_tokens:
+        logger.warning(
+            f"⚠️ System prompt demasiado largo ({current_system_tokens} tokens). "
+            f"Truncando a {max_system_tokens} tokens para dejar espacio para la respuesta."
+        )
+
+        # Crear una versión más corta del system prompt
+        if context_text:
+            # Versión minimalista con contexto
+            enhanced_system = f"""Eres un asistente docente experto. Responde usando el contexto proporcionado.
+
+Contexto RAG:
+{context_text}
+
+Responde usando solo información del contexto. Cita las fuentes con formato: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)"""
+        else:
+            # Versión minimalista sin contexto
+            enhanced_system = """Eres un asistente docente experto. Responde usando el contexto proporcionado y cita las fuentes con formato: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)"""
+
+        new_tokens = count_tokens(enhanced_system)
+        logger.info(f"✅ System prompt truncado: {current_system_tokens} → {new_tokens} tokens")
+
     messages.append({"role": "system", "content": enhanced_system})
 
     # 2. TODO el historial de conversación del usuario
