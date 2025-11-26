@@ -106,21 +106,33 @@ def sanitize_query_for_bm25(query: str, max_length: int = 200) -> str:
     Limpia queries que son demasiado largas o complejas para BM25
 
     Casos problemáticos:
-    - Queries de sistema (### Task, prompts internos)
+    - Queries de sistema reales (no preguntas de usuario)
     - Queries muy largas (>200 chars)
-    - Queries con muchos symbols especiales
+    - Exceso de symbols especiales
     """
 
     original = query
 
-    # 1. Detectar si es un prompt/task del sistema
-    if re.match(r"^#+\s*(Task|Generate|Create|System)", query, re.IGNORECASE):
-        logger.warning(f"⚠️  Sistema query detectado, ignorando BM25: {query[:80]}...")
-        return ""  # Retornar vacío = skip BM25
+    # 1. Detectar solo queries de sistema REALMENTE problemáticos
+    # Patrones más específicos para evitar falsos positivos
+    system_patterns = [
+        r"^#+\s*(Task|Generate|Create|System).*(?:title|summarize|concise|emoji)",
+        r"^(?:You are|Act as|Generate|Create).*(?:title|summary|response|emoji)",
+        r"^System\s*:",
+        r"^Assistant\s*:",
+        # OpenWebUI specific pattern para generar títulos
+        r"^#+\s*Task:\s*Generate.*title.*emoji.*summarizing",
+    ]
 
-    # 2. Si empieza con símbolos raros, probablemente sea un prompt
-    if query.startswith(("```", ">>>", "###", "---")):
-        logger.warning(f"⚠️  Prompt-like query detectado, ignorando BM25")
+    for pattern in system_patterns:
+        if re.match(pattern, query, re.IGNORECASE):
+            logger.warning(f"⚠️  Sistema query detectado, ignorando BM25: {query[:80]}...")
+            return ""  # Retornar vacío = skip BM25
+
+    # 2. Solo bloquear patrones CLARAMENTE de código/prompt, no preguntas con markdown
+    # Bloquear solo si empieza con múltiples símbolos de código seguidos
+    if re.match(r"^(?:```\s*$|>>>|---+$)", query.strip()):
+        logger.warning(f"⚠️  Código/prompt detectado, ignorando BM25")
         return ""
 
     # 3. Limpiar símbolos problemáticos para Whoosh
