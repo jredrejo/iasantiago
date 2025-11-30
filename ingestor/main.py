@@ -1121,6 +1121,7 @@ if __name__ == "__main__":
             print(f"   Available topics: {', '.join(TOPIC_LABELS)}")
 
             # Pedir confirmación
+            """ 
             try:
                 confirm = input(f"Type 'DELETE {topic.upper()}' to confirm: ").strip()
                 if confirm != f"DELETE {topic.upper()}":
@@ -1129,7 +1130,7 @@ if __name__ == "__main__":
             except (EOFError, KeyboardInterrupt):
                 print("\n❌ Operation cancelled")
                 sys.exit(1)
-
+            """
             success = delete_all_files_from_topic(topic)
             sys.exit(0 if success else 1)
 

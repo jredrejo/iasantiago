@@ -19,6 +19,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Pre-download docling models during image build to avoid runtime downloads
+# This significantly speeds up startup and first extraction
+ENV HF_HOME=/root/.cache/huggingface
+ENV TORCH_HOME=/root/.cache/torch
+ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
+
+RUN mkdir -p /root/.cache/huggingface && \
+    python3 -c "from docling.document_converter import DocumentConverter; DocumentConverter()" || true && \
+    echo "[DOCKERFILE] Model caching completed"
+
 EXPOSE 8003
 
 # Single worker with extended timeouts for large PDF processing

@@ -26,14 +26,29 @@ services:
     restart: unless-stopped
     ipc: host
     shm_size: 8gb
+    ulimits:
+      memlock: -1
+      stack: 67108864
+      core: 0
     environment:
       - TZ=${TZ}
       - CUDA_VISIBLE_DEVICES=0  # ⭐ Enable GPU
       - TORCH_CUDA_ARCH_LIST=89  # RTX 5090
       # Limit GPU memory for Docling
-      - DOCLING_GPU_MEMORY_FRACTION=0.25  # ~4-5 GB
+      - DOCLING_GPU_MEMORY_FRACTION=0.35  # ~11 GB - increased now that vllm-llava is disabled
+      # PyTorch memory management - avoid expandable segments which can cause corruption
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - CUDA_LAUNCH_BLOCKING=1
+      # Reduce table model batch size to prevent OOM during table detection
+      - DOCLING_TABLE_MAX_BATCH_SIZE=1
+      # Cache paths for HuggingFace models (docling uses HF models)
+      - HF_HOME=/root/.cache/huggingface
+      - TORCH_HOME=/root/.cache/torch
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
+      - HF_HUB_OFFLINE=0
     volumes:
-      - docling_cache:/root/.cache
+      - huggingface_cache:/root/.cache/huggingface
+      - docling_cache:/cache/docling
     ports:
       - "8003:8003"
     deploy:
@@ -125,7 +140,7 @@ services:
       - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
       - VLLM_TORCH_COMPILE_LEVEL=0
       - CUDA_LAUNCH_BLOCKING=1
-      - TORCH_CUDA_MEMORY_FRACTION=0.75
+      - TORCH_CUDA_MEMORY_FRACTION=0.40  # Reduced from 0.75 (~14 GB) - vllm-llava runs on demand only
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_LOGGING_LEVEL=INFO
@@ -211,9 +226,9 @@ services:
     env_file: .env
     environment:
       - HF_HOME=/models_cache
-      # Conecta a vLLM-LLaVA cuando está corriendo
-      - VLLM_URL=http://vllm-llava:8000
-      - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
+      # vLLM-LLaVA disabled - ingestor will work without it (no image/table analysis)
+      # - VLLM_URL=http://vllm-llava:8000
+      # - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
       - TOPIC_BASE_DIR=/topics
       - BM25_BASE_DIR=/whoosh
       - MIN_IMAGE_WIDTH=100
@@ -230,9 +245,11 @@ services:
       - ${BM25_BASE_DIR}:/whoosh
       - llava_cache:/llava_cache
       - ./ingestor:/app
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - qdrant
-      - vllm-llava
+      # vllm-llava removed - optional for image/table analysis
+      - docling-service
     deploy:
       resources:
         reservations:

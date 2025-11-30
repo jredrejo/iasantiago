@@ -35,6 +35,7 @@ python-magic==0.4.27
 
 # Utilidades
 watchdog==4.0.1
+docker==7.1.0
 
 # OCR
 pytesseract==0.3.13

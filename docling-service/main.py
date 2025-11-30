@@ -6,6 +6,9 @@ import tempfile
 import time
 import torch
 import pypdf
+import hashlib
+import json
+import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +28,93 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Docling PDF Extraction Service (GPU)")
+
+# Extraction cache: file_hash -> extraction results
+_extraction_cache: Dict[str, List[Dict[str, Any]]] = {}
+CACHE_DIR = (
+    Path("/cache/docling")
+    if os.path.exists("/cache")
+    else Path(tempfile.gettempdir()) / "docling_cache"
+)
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_FILE = CACHE_DIR / "extraction_cache.json"
+CRASH_STATE_FILE = CACHE_DIR / "last_extraction_state.txt"
+EXTRACTION_COUNT_FILE = CACHE_DIR / "extraction_count.txt"
+
+# Track if we crashed and need to disable tables temporarily
+_last_crashed = False
+_extraction_count = 0
+_tables_disabled_after_crash = False
+
+
+def _load_cache():
+    """Load extraction cache from disk at startup"""
+    global _extraction_cache
+    try:
+        if CACHE_FILE.exists():
+            with open(CACHE_FILE, "r") as f:
+                _extraction_cache = json.load(f)
+            logger.info(f"[CACHE] Loaded {len(_extraction_cache)} cached extractions")
+    except Exception as e:
+        logger.warning(f"[CACHE] Failed to load cache: {e}")
+
+
+def _save_cache():
+    """Save extraction cache to disk"""
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(_extraction_cache, f)
+    except Exception as e:
+        logger.warning(f"[CACHE] Failed to save cache: {e}")
+
+
+def _get_file_hash(file_bytes: bytes) -> str:
+    """Calculate SHA256 hash of file content"""
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def _detect_crash():
+    """Detect if the service crashed during last extraction"""
+    global _last_crashed, _extraction_count, _tables_disabled_after_crash
+    try:
+        if CRASH_STATE_FILE.exists():
+            content = CRASH_STATE_FILE.read_text().strip()
+            if content == "IN_PROGRESS":
+                logger.error(
+                    "[CRASH] Previous extraction crashed - disabling table detection for next request"
+                )
+                _last_crashed = True
+                _tables_disabled_after_crash = True
+                _extraction_count = 0
+                return True
+    except Exception as e:
+        logger.warning(f"[CRASH] Failed to check crash state: {e}")
+    return False
+
+
+def _mark_extraction_start():
+    """Mark that extraction is starting (to detect crashes)"""
+    try:
+        CRASH_STATE_FILE.write_text("IN_PROGRESS")
+    except Exception as e:
+        logger.warning(f"[CRASH] Failed to write state file: {e}")
+
+
+def _mark_extraction_success():
+    """Mark that extraction completed successfully"""
+    global _extraction_count, _tables_disabled_after_crash
+    try:
+        CRASH_STATE_FILE.write_text("SUCCESS")
+        _extraction_count += 1
+
+        # Re-enable table detection after first successful extraction post-crash
+        if _tables_disabled_after_crash and _extraction_count >= 1:
+            logger.info(
+                f"[CRASH] Re-enabling table detection after {_extraction_count} successful extraction"
+            )
+            _tables_disabled_after_crash = False
+    except Exception as e:
+        logger.warning(f"[CRASH] Failed to mark success: {e}")
 
 
 # ============================================================
@@ -75,10 +165,15 @@ def get_docling_converter():
         # Configure PDF pipeline options
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
-        pipeline_options.do_table_structure = True
+        # Table structure detection: disable if we just recovered from a crash
+        pipeline_options.do_table_structure = not _tables_disabled_after_crash
         logger.info("[DOCLING] Pipeline options:")
         logger.info(f"  - do_ocr: {pipeline_options.do_ocr}")
         logger.info(f"  - do_table_structure: {pipeline_options.do_table_structure}")
+        if _tables_disabled_after_crash:
+            logger.warning(
+                "[DOCLING] ⚠️  Table detection DISABLED - service recovered from crash"
+            )
 
         # Set up format options for PDF
         format_options = {
@@ -133,15 +228,27 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
     """
     converter = get_docling_converter()
 
+    file_size_mb = pdf_path.stat().st_size / 1e6
     logger.info(f"[DOCLING] Processing: {pdf_path.name}")
-    logger.info(f"[DOCLING] File size: {pdf_path.stat().st_size / 1e6:.2f} MB")
+    logger.info(f"[DOCLING] File size: {file_size_mb:.2f} MB")
     logger.info(f"[DOCLING] File exists: {pdf_path.exists()}")
+
+    # Check if file is too large for available GPU memory
+    if GPU_AVAILABLE and file_size_mb > 500:
+        logger.warning(
+            f"[DOCLING] ⚠️  Large file detected ({file_size_mb:.1f}MB) - may exceed GPU memory"
+        )
 
     start_time = time.time()
 
     if GPU_AVAILABLE:
         torch.cuda.reset_peak_memory_stats()
         mem_before = torch.cuda.memory_allocated() / 1e9
+        mem_available = (
+            torch.cuda.get_device_properties(0).total_memory / 1e9
+            - torch.cuda.memory_allocated() / 1e9
+        )
+        logger.info(f"[DOCLING] GPU memory available: {mem_available:.2f} GB")
 
     try:
         # Convert PDF (GPU-accelerated table detection and layout analysis)
@@ -169,9 +276,59 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
         # ============================================================
         elements = []
 
-        # METHOD 1: Try to use export_to_dict (most reliable)
-        if hasattr(doc, "export_to_dict"):
-            logger.info(f"[DOCLING] Method 1: Using export_to_dict()")
+        # METHOD 0: PREFERRED - Use export_to_markdown for proper chunking
+        # This gives us full structured text that we can chunk properly
+        if hasattr(doc, "export_to_markdown"):
+            logger.info(f"[DOCLING] Method 0 (PREFERRED): Using export_to_markdown()")
+            try:
+                markdown = doc.export_to_markdown()
+                logger.info(f"[DOCLING] Markdown length: {len(markdown)} chars")
+
+                if markdown.strip() and len(markdown) > 50:
+                    # Split by double newlines to get logical paragraphs
+                    paragraphs = [
+                        p.strip()
+                        for p in markdown.split("\n\n")
+                        if p.strip() and len(p.strip()) > 30
+                    ]
+                    logger.info(
+                        f"[DOCLING] Found {len(paragraphs)} paragraphs from markdown"
+                    )
+
+                    for para_idx, para in enumerate(paragraphs):
+                        # Try to extract page number from context
+                        # Docling markdown doesn't preserve page info directly,
+                        # so we estimate based on paragraph position
+                        estimated_page = 1 + (para_idx // 5)  # Rough estimate
+
+                        elements.append(
+                            {
+                                "type": "text",
+                                "text": para,
+                                "page": estimated_page,
+                                "bbox": None,
+                                "metadata": {
+                                    "docling_type": "markdown_paragraph",
+                                    "source": (
+                                        "docling_gpu"
+                                        if GPU_AVAILABLE
+                                        else "docling_cpu"
+                                    ),
+                                    "method": "export_to_markdown",
+                                },
+                            }
+                        )
+
+                    logger.info(
+                        f"[DOCLING] Method 0 extracted {len(elements)} elements from markdown"
+                    )
+            except Exception as e:
+                logger.warning(f"[DOCLING] Method 0 (markdown) failed: {e}")
+
+        # METHOD 1: Fallback - Try export_to_dict (extracts structural elements)
+        # NOTE: This only gets top-level sections, not fine-grained chunks
+        if not elements and hasattr(doc, "export_to_dict"):
+            logger.info(f"[DOCLING] Method 1 (FALLBACK): Using export_to_dict()")
             try:
                 doc_dict = doc.export_to_dict()
                 logger.info(f"[DOCLING] Dict keys: {doc_dict.keys()}")
@@ -179,7 +336,9 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                 # Parse the dict structure
                 if "body" in doc_dict:
                     body_items = doc_dict["body"]
-                    logger.info(f"[DOCLING] Found {len(body_items)} items in body")
+                    logger.info(
+                        f"[DOCLING] Found {len(body_items)} items in body (WARNING: coarse-grained)"
+                    )
 
                     for idx, item in enumerate(body_items):
                         if idx < 3:
@@ -192,7 +351,7 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                             if isinstance(item, dict)
                             else str(item)
                         )
-                        if not text.strip():
+                        if not text.strip() or len(text.strip()) < 30:
                             continue
 
                         page = (
@@ -219,53 +378,18 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                         if GPU_AVAILABLE
                                         else "docling_cpu"
                                     ),
+                                    "method": "export_to_dict",
+                                    "warning": "coarse-grained_sections_only",
                                 },
                             }
                         )
 
-                    logger.info(
-                        f"[DOCLING] Method 1 extracted {len(elements)} elements"
+                    logger.warning(
+                        f"[DOCLING] Method 1 extracted only {len(elements)} coarse elements (sections). "
+                        f"Consider using markdown export for finer granularity."
                     )
             except Exception as e:
                 logger.warning(f"[DOCLING] Method 1 failed: {e}")
-
-        # METHOD 2: Try export_to_markdown
-        if not elements and hasattr(doc, "export_to_markdown"):
-            logger.info(f"[DOCLING] Method 2: Using export_to_markdown()")
-            try:
-                markdown = doc.export_to_markdown()
-                logger.info(f"[DOCLING] Markdown length: {len(markdown)} chars")
-
-                if markdown.strip():
-                    # Split by double newlines to get paragraphs
-                    paragraphs = [
-                        p.strip() for p in markdown.split("\n\n") if p.strip()
-                    ]
-                    logger.info(f"[DOCLING] Found {len(paragraphs)} paragraphs")
-
-                    for para in paragraphs:
-                        elements.append(
-                            {
-                                "type": "text",
-                                "text": para,
-                                "page": 1,  # Markdown doesn't preserve pages
-                                "bbox": None,
-                                "metadata": {
-                                    "docling_type": "markdown_paragraph",
-                                    "source": (
-                                        "docling_gpu"
-                                        if GPU_AVAILABLE
-                                        else "docling_cpu"
-                                    ),
-                                },
-                            }
-                        )
-
-                    logger.info(
-                        f"[DOCLING] Method 2 extracted {len(elements)} elements"
-                    )
-            except Exception as e:
-                logger.warning(f"[DOCLING] Method 2 failed: {e}")
 
         # METHOD 3: Try direct body access
         if not elements and hasattr(doc, "body"):
@@ -420,9 +544,18 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
         raise
 
     finally:
-        # Clear GPU cache after processing
+        # Aggressively clear GPU memory after processing to prevent fragmentation
         if GPU_AVAILABLE:
+            # Delete converter to release model from memory
+            del converter
+            # Force garbage collection
+            import gc
+
+            gc.collect()
+            # Clear GPU cache and reset peak memory stats
             torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            logger.debug("[DOCLING] GPU memory cleared after extraction")
 
 
 def map_docling_type(docling_type: str) -> str:
@@ -502,15 +635,47 @@ async def extract_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    # Save uploaded file to temp location
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_path = Path(tmp_file.name)
-        content = await file.read()
-        tmp_file.write(content)
+    # Read file content
+    content = await file.read()
+    file_hash = _get_file_hash(content)
+    logger.info(f"[CACHE] Processing {file.filename} (hash: {file_hash[:16]}...)")
+
+    # Check cache first
+    cached = False
+    if file_hash in _extraction_cache:
+        logger.info(f"[CACHE] ✓ Cache hit for {file.filename}")
+        # Deep copy to avoid modifying cached data
+        elements = copy.deepcopy(_extraction_cache[file_hash])
+        cached = True
+    else:
+        logger.info(f"[CACHE] ✗ Cache miss for {file.filename} - extracting...")
+        # Save uploaded file to temp location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_path = Path(tmp_file.name)
+            tmp_file.write(content)
+
+        try:
+            # Mark extraction starting (for crash detection)
+            _mark_extraction_start()
+
+            # Extract elements (GPU-accelerated)
+            elements = extract_elements_from_pdf(tmp_path)
+
+            # Mark successful completion
+            _mark_extraction_success()
+
+            # Cache successful extraction (deep copy to store immutable copy)
+            logger.info(f"[CACHE] Caching extraction for hash {file_hash[:16]}...")
+            _extraction_cache[file_hash] = copy.deepcopy(elements)
+            _save_cache()
+            cached = False
+        finally:
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
     try:
-        # Extract elements (GPU-accelerated)
-        elements = extract_elements_from_pdf(tmp_path)
 
         # Calculate stats
         stats = {
@@ -526,6 +691,7 @@ async def extract_pdf(file: UploadFile = File(...)):
             stats["pages"].add(elem["page"])
 
         stats["pages"] = len(stats["pages"])
+        stats["cached"] = cached
 
         return ExtractionResponse(
             success=True,
@@ -597,6 +763,12 @@ async def startup_event():
     logger.info("=" * 60)
     logger.info("Docling PDF Extraction Service Starting (GPU-enabled)")
     logger.info("=" * 60)
+
+    # Load cache from disk
+    _load_cache()
+
+    # Detect if service crashed during last extraction
+    _detect_crash()
 
     try:
         get_docling_converter()
