@@ -7,7 +7,10 @@ import hashlib
 import numpy as np
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 from sentence_transformers import SentenceTransformer
+
+from docling_client import DoclingClient
 from qdrant_client import QdrantClient, models
 from settings import *
 from chunk import pdf_to_chunks_with_enhanced_validation
@@ -44,6 +47,21 @@ logger.info(f"[CACHE] Model cache directory: {MODEL_CACHE_DIR}")
 logger.info(f"[CACHE] HF_HOME: {os.environ['HF_HOME']}")
 
 client = QdrantClient(url=QDRANT_URL)
+
+# docling initialiation
+DOCLING_URL = os.getenv("DOCLING_URL", "http://docling-service:8003")
+ENABLE_DOCLING = os.getenv("ENABLE_DOCLING", "true").lower() == "true"
+
+docling_client = (
+    DoclingClient(docling_url=DOCLING_URL, enable_fallback=True)
+    if ENABLE_DOCLING
+    else None
+)
+
+logger.info(
+    f"[CONFIG] Docling extraction: {'ENABLED' if ENABLE_DOCLING else 'DISABLED'}"
+)
+
 
 # ============================================================
 # STATE TRACKING: Rastrear archivos ya procesados
@@ -457,6 +475,35 @@ def ensure_whoosh(topic: str):
         logger.info(f"[WHOOSH] Index at {path} already exists")
 
 
+def process_docling_elements(
+    elements: list[dict[str, Any]], pdf_path: str
+) -> list[dict[str, Any]]:
+    """
+    Convert Docling elements to your chunk format
+    Preserves compatibility with existing pipeline
+    """
+    chunks = []
+
+    for i, elem in enumerate(elements):
+        chunk = {
+            "text": elem["text"],
+            "type": elem["type"],
+            "page": elem["page"],
+            "chunk_id": i,
+            "file_path": pdf_path,
+            "source": "docling",
+            "bbox": elem.get("bbox"),
+            "metadata": elem.get("metadata", {}),
+        }
+
+        # For tables and images, you can still apply LLaVA analysis
+        # if needed (your existing logic)
+
+        chunks.append(chunk)
+
+    return chunks
+
+
 def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = None):
     """Index a single PDF file to both Qdrant and Whoosh"""
 
@@ -505,27 +552,58 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     ensure_qdrant(topic, dims)
     ensure_whoosh(topic)
 
-    try:
-        logger.info(f"Extracting chunks from PDF...")
-        vllm_url = vllm_url or VLLM_URL
-        cache_db = cache_db or LLAVA_CACHE_DB
+    logger.info(f"Extracting chunks from PDF...")
+    vllm_url = vllm_url or VLLM_URL
+    cache_db = cache_db or LLAVA_CACHE_DB
 
-        chunks = pdf_to_chunks_with_enhanced_validation(
-            pdf_path, vllm_url=vllm_url, cache_db=cache_db
-        )
-        logger.info(f"[OK] Extracted {len(chunks)} chunks")
+    if docling_client:
+        try:
+            logger.info(f"[EXTRACTION] Trying Docling for {Path(pdf_path).name}")
 
-        text_count = sum(1 for c in chunks if c.get("type") == "text")
-        table_count = sum(1 for c in chunks if c.get("type") == "table")
-        image_count = sum(1 for c in chunks if c.get("type") == "image")
-        logger.info(f"  - Text: {text_count}")
-        logger.info(f"  - Tables: {table_count}")
-        logger.info(f"  - Images: {image_count}")
+            # Define fallback function
+            def fallback_extraction(path):
+                return pdf_to_chunks_with_enhanced_validation(
+                    str(path), vllm_url=vllm_url, cache_db=cache_db
+                )
 
-    except Exception as e:
-        logger.error(f"[ERROR] Failed to extract text from PDF: {e}", exc_info=True)
-        state.mark_as_failed(pdf_path, str(e))
-        return False
+            # Extract with Docling (with automatic fallback)
+            raw_elements = docling_client.extract_pdf_sync(
+                Path(pdf_path), fallback_func=fallback_extraction
+            )
+
+            # Convert to chunks (your existing chunking logic)
+            chunks = process_docling_elements(raw_elements, pdf_path)
+
+            logger.info(f"[DOCLING] ✓ Processed into {len(chunks)} chunks")
+
+        except Exception as e:
+            logger.error(f"[DOCLING] Failed completely: {e}", exc_info=True)
+            logger.info("[DOCLING] Using original extraction method")
+
+            # Final fallback to original method
+            chunks = pdf_to_chunks_with_enhanced_validation(
+                pdf_path, vllm_url=vllm_url, cache_db=cache_db
+            )
+    else:
+        # Docling disabled, use original method
+        logger.info(f"[EXTRACTION] Using original method (Docling disabled)")
+        try:
+            chunks = pdf_to_chunks_with_enhanced_validation(
+                pdf_path, vllm_url=vllm_url, cache_db=cache_db
+            )
+
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to extract text from PDF: {e}", exc_info=True)
+            state.mark_as_failed(pdf_path, str(e))
+            return False
+
+    logger.info(f"[OK] Extracted {len(chunks)} chunks")
+    text_count = sum(1 for c in chunks if c.get("type") == "text")
+    table_count = sum(1 for c in chunks if c.get("type") == "table")
+    image_count = sum(1 for c in chunks if c.get("type") == "image")
+    logger.info(f"  - Text: {text_count}")
+    logger.info(f"  - Tables: {table_count}")
+    logger.info(f"  - Images: {image_count}")
 
     texts = [c["text"] for c in chunks]
 
@@ -555,11 +633,14 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         vecs = validate_and_fix_vectors(vecs, dims)
 
         # DEBUG: Verifica dimensión y tipo
-        logger.info(f"[OK] Encoded {len(vecs)} vectors")
-        logger.info(f"[DEBUG] Vector type: {type(vecs)}")
-        logger.info(f"[DEBUG] First vector type: {type(vecs[0])}")
-        logger.info(f"[DEBUG] Vector dimension: {len(vecs[0])}")
-        logger.info(f"[DEBUG] First value type: {type(vecs[0][0])}")
+        if len(vecs) > 0:
+            logger.info(f"[OK] Encoded {len(vecs)} vectors")
+            logger.info(f"[DEBUG] Vector type: {type(vecs)}")
+            logger.info(f"[DEBUG] First vector type: {type(vecs[0])}")
+            logger.info(f"[DEBUG] Vector dimension: {len(vecs[0])}")
+            logger.info(f"[DEBUG] First value type: {type(vecs[0][0])}")
+        else:
+            logger.warning("[DEBUG] Empty vector")
 
     except Exception as e:
         logger.error(f"[ERROR] Failed to encode chunks: {e}", exc_info=True)
@@ -841,32 +922,222 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
     return True
 
 
+def delete_all_files_from_topic(topic: str):
+    """
+    Borra TODOS los archivos de un topic específico de Qdrant y Whoosh
+    Reinicia completamente el topic para poder re-indexar desde cero
+    """
+    logger.info(f"\n{'=' * 60}")
+    logger.info("DELETING ALL FILES FROM TOPIC")
+    logger.info(f"Topic: {topic}")
+    logger.info(f"{'=' * 60}")
+
+    # ============================================================
+    # VERIFICAR QUE EL TOPIC EXISTA
+    # ============================================================
+    if topic not in TOPIC_LABELS:
+        logger.error(f"Topic '{topic}' not found in configured topics: {TOPIC_LABELS}")
+        return False
+
+    coll = topic_collection(topic)
+
+    # ============================================================
+    # BORRAR COLECCIÓN COMPLETA DE QDRANT
+    # ============================================================
+    try:
+        if client.collection_exists(collection_name=coll):
+            # Obtener información antes de borrar
+            collection_info = client.get_collection(collection_name=coll)
+            points_count = collection_info.points_count
+            logger.info(f"Found {points_count} points in Qdrant collection '{coll}'")
+
+            # Borrar colección completa
+            client.delete_collection(collection_name=coll)
+            logger.info(f"✅ Deleted entire Qdrant collection '{coll}'")
+        else:
+            logger.warning(f"Qdrant collection '{coll}' does not exist")
+            points_count = 0
+
+    except Exception as e:
+        logger.error(f"Error deleting Qdrant collection '{coll}': {e}", exc_info=True)
+        return False
+
+    # ============================================================
+    # BORRAR ÍNDICE COMPLETO DE WHOOSH
+    # ============================================================
+    try:
+        idx_path = os.path.join(BM25_BASE_DIR, topic)
+        if os.path.exists(idx_path):
+            # Contar documentos antes de borrar
+            try:
+                idx = index.open_dir(idx_path)
+                with idx.searcher() as searcher:
+                    doc_count = searcher.doc_count()
+                logger.info(f"Found {doc_count} documents in Whoosh index '{idx_path}'")
+            except:
+                doc_count = 0
+                logger.warning(
+                    f"Could not count documents in Whoosh index '{idx_path}'"
+                )
+
+            # Borrar carpeta completa del índice
+            import shutil
+
+            shutil.rmtree(idx_path)
+            logger.info(f"✅ Deleted entire Whoosh index '{idx_path}'")
+        else:
+            logger.warning(f"Whoosh index '{idx_path}' does not exist")
+            doc_count = 0
+
+    except Exception as e:
+        logger.error(f"Error deleting Whoosh index '{idx_path}': {e}", exc_info=True)
+        return False
+
+    # ============================================================
+    # LIMPIAR ESTADO DE PROCESAMIENTO PARA ESTE TOPIC
+    # ============================================================
+    try:
+        files_to_remove = []
+        for file_path, file_info in state.state["processed"].items():
+            if file_info.get("topic") == topic:
+                files_to_remove.append(file_path)
+
+        # Remover archivos procesados de este topic
+        removed_count = 0
+        for file_path in files_to_remove:
+            state.state["processed"].pop(file_path, None)
+            removed_count += 1
+
+        # También limpiar archivos fallidos de este topic
+        failed_to_remove = []
+        for file_path in list(state.state["failed"].keys()):
+            if topic in file_path:  # Si el path contiene el nombre del topic
+                state.state["failed"].pop(file_path, None)
+                failed_to_remove.append(file_path)
+
+        state._save_state()
+        logger.info(f"✅ Removed {removed_count} processed files from state")
+        if failed_to_remove:
+            logger.info(f"✅ Removed {len(failed_to_remove)} failed files from state")
+
+    except Exception as e:
+        logger.error(f"Error updating processing state: {e}", exc_info=True)
+        return False
+
+    # ============================================================
+    # RECOSNCTRUIR ESTRUCTURA VACÍA (para que esté listo para re-indexar)
+    # ============================================================
+    try:
+        # Recrear carpeta de Whoosh vacía
+        ensure_whoosh(topic)
+
+        # Obtener dimensión del embedding model para este topic
+        embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
+        try:
+            # Cargar modelo temporalmente para obtener dimensión
+            temp_model = model_cache.get_model(embed_name, device="cpu")
+            dims = temp_model.get_sentence_embedding_dimension()
+            logger.info(f"Embedding dimension for topic '{topic}': {dims}")
+
+            # Recrear colección de Qdrant vacía
+            ensure_qdrant(topic, dims)
+            logger.info(f"✅ Recreated empty Qdrant collection '{coll}'")
+        except Exception as e:
+            logger.warning(f"Could not recreate Qdrant collection: {e}")
+            logger.warning(f"Will be created automatically when first file is indexed")
+
+    except Exception as e:
+        logger.error(f"Error recreating empty structures: {e}", exc_info=True)
+
+    logger.info(f"{'=' * 60}")
+    logger.info("[SUCCESS] All files deleted from topic")
+    logger.info(f"  - Topic: {topic}")
+    logger.info(f"  - Qdrant points: {points_count}")
+    logger.info(f"  - Whoosh documents: {doc_count}")
+    logger.info(f"  - Processed files removed: {removed_count}")
+    logger.info(
+        f"  - Failed files removed: {len(failed_to_remove) if 'failed_to_remove' in locals() else 0}"
+    )
+    logger.info(f"  - Empty structures recreated: Ready for re-indexing")
+    logger.info(f"{'=' * 60}\n")
+
+    return True
+
+
 # ============================================================
 # CLI: Para ejecutar manualmente
 # ============================================================
 """
-Para borrar manualmente un archivo ya indexado:
-docker exec -it ingestor python /app/main.py delete Modelo "/topics/Modelo/nombre_archivo.pdf"
-Por ejemplo:
+Comandos disponibles:
+
+1. Borrar un archivo específico:
+docker exec -it ingestor python /app/main.py delete Electricidad "/topics/Electricidad/archivo.pdf"
+Ejemplo:
 docker exec -it ingestor python /app/main.py delete Electricidad "/topics/Electricidad/Normas de Construcción de cuadros de automatización.pdf"
+
+2. Borrar TODOS los archivos de un topic:
+docker exec -it ingestor python /app/main.py delete-topic Electricidad
+Ejemplo:
+docker exec -it ingestor python /app/main.py delete-topic Chemistry
+
+3. Escanear e indexar todo (default):
+docker exec -it ingestor python /app/main.py
 """
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "delete":
-        # Uso: python main.py delete "Electricidad" "/topics/Electricidad/archivo.pdf"
-        if len(sys.argv) < 4:
-            print("Usage: python main.py delete <topic> <pdf_path>")
-            print(
-                "Example: python main.py delete Electricidad /topics/Electricidad/Step7.pdf"
-            )
+    if len(sys.argv) > 1:
+        command = sys.argv[1]
+
+        if command == "delete":
+            # Uso: python main.py delete "Electricidad" "/topics/Electricidad/archivo.pdf"
+            if len(sys.argv) < 4:
+                print("Usage: python main.py delete <topic> <pdf_path>")
+                print(
+                    "Example: python main.py delete Electricidad /topics/Electricidad/Step7.pdf"
+                )
+                sys.exit(1)
+
+            topic = sys.argv[2]
+            pdf_path = sys.argv[3]
+
+            success = delete_pdf_from_indexes(topic, pdf_path)
+            sys.exit(0 if success else 1)
+
+        elif command == "delete-topic":
+            # Uso: python main.py delete-topic "Electricidad"
+            if len(sys.argv) < 3:
+                print("Usage: python main.py delete-topic <topic>")
+                print("Available topics:", ", ".join(TOPIC_LABELS))
+                print("Example: python main.py delete-topic Chemistry")
+                sys.exit(1)
+
+            topic = sys.argv[2]
+
+            print(f"⚠️  WARNING: This will delete ALL files from topic '{topic}'")
+            print(f"   This action cannot be undone!")
+            print(f"   Available topics: {', '.join(TOPIC_LABELS)}")
+
+            # Pedir confirmación
+            try:
+                confirm = input(f"Type 'DELETE {topic.upper()}' to confirm: ").strip()
+                if confirm != f"DELETE {topic.upper()}":
+                    print("❌ Operation cancelled")
+                    sys.exit(1)
+            except (EOFError, KeyboardInterrupt):
+                print("\n❌ Operation cancelled")
+                sys.exit(1)
+
+            success = delete_all_files_from_topic(topic)
+            sys.exit(0 if success else 1)
+
+        else:
+            print(f"Unknown command: {command}")
+            print("Available commands:")
+            print("  delete <topic> <pdf_path>     - Delete a specific PDF")
+            print("  delete-topic <topic>          - Delete ALL files from topic")
+            print("  (no command)                  - Scan and index all topics")
             sys.exit(1)
-
-        topic = sys.argv[2]
-        pdf_path = sys.argv[3]
-
-        success = delete_pdf_from_indexes(topic, pdf_path)
-        sys.exit(0 if success else 1)
 
     else:
         # Default: scan y indexa

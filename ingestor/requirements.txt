@@ -1,5 +1,5 @@
 # ============================================================
-# EXTRACTOR HÍBRIDO: Unstructured.io + MinerU
+# EXTRACTOR HÍBRIDO: Unstructured.io + docling
 # ============================================================
 
 # Unstructured.io (formatos variados + PDFs simples)
@@ -7,10 +7,6 @@ unstructured==0.18.15
 unstructured[pdf,table-structure,image]==0.18.15
 unstructured-pytesseract==0.3.15
 pdf2image==1.17.0
-
-# MinerU (PDFs complejos - OPCIONAL, lazy loaded)
-# Instalar manualmente si necesitas: pip install mineru
-#mineru==2.6.2
 
 # PDF Analysis
 pdfplumber==0.11.7
@@ -43,17 +39,6 @@ watchdog==4.0.1
 # OCR
 pytesseract==0.3.13
 # EasyOCR (GPU-accelerated, safe with PyTorch)
-easyocr==1.7.1
+#easyocr==1.7.1
 
 
-# ============================================================
-# NOTAS:
-# ============================================================
-# - Unstructured.io: Instalado por defecto
-# - MinerU: Opcional, se carga dinámicamente si está instalado
-#   Para instalar MinerU: pip install mineru
-#
-# - Si solo necesitas PDFs simples, ignora MinerU
-# - Sistema detecta automáticamente qué usar
-# - Sin MinerU: usa solo Unstructured.io (fallback automático)
-# ============================================================

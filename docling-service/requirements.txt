@@ -1,0 +1,19 @@
+# docling-service/requirements.txt (GPU-optimized)
+
+fastapi==0.123.0
+uvicorn[standard]==0.38.0
+httpx==0.28.1
+python-multipart==0.0.20
+pypdf[crypto]==6.3.0
+
+# Docling with GPU support
+docling==2.63.0
+docling-core==2.54.0
+docling-ibm-models==3.10.2
+
+# PyTorch is already in base image, but ensure compatibility
+# torch==2.4.0 (from base image)
+# torchvision==0.19.0 (from base image)
+
+# Additional GPU-accelerated tools
+easyocr==1.7.2  # GPU OCR (if needed)

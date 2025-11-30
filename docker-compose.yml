@@ -18,6 +18,35 @@ services:
       timeout: 3s
       retries: 30
 
+  docling-service:
+    build:
+      context: ./docling-service
+      dockerfile: Dockerfile
+    container_name: docling-service
+    restart: unless-stopped
+    ipc: host
+    shm_size: 8gb
+    environment:
+      - TZ=${TZ}
+      - CUDA_VISIBLE_DEVICES=0  # ⭐ Enable GPU
+      - TORCH_CUDA_ARCH_LIST=89  # RTX 5090
+      # Limit GPU memory for Docling
+      - DOCLING_GPU_MEMORY_FRACTION=0.25  # ~4-5 GB
+    volumes:
+      - docling_cache:/root/.cache
+    ports:
+      - "8003:8003"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]  # ⭐ GPU access
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   vllm:
     image: vllm/vllm-openai:nightly
     container_name: vllm
@@ -281,3 +310,4 @@ volumes:
   huggingface_cache:
   llava_cache:
   models_cache:
+  docling_cache:
