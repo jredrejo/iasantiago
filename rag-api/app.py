@@ -399,6 +399,8 @@ async def chat_completions(
     telemetry_log(
         {
             "query": user_msg,
+            "original_language": meta.get("original_language"),
+            "translated_query": meta.get("original_query") if meta.get("original_language") != "en" else None,
             "topic": topic,
             "mode": meta.get("mode"),
             "num_messages": len(req.messages),

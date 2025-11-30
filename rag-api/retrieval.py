@@ -5,6 +5,7 @@ from settings import *
 from qdrant_utils import search_dense
 from bm25_utils import bm25_search, bm25_search_safe
 from rerank import CrossEncoderReranker
+from translation import translate_query, detect_language
 import os, json, time
 import logging
 from urllib.parse import quote
@@ -70,7 +71,7 @@ def soft_trim_context(chunks: List[Dict], token_limit: int) -> List[Dict]:
     return out
 
 
-def hybrid_retrieve(topic: str, query: str) -> Tuple[List[Dict], Dict]:
+def hybrid_retrieve(topic: str, query: str, original_language: str = None) -> Tuple[List[Dict], Dict]:
     """Versión básica con valores por defecto de .env"""
     embedder = get_embedder(topic)
     q_vec = embedder.encode([query], normalize_embeddings=True)[0].tolist()
@@ -255,14 +256,24 @@ def bm25_only_enhanced(topic: str, query: str, final_topk: int):
 
 
 def choose_retrieval(topic: str, query: str):
-    """Versión básica para backward compatibility"""
+    """Versión básica para backward compatibility con traducción automática"""
+    # Detectar idioma y traducir si es necesario
+    detected_lang = detect_language(query)
+    original_query = query
+    
+    if detected_lang != "en":
+        logger.info(f"Query in {detected_lang}, translating to English for retrieval")
+        query, _ = translate_query(query, detected_lang, "en")
+    
     q_tokens = len(query.strip().split())
     if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
         results = bm25_only(topic, query)
-        return results, {"mode": "bm25"}
+        return results, {"mode": "bm25", "original_language": detected_lang, "original_query": original_query}
     else:
-        results, meta = hybrid_retrieve(topic, query)
+        results, meta = hybrid_retrieve(topic, query, original_language=detected_lang)
         meta["mode"] = "hybrid"
+        meta["original_language"] = detected_lang
+        meta["original_query"] = original_query
         return results, meta
 
 
@@ -270,7 +281,16 @@ def choose_retrieval_enhanced(topic: str, query: str, is_generative: bool = Fals
     """
     Versión mejorada que ajusta parámetros según el modo
     USANDO VARIABLES DE ENTORNO (sin hardcodeo)
+    Con traducción automática de queries no-inglesas
     """
+    # Detectar idioma y traducir si es necesario
+    detected_lang = detect_language(query)
+    original_query = query
+    
+    if detected_lang != "en":
+        logger.info(f"🌐 Query in {detected_lang}, translating to English for retrieval")
+        query, _ = translate_query(query, detected_lang, "en")
+    
     q_tokens = len(query.strip().split())
 
     # Ajustar TOPK usando multiplicador de .env
@@ -290,12 +310,14 @@ def choose_retrieval_enhanced(topic: str, query: str, is_generative: bool = Fals
     if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
         logger.info(f"Query corta ({q_tokens} tokens) - usando BM25 solo")
         results = bm25_only_enhanced(topic, query, final_topk)
-        return results, {"mode": "bm25", "topk": final_topk}
+        return results, {"mode": "bm25", "topk": final_topk, "original_language": detected_lang, "original_query": original_query}
     else:
         logger.info(f"Query normal ({q_tokens} tokens) - usando Hybrid")
         results, meta = hybrid_retrieve_enhanced(topic, query, final_topk)
         meta["mode"] = "hybrid"
         meta["topk"] = final_topk
+        meta["original_language"] = detected_lang
+        meta["original_query"] = original_query
         return results, meta
 
 

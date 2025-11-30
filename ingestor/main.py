@@ -1,21 +1,21 @@
-import os
 import glob
-import torch
-import logging
-import json
 import hashlib
-import numpy as np
-from pathlib import Path
+import json
+import logging
+import os
+from chunk import pdf_to_chunks_with_enhanced_validation
 from datetime import datetime
+from pathlib import Path
 from typing import Any
-from sentence_transformers import SentenceTransformer
 
+import numpy as np
+import torch
 from docling_client import DoclingClient
 from qdrant_client import QdrantClient, models
+from sentence_transformers import SentenceTransformer
 from settings import *
-from chunk import pdf_to_chunks_with_enhanced_validation
 from whoosh import index
-from whoosh.fields import Schema, ID, TEXT, NUMERIC
+from whoosh.fields import ID, NUMERIC, TEXT, Schema
 
 # ============================================================
 # CRITICAL: Configure model cache directory BEFORE imports
@@ -1011,7 +1011,9 @@ def delete_all_files_from_topic(topic: str):
         # También limpiar archivos fallidos de este topic
         failed_to_remove = []
         for file_path in list(state.state["failed"].keys()):
-            if topic in file_path:  # Si el path contiene el nombre del topic
+            # Check if the file path belongs to this topic's directory
+            topic_dir = os.path.join(TOPIC_BASE_DIR, topic)
+            if topic_dir in file_path:  # Verifica que el archivo esté en el directorio del topic
                 state.state["failed"].pop(file_path, None)
                 failed_to_remove.append(file_path)
 
@@ -1076,7 +1078,7 @@ Ejemplo:
 docker exec -it ingestor python /app/main.py delete Electricidad "/topics/Electricidad/Normas de Construcción de cuadros de automatización.pdf"
 
 2. Borrar TODOS los archivos de un topic:
-docker exec -it ingestor python /app/main.py delete-topic Electricidad
+docker exec -it ingestor python /app/main.py delete-topic Programming
 Ejemplo:
 docker exec -it ingestor python /app/main.py delete-topic Chemistry
 
