@@ -121,13 +121,19 @@ class DoclingClient:
 
     def _restart_container(self) -> bool:
         """
-        Restart the docling-service container after a crash
-        Returns True if restart was successful
+        Restart the docling-service container after a crash.
+        Uses monitor to check logs before restarting.
+        Returns True if restart was successful.
         """
         if not self._docker_available or not self._docker_client:
             logger.warning(
                 "[DOCLING] Docker API not available - cannot restart container"
             )
+            return False
+
+        # Check logs before restarting (using monitor)
+        if self.monitor and not self.monitor.should_restart_container():
+            logger.info("[DOCLING] No segfault detected in logs - skipping restart")
             return False
 
         try:

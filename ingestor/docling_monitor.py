@@ -320,6 +320,42 @@ class DoclingMonitor:
 
         self._save_segfault_history()
 
+    def should_restart_container(self) -> bool:
+        """
+        Check if container should be restarted based on logs.
+        Returns True if segfault is detected in last 15 lines.
+        Returns False if "Processing document" is the last line (still processing).
+        """
+        if not self._docker_client:
+            return False
+
+        try:
+            container = self._docker_client.containers.get(self.container_name)
+            # Get last 20 lines to check
+            logs = container.logs(tail=20).decode("utf-8", errors="ignore").split("\n")
+            # Filter empty lines
+            logs = [line.strip() for line in logs if line.strip()]
+
+            if not logs:
+                return False
+
+            # Check if last line is "Processing document"
+            if logs and "Processing document" in logs[-1]:
+                logger.info("[MONITOR] Container still processing - no restart needed")
+                return False
+
+            # Check last 15 lines for segfault indicators
+            logs_to_check = logs[-15:] if len(logs) >= 15 else logs
+            for line in logs_to_check:
+                if "Caught signal" in line or "Segmentation fault" in line:
+                    logger.error(f"[MONITOR] Segfault detected in logs: {line}")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.warning(f"[MONITOR] Could not check logs for segfault: {e}")
+            return False
+
     def get_statistics(self) -> dict:
         """Get statistics about segfaults"""
         total_segfaults = sum(r.segfault_count for r in self._segfault_history.values())
