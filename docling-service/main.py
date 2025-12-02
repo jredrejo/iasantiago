@@ -1,26 +1,24 @@
 # docling-service/main.py (GPU-enabled)
 
+import copy
+import hashlib
+import json
 import logging
 import os
 import tempfile
 import time
-import torch
-import pypdf
-import hashlib
-import json
-import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pypdf
+import torch
+from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
-
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -138,12 +136,19 @@ def setup_gpu():
         logger.info(f"[GPU]   - Total memory: {props.total_memory / 1e9:.2f} GB")
         logger.info(f"[GPU]   - Compute capability: {props.major}.{props.minor}")
 
-    # Set memory fraction for Docling (don't use all GPU)
-    memory_fraction = float(os.getenv("DOCLING_GPU_MEMORY_FRACTION", "0.15"))
+    # ⭐ CRITICAL FIX: Use much lower memory fraction
+    memory_fraction = float(
+        os.getenv("DOCLING_GPU_MEMORY_FRACTION", "0.30")
+    )  # Was 0.15
     logger.info(f"[GPU] Setting memory fraction: {memory_fraction:.2%}")
 
-    # This is a soft limit - PyTorch will allocate as needed up to this
-    torch.cuda.set_per_process_memory_fraction(memory_fraction, device=0)
+    # ⭐ Clear any existing allocations first
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+
+    # Set memory fraction per device
+    for i in range(gpu_count):
+        torch.cuda.set_per_process_memory_fraction(memory_fraction, device=i)
 
     return True
 
@@ -231,27 +236,17 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
     file_size_mb = pdf_path.stat().st_size / 1e6
     logger.info(f"[DOCLING] Processing: {pdf_path.name}")
     logger.info(f"[DOCLING] File size: {file_size_mb:.2f} MB")
-    logger.info(f"[DOCLING] File exists: {pdf_path.exists()}")
 
-    # Check if file is too large for available GPU memory
-    if GPU_AVAILABLE and file_size_mb > 500:
-        logger.warning(
-            f"[DOCLING] ⚠️  Large file detected ({file_size_mb:.1f}MB) - may exceed GPU memory"
-        )
+    # ⭐ Pre-extraction memory cleanup
+    if GPU_AVAILABLE:
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        mem_before = torch.cuda.memory_allocated() / 1e9
+        logger.info(f"[DOCLING] GPU memory before: {mem_before:.2f} GB")
 
     start_time = time.time()
 
-    if GPU_AVAILABLE:
-        torch.cuda.reset_peak_memory_stats()
-        mem_before = torch.cuda.memory_allocated() / 1e9
-        mem_available = (
-            torch.cuda.get_device_properties(0).total_memory / 1e9
-            - torch.cuda.memory_allocated() / 1e9
-        )
-        logger.info(f"[DOCLING] GPU memory available: {mem_available:.2f} GB")
-
     try:
-        # Convert PDF (GPU-accelerated table detection and layout analysis)
         logger.info(f"[DOCLING] Starting conversion...")
         result = converter.convert(str(pdf_path))
         logger.info(f"[DOCLING] Conversion complete")
@@ -544,18 +539,26 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
         raise
 
     finally:
-        # Aggressively clear GPU memory after processing to prevent fragmentation
+        # ⭐ CRITICAL: Aggressive cleanup after EVERY extraction
         if GPU_AVAILABLE:
-            # Delete converter to release model from memory
+            # Delete converter reference
             del converter
-            # Force garbage collection
+
+            # Force Python garbage collection
             import gc
 
             gc.collect()
-            # Clear GPU cache and reset peak memory stats
-            torch.cuda.empty_cache()
+
+            # Clear CUDA cache multiple times
+            for _ in range(3):
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+
+            # Reset memory stats
             torch.cuda.reset_peak_memory_stats()
-            logger.debug("[DOCLING] GPU memory cleared after extraction")
+
+            mem_after = torch.cuda.memory_allocated() / 1e9
+            logger.info(f"[DOCLING] GPU memory after cleanup: {mem_after:.2f} GB")
 
 
 def map_docling_type(docling_type: str) -> str:
@@ -676,7 +679,6 @@ async def extract_pdf(file: UploadFile = File(...)):
                 pass
 
     try:
-
         # Calculate stats
         stats = {
             "total_elements": len(elements),
