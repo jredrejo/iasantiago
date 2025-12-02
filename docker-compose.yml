@@ -25,22 +25,22 @@ services:
     container_name: docling-service
     restart: unless-stopped
     ipc: host
-    shm_size: 8gb
+    shm_size: 16gb
     ulimits:
       memlock: -1
       stack: 67108864
       core: 0
     environment:
       - TZ=${TZ}
-      - CUDA_VISIBLE_DEVICES=0  # ⭐ Enable GPU
-      - TORCH_CUDA_ARCH_LIST=89  # RTX 5090
+      - CUDA_VISIBLE_DEVICES=0 # ⭐ Enable GPU
+      - TORCH_CUDA_ARCH_LIST=89 # RTX 5090
       # Limit GPU memory for Docling
-      - DOCLING_GPU_MEMORY_FRACTION=0.35  # ~11 GB - increased now that vllm-llava is disabled
+      - DOCLING_GPU_MEMORY_FRACTION=0.95
       # PyTorch memory management - avoid expandable segments which can cause corruption
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-      - CUDA_LAUNCH_BLOCKING=1
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024
+      - CUDA_LAUNCH_BLOCKING=0
       # Reduce table model batch size to prevent OOM during table detection
-      - DOCLING_TABLE_MAX_BATCH_SIZE=1
+      - DOCLING_TABLE_MAX_BATCH_SIZE=4
       # Cache paths for HuggingFace models (docling uses HF models)
       - HF_HOME=/root/.cache/huggingface
       - TORCH_HOME=/root/.cache/torch
@@ -55,7 +55,7 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]  # ⭐ GPU access
+            - capabilities: [gpu] # ⭐ GPU access
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -73,38 +73,40 @@ services:
     shm_size: 16gb
     env_file: .env
     environment:
-    - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
-    - VLLM_TORCH_COMPILE_LEVEL=0
-    - CUDA_LAUNCH_BLOCKING=0
-    # - TORCH_CUDA_MEMORY_FRACTION=0.85 QWEN
-    - PYTORCH_ALLOC_CONF=max_split_size_mb:512
-    - CUDA_DEVICE_ORDER=PCI_BUS_ID
-    - CUDA_VISIBLE_DEVICES=0
-    - VLLM_LOGGING_LEVEL=INFO
-    # Para latencia: enable prefill pipelining
-    - VLLM_ENABLE_PREFIX_CACHING=1
-    # Reduce overhead de comunicación
-    - VLLM_ALLOW_LONG_MAX_POSITION_EMBEDDINGS=1
-    - HF_MODEL_NAME=${VLLM_MODEL}
-    - VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND}
-    - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD}
-    - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
+      - TORCH_CUDA_ARCH_LIST=89 # RTX5090 es arquitectura 89
+      - VLLM_TORCH_COMPILE_LEVEL=0
+      - CUDA_LAUNCH_BLOCKING=0
+
+      # - TORCH_CUDA_MEMORY_FRACTION=0.85 QWEN
+      - PYTORCH_ALLOC_CONF=max_split_size_mb:512
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_LOGGING_LEVEL=INFO
+      # Para latencia: enable prefill pipelining
+      - VLLM_ENABLE_PREFIX_CACHING=1
+      # Reduce overhead de comunicación
+      - VLLM_ALLOW_LONG_MAX_POSITION_EMBEDDINGS=1
+      - HF_MODEL_NAME=${VLLM_MODEL}
+      - VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND}
+      - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD}
+      - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
     ports:
       - "8000:8000"
       # --kv-cache-dtype auto qwen
       # -attention-backend xformers gemma
     command: >
       --model ${VLLM_MODEL}
-      --quantization compressed-tensors
+      --quantization ${VLLM_QUANTIZATION}
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len ${VLLM_MAX_MODEL_LEN}
       --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}
-      --dtype bfloat16
+      --dtype ${VLLM_DTYPE}
       --host 0.0.0.0
       --port 8000
       --max-num-seqs ${VLLM_MAX_NUM_SEQS}
       --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS}
       --block-size ${VLLM_BLOCK_SIZE}
+      --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}
       --kv-cache-dtype auto
       --enable-prefix-caching
       --enable-chunked-prefill
@@ -127,7 +129,7 @@ services:
   # ============================================================
   vllm-llava:
     image: vllm/vllm-openai:nightly
-#    image: vllm/vllm-openai:latest
+    #    image: vllm/vllm-openai:latest
     container_name: vllm-llava
     restart: no
     ipc: host
@@ -137,10 +139,10 @@ services:
     shm_size: 16gb
     env_file: .env
     environment:
-      - TORCH_CUDA_ARCH_LIST=89  # RTX5090 es arquitectura 89
+      - TORCH_CUDA_ARCH_LIST=89 # RTX5090 es arquitectura 89
       - VLLM_TORCH_COMPILE_LEVEL=0
       - CUDA_LAUNCH_BLOCKING=1
-      - TORCH_CUDA_MEMORY_FRACTION=0.40  # Reduced from 0.75 (~14 GB) - vllm-llava runs on demand only
+      - TORCH_CUDA_MEMORY_FRACTION=0.40 # Reduced from 0.75 (~14 GB) - vllm-llava runs on demand only
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_LOGGING_LEVEL=INFO
@@ -236,9 +238,9 @@ services:
       - LLM_ANALYSIS_TEMPERATURE=0.3
       - TOKENIZERS_PARALLELISM=true
       - OMP_NUM_THREADS=10
-      - NUMBA_NUM_THREADS=10        # Para NumPy/numba
-      - MKL_NUM_THREADS=10          # Para Intel MKL
-      - OPENBLAS_NUM_THREADS=10     # Para OpenBLAS
+      - NUMBA_NUM_THREADS=10 # Para NumPy/numba
+      - MKL_NUM_THREADS=10 # Para Intel MKL
+      - OPENBLAS_NUM_THREADS=10 # Para OpenBLAS
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
@@ -273,8 +275,8 @@ services:
       # Confiar en los headers que envia oauth2-proxy
       - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
       - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-Forwarded-User
-      - WEBUI_AUTH_COOKIE_AGE=604800  # 7 days in seconds
-      - WEBUI_SESSION_COOKIE_AGE=604800  # 7 days in seconds
+      - WEBUI_AUTH_COOKIE_AGE=604800 # 7 days in seconds
+      - WEBUI_SESSION_COOKIE_AGE=604800 # 7 days in seconds
       # Cookies "sanas" detrás de reverse proxy
       - WEBUI_SESSION_COOKIE_SAME_SITE=lax
       - WEBUI_AUTH_COOKIE_SAME_SITE=lax
