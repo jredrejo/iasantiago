@@ -144,8 +144,8 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     model: str
     messages: List[Message]
-    temperature: Optional[float] = 0.2
-    top_p: Optional[float] = 0.9
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 0.95
     stream: Optional[bool] = True
     iasantiago_mode: Optional[str] = "explica"  # "explica" | "guia" | "examen"
 
@@ -400,7 +400,11 @@ async def chat_completions(
         {
             "query": user_msg,
             "original_language": meta.get("original_language"),
-            "translated_query": meta.get("original_query") if meta.get("original_language") != "en" else None,
+            "translated_query": (
+                meta.get("original_query")
+                if meta.get("original_language") != "en"
+                else None
+            ),
             "topic": topic,
             "mode": meta.get("mode"),
             "num_messages": len(req.messages),
@@ -439,7 +443,9 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
         enhanced_system = sys_prompt
 
     # CRÍTICO: Verificar si el system prompt es demasiado largo y truncarlo si es necesario
-    max_system_tokens = int(VLLM_MAX_MODEL_LEN * 0.25)  # Máximo 25% del modelo para system prompt
+    max_system_tokens = int(
+        VLLM_MAX_MODEL_LEN * 0.25
+    )  # Máximo 25% del modelo para system prompt
     current_system_tokens = count_tokens(enhanced_system)
 
     if current_system_tokens > max_system_tokens:
@@ -462,7 +468,9 @@ Responde usando solo información del contexto. Cita las fuentes con formato: [a
             enhanced_system = """Eres un asistente docente experto. Responde usando el contexto proporcionado y cita las fuentes con formato: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)"""
 
         new_tokens = count_tokens(enhanced_system)
-        logger.info(f"✅ System prompt truncado: {current_system_tokens} → {new_tokens} tokens")
+        logger.info(
+            f"✅ System prompt truncado: {current_system_tokens} → {new_tokens} tokens"
+        )
 
     messages.append({"role": "system", "content": enhanced_system})
 
@@ -588,8 +596,8 @@ Responde usando solo información del contexto. Cita las fuentes con formato: [a
     payload = {
         "model": VLLM_MODEL,
         "messages": messages,
-        "temperature": req.temperature,
-        "top_p": req.top_p,
+        "temperature": req.temperature if req.temperature is not None else 0.7,
+        "top_p": req.top_p if req.top_p is not None else 0.95,
         "stream": req.stream,
         "max_tokens": max_tokens,
     }

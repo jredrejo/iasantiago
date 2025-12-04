@@ -79,7 +79,6 @@ services:
       - TORCH_CUDA_ARCH_LIST=89 # RTX5090 es arquitectura 89
       - VLLM_TORCH_COMPILE_LEVEL=0
       - CUDA_LAUNCH_BLOCKING=0
-
       # - TORCH_CUDA_MEMORY_FRACTION=0.85 QWEN
       - PYTORCH_ALLOC_CONF=max_split_size_mb:512
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
@@ -95,8 +94,6 @@ services:
       - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
     ports:
       - "8000:8000"
-      # --kv-cache-dtype auto qwen
-      # -attention-backend xformers gemma
     command: >
       --model ${VLLM_MODEL}
       --quantization ${VLLM_QUANTIZATION}
@@ -110,7 +107,6 @@ services:
       --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS}
       --block-size ${VLLM_BLOCK_SIZE}
       --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}
-      --kv-cache-dtype auto
       --enable-prefix-caching
       --enable-chunked-prefill
     volumes:
