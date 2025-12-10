@@ -371,10 +371,15 @@ async def chat_completions(
         logger.info(
             f"Before rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
         )
-        retrieved = rerank_passages(user_msg, retrieved)
+        # ✅ RERANKER IMPROVEMENT: Rerank ALL passages, don't limit at reranker
+        # Token trimming will happen after reranking for better quality
+        retrieved = rerank_passages(
+            user_msg, retrieved, rerank_topk=None
+        )  # Return all reranked
         logger.info(
             f"After rerank: {[(r['file_path'], r['page'], r['chunk_id']) for r in retrieved]}"
         )
+        # Trim by tokens AFTER reranking to maintain quality
         retrieved = soft_trim_context(retrieved, context_token_limit)
 
     context_text, cited = attach_citations(retrieved, topic)
