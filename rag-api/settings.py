@@ -43,7 +43,11 @@ BM25_BASE_DIR = os.getenv("BM25_BASE_DIR", "/whoosh")
 
 CTX_TOKENS_SOFT_LIMIT = get_int_env("CTX_TOKENS_SOFT_LIMIT", 4000)
 CTX_TOKENS_GENERATIVE = get_int_env("CTX_TOKENS_GENERATIVE", 10000)
-MAX_CHUNKS_PER_FILE = get_int_env("MAX_CHUNKS_PER_FILE", 3)
+
+# ✅ DYNAMIC PER-FILE LIMITS: Different limits for response vs generative modes
+MAX_CHUNKS_PER_FILE = get_int_env("MAX_CHUNKS_PER_FILE", 3)  # Response mode
+MAX_CHUNKS_PER_FILE_GENERATIVE = get_int_env("MAX_CHUNKS_PER_FILE_GENERATIVE", 5)  # Generative mode (needs more context)
+
 HYBRID_DENSE_K = get_int_env("HYBRID_DENSE_K", 40)
 HYBRID_BM25_K = get_int_env("HYBRID_BM25_K", 40)
 FINAL_TOPK = get_int_env("FINAL_TOPK", 5)
