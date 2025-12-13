@@ -476,19 +476,50 @@ def ensure_whoosh(topic: str):
 
 
 def process_docling_elements(
-    elements: list[dict[str, Any]], pdf_path: str
+    elements: list[dict[str, Any]], pdf_path: str, total_pages: int = None
 ) -> list[dict[str, Any]]:
     """
     Convert Docling elements to your chunk format
     Preserves compatibility with existing pipeline
+
+    Args:
+        elements: List of elements from Docling service
+        pdf_path: Path to PDF file
+        total_pages: Total number of pages in PDF (for validation)
     """
     chunks = []
 
     for i, elem in enumerate(elements):
+        # Validate and clamp page number
+        page = elem.get("page", 1)
+        if not isinstance(page, int):
+            try:
+                page = int(page)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"[DOCLING] Invalid page type in element {i}: {page}, using 1"
+                )
+                page = 1
+
+        # Clamp page number to valid range
+        if total_pages:
+            if page < 1 or page > total_pages:
+                original_page = page
+                page = max(1, min(page, total_pages))
+                logger.warning(
+                    f"[DOCLING] Invalid page {original_page} in element {i}, clamped to {page} "
+                    f"(doc has {total_pages} pages)"
+                )
+        else:
+            # If no total_pages, at least ensure page >= 1
+            if page < 1:
+                logger.warning(f"[DOCLING] Invalid page {page} in element {i}, using 1")
+                page = 1
+
         chunk = {
             "text": elem["text"],
             "type": elem["type"],
-            "page": elem["page"],
+            "page": page,  # Use validated page number
             "chunk_id": i,
             "file_path": pdf_path,
             "source": "docling",
@@ -514,6 +545,19 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     logger.info(f"Starting indexing: {Path(pdf_path).name}")
     logger.info(f"Topic: {topic}")
     logger.info(f"{'=' * 60}")
+
+    # ============================================================
+    # EXTRACT TOTAL PAGES: For page number validation
+    # ============================================================
+    total_pages = None
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(pdf_path) as pdf:
+            total_pages = len(pdf.pages)
+        logger.info(f"PDF has {total_pages} pages")
+    except Exception as e:
+        logger.warning(f"Could not determine page count: {e}")
 
     # Use CPU for embeddings (vLLM-LLaVA uses GPU)
     device = EMBEDDING_DEVICE
@@ -571,8 +615,8 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
                 Path(pdf_path), fallback_func=fallback_extraction
             )
 
-            # Convert to chunks (your existing chunking logic)
-            chunks = process_docling_elements(raw_elements, pdf_path)
+            # Convert to chunks with page validation
+            chunks = process_docling_elements(raw_elements, pdf_path, total_pages)
 
             logger.info(f"[DOCLING] ✓ Processed into {len(chunks)} chunks")
 
@@ -649,11 +693,33 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
 
     payloads = []
     for idx, c in enumerate(chunks):
-        # Validate page number
+        # Validate page number against PDF boundaries
         page = c.get("page", 1)
-        if not isinstance(page, int) or page < 1:
-            logger.warning(f"[MAIN] Invalid page {page} in chunk {idx}, using 1")
-            page = 1
+
+        # Convert to int if needed
+        if not isinstance(page, int):
+            try:
+                page = int(page)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"[MAIN] Invalid page type {type(page)} in chunk {idx}, using 1"
+                )
+                page = 1
+
+        # Validate page range [1, total_pages]
+        if total_pages:
+            if page < 1 or page > total_pages:
+                original_page = page
+                page = max(1, min(page, total_pages))
+                logger.warning(
+                    f"[MAIN] Page {original_page} out of range [1-{total_pages}] in chunk {idx}, "
+                    f"clamped to {page}"
+                )
+        else:
+            # If no total_pages, at least ensure page >= 1
+            if page < 1:
+                logger.warning(f"[MAIN] Invalid page {page} in chunk {idx}, using 1")
+                page = 1
 
         payloads.append(
             {
@@ -714,13 +780,35 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
         writer = idx.writer(limitmb=512, procs=0, multisegment=True)
 
         for i, c in enumerate(chunks):
-            # Validate page number for BM25 indexing
+            # Validate page number for BM25 indexing (same validation as Qdrant)
             page = c.get("page", 1)
-            if not isinstance(page, int) or page < 1:
-                logger.warning(
-                    f"[MAIN] Invalid page {page} in chunk {i} for BM25, using 1"
-                )
-                page = 1
+
+            # Convert to int if needed
+            if not isinstance(page, int):
+                try:
+                    page = int(page)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"[MAIN] Invalid page type {type(page)} in chunk {i} for BM25, using 1"
+                    )
+                    page = 1
+
+            # Validate page range [1, total_pages]
+            if total_pages:
+                if page < 1 or page > total_pages:
+                    original_page = page
+                    page = max(1, min(page, total_pages))
+                    logger.warning(
+                        f"[MAIN] BM25: Page {original_page} out of range [1-{total_pages}] in chunk {i}, "
+                        f"clamped to {page}"
+                    )
+            else:
+                # If no total_pages, at least ensure page >= 1
+                if page < 1:
+                    logger.warning(
+                        f"[MAIN] BM25: Invalid page {page} in chunk {i}, using 1"
+                    )
+                    page = 1
 
             writer.update_document(
                 file_path=pdf_path,
@@ -780,7 +868,7 @@ def initial_scan():
             logger.info(f"Number of GPUs: {torch.cuda.device_count()}")
             for i in range(torch.cuda.device_count()):
                 logger.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-        except:
+        except Exception:
             pass
 
     logger.info(f"\nTopics to scan: {', '.join(TOPIC_LABELS)}")
@@ -974,7 +1062,7 @@ def delete_all_files_from_topic(topic: str):
                 with idx.searcher() as searcher:
                     doc_count = searcher.doc_count()
                 logger.info(f"Found {doc_count} documents in Whoosh index '{idx_path}'")
-            except:
+            except Exception:
                 doc_count = 0
                 logger.warning(
                     f"Could not count documents in Whoosh index '{idx_path}'"
@@ -1013,7 +1101,9 @@ def delete_all_files_from_topic(topic: str):
         for file_path in list(state.state["failed"].keys()):
             # Check if the file path belongs to this topic's directory
             topic_dir = os.path.join(TOPIC_BASE_DIR, topic)
-            if topic_dir in file_path:  # Verifica que el archivo esté en el directorio del topic
+            if (
+                topic_dir in file_path
+            ):  # Verifica que el archivo esté en el directorio del topic
                 state.state["failed"].pop(file_path, None)
                 failed_to_remove.append(file_path)
 

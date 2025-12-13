@@ -369,9 +369,11 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                 "bbox": None,
                                 "metadata": {
                                     "docling_type": "markdown_paragraph",
-                                    "source": "docling_gpu"
-                                    if GPU_AVAILABLE
-                                    else "docling_cpu",
+                                    "source": (
+                                        "docling_gpu"
+                                        if GPU_AVAILABLE
+                                        else "docling_cpu"
+                                    ),
                                     "method": "export_to_markdown",
                                     "page_source": "estimated_from_order",  # ← Transparency
                                 },
@@ -423,9 +425,11 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                 "bbox": None,
                                 "metadata": {
                                     "docling_type": elem_type,
-                                    "source": "docling_gpu"
-                                    if GPU_AVAILABLE
-                                    else "docling_cpu",
+                                    "source": (
+                                        "docling_gpu"
+                                        if GPU_AVAILABLE
+                                        else "docling_cpu"
+                                    ),
                                     "method": "export_to_dict",
                                     "page_source": "pdf_provenance",  # ← From PDF structure
                                 },
@@ -495,9 +499,11 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                 "bbox": None,
                                 "metadata": {
                                     "docling_type": elem_type,
-                                    "source": "docling_gpu"
-                                    if GPU_AVAILABLE
-                                    else "docling_cpu",
+                                    "source": (
+                                        "docling_gpu"
+                                        if GPU_AVAILABLE
+                                        else "docling_cpu"
+                                    ),
                                     "method": "direct_body_access",
                                     "page_source": "pdf_provenance",
                                 },
@@ -549,9 +555,11 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                     "bbox": None,
                                     "metadata": {
                                         "docling_type": "page_text",
-                                        "source": "docling_gpu"
-                                        if GPU_AVAILABLE
-                                        else "docling_cpu",
+                                        "source": (
+                                            "docling_gpu"
+                                            if GPU_AVAILABLE
+                                            else "docling_cpu"
+                                        ),
                                         "method": "pages_iteration",
                                         "page_source": "page_iteration",
                                     },

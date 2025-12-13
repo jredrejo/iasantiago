@@ -146,5 +146,5 @@ def should_translate(query: str) -> bool:
 
         lang = detect(query)
         return lang != "en"
-    except:
+    except Exception:
         return False

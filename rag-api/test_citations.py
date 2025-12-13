@@ -11,7 +11,7 @@ Uso:
 
 import sys
 import logging
-from retrieval import hybrid_retrieve, attach_citations_explicit, soft_trim_context
+from retrieval import hybrid_retrieve, attach_citations, soft_trim_context
 
 logging.basicConfig(
     level=logging.INFO,

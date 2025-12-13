@@ -34,7 +34,7 @@ def optimize_topic_index(base_dir: str, topic: str):
             segment_count = len(reader.leaf_readers()) if hasattr(reader, 'leaf_readers') else "desconocido"
             logger.info(f"   - Segmentos/lectores: {segment_count}")
             reader.close()
-        except:
+        except Exception:
             logger.info(f"   - Segmentos: (no disponible)")
         
         logger.info(f"   ⏳ Optimizando...")

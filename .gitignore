@@ -8,6 +8,7 @@ nginx/error.log
 nginx/dhparam.pem
 models/
 rag-api/__pycache__/
+docling-service/__pycache__/
 seeds/
 test/
 topics/

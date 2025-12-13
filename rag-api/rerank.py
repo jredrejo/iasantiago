@@ -1,6 +1,6 @@
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 import torch
-from typing import List, Tuple
+from typing import List
 import logging
 
 logger = logging.getLogger(__name__)

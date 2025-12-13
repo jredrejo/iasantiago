@@ -96,7 +96,7 @@ def get_sent_tokenizer():
                 # Try Spanish first, fallback to English
                 try:
                     return sent_tokenize(text, language="spanish")
-                except:
+                except Exception:
                     return sent_tokenize(text, language="english")
 
             _cached_sent_tokenizer = spanish_tokenize
@@ -165,7 +165,7 @@ class AdvancedPageBoundaryDetector:
             if words:
                 return min(word["top"] for word in words)
             return 0
-        except:
+        except Exception:
             return 0
 
     def _get_text_bottom(self, page) -> float:
@@ -175,7 +175,7 @@ class AdvancedPageBoundaryDetector:
             if words:
                 return max(word["bottom"] for word in words)
             return page.height
-        except:
+        except Exception:
             return page.height
 
     def assign_precise_page(self, elem, boundaries: Dict[int, Dict[str, float]]) -> int:
@@ -2022,7 +2022,7 @@ class EasyOCRProcessor:
             for _, tmp_path in temp_files:
                 try:
                     os.unlink(tmp_path)
-                except:
+                except Exception:
                     pass
 
         return results

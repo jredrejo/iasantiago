@@ -95,12 +95,6 @@ def bm25_search(base: str, topic: str, query: str, topk: int) -> List[Dict]:
     return hits
 
 
-import re
-import logging
-
-logger = logging.getLogger(__name__)
-
-
 def sanitize_query_for_bm25(query: str, max_length: int = 200) -> str:
     """
     Limpia queries que son demasiado largas o complejas para BM25

@@ -1,5 +1,4 @@
 from typing import List, Dict
-import math
 
 
 def recall_at_k(pred_files: List[str], rel_files: List[str], k: int) -> float:
