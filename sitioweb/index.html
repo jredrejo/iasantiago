@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Servidor de IA Local para Formación Profesional</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Header with logos -->
+    <header class="header">
+        <div class="logos-container logos-top">
+            <img src="logos/junta_de_extremadura.png" alt="Junta de Extremadura">
+            <img src="logos/fp.png" alt="Formación Profesional">
+            <img src="logos/piatc.png" alt="PIATC">
+        </div>
+        <nav class="navbar">
+            <ul class="nav-links">
+                <li><a href="#inicio">Inicio</a></li>
+                <li><a href="#desarrollo">Desarrollo</a></li>
+                <li><a href="#manual">Manual de Usuario</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <!-- Main presentation image -->
+    <section class="hero">
+        <img src="images/iapostol.png" alt="IA Santiago Apóstol" class="hero-image">
+        <h1>Servidor de Inteligencia Artificial Local para Formación Profesional</h1>
+        <p class="subtitle">Proyecto de Innovación Aplicada y Transferencia del Conocimiento en FP</p>
+    </section>
+
+    <!-- Inicio Section -->
+    <section id="inicio" class="section">
+        <div class="container">
+            <h2>Inicio</h2>
+            <div class="intro-content">
+                <div class="intro-text">
+                    <h3>¿Qué es este proyecto?</h3>
+                    <p>Este proyecto implementa un <strong>servidor de Inteligencia Artificial local</strong> en centros de Formación Profesional de Extremadura, permitiendo a profesores y alumnos consultar documentación técnica mediante lenguaje natural.</p>
+
+                    <h3>Objetivos principales</h3>
+                    <ul>
+                        <li>Implementar un servidor local con modelos de IA de código abierto</li>
+                        <li>Entrenar los modelos con contenidos específicos de FP, elegidos por nuestros profesores y no por alguna empresa extranjera</li>
+                        <li>Garantizar la privacidad manteniendo los datos en el servidor local</li>
+                        <li>Fomentar el uso de tecnologías abiertas y sostenibles</li>
+                        <li>Mejorar la competencia digital del alumnado y profesorado</li>
+                    </ul>
+
+                    <h3>Centros participantes</h3>
+                    <div class="centers-grid">
+                        <div class="center-card">
+                            <h4>IES Santiago Apóstol</h4>
+                            <p>Almendralejo (Centro Coordinador)</p>
+                        </div>
+                        <div class="center-card">
+                            <h4>IES Sáenz de Buruaga</h4>
+                            <p>Mérida</p>
+                        </div>
+                    </div>
+
+                    <h3>Empresa colaboradora</h3>
+                    <div class="company-card">
+                        <img src="logos/iria.jpg" alt="IRIA - Incubadora de Realidades Inmersivas de Almendralejo">
+                        <div class="company-info">
+                            <h4>IRIA</h4>
+                            <p>Incubadora de Realidades Inmersivas de Almendralejo</p>
+                        </div>
+                    </div>
+
+                    <h3>Tecnología utilizada</h3>
+                    <div class="tech-grid">
+                        <div class="tech-item">
+                            <strong>RAG</strong>
+                            <span>Retrieval Augmented Generation</span>
+                        </div>
+                        <div class="tech-item">
+                            <strong>Mistral - 3</strong>
+                            <span>Modelo de lenguaje 14B</span>
+                        </div>
+                        <div class="tech-item">
+                            <strong>Qdrant</strong>
+                            <span>Base de datos vectorial</span>
+                        </div>
+                        <div class="tech-item">
+                            <strong>Open WebUI</strong>
+                            <span>Interfaz de chat</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Desarrollo Section -->
+    <section id="desarrollo" class="section section-alt">
+        <div class="container">
+            <h2>Desarrollo del Proyecto</h2>
+
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="timeline-marker">1</div>
+                    <div class="timeline-content">
+                        <h4>Fase 1: Diseño y planificación</h4>
+                        <p>Mayo - Junio 2025</p>
+                        <ul>
+                            <li>Creación del curso virtual en Classroom</li>
+                            <li>Reuniones con departamentos participantes</li>
+                            <li>Diseño de la arquitectura del sistema RAG</li>
+                            <li>Establecimiento de protocolos de seguridad</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">2</div>
+                    <div class="timeline-content">
+                        <h4>Fase 2: Implementación del servidor</h4>
+                        <p>Septiembre - Noviembre 2025</p>
+                        <ul>
+                            <li>Instalación del hardware (GPU NVIDIA RTX)</li>
+                            <li>Configuración de Docker y microservicios</li>
+                            <li>Implementación del sistema de búsqueda híbrida</li>
+                            <li>Configuración de autenticación OAuth2</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">3</div>
+                    <div class="timeline-content">
+                        <h4>Fase 3: Entrenamiento y embeddings</h4>
+                        <p>Noviembre - Diciembre 2025</p>
+                        <ul>
+                            <li>Generación de embeddings por departamento</li>
+                            <li>Indexación de más de 150 documentos PDF</li>
+                            <li>Configuración del sistema de citado</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">4</div>
+                    <div class="timeline-content">
+                        <h4>Fase 4: Evaluación y aplicación</h4>
+                        <p>Noviembre - Diciembre 2025</p>
+                        <ul>
+                            <li>Prueba en las clases</li>
+                            <li>Evaluación comparativa de 5 modelos de IA</li>
+                            <li>Realización de cursos de formación de profesorado y alumnos</li>
+                            <li>Ajustes basados en retroalimentación</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">5</div>
+                    <div class="timeline-content">
+                        <h4>Fase 5: Transferencia y documentación</h4>
+                        <p>Diciembre 2025</p>
+                        <ul>
+                            <li>Publicación del código en GitHub (GNU GPL v3)</li>
+                            <li>Elaboración de documentación técnica</li>
+                            <li>Preparación de materiales de difusión</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <h3 class="gallery-title">Galería de imágenes del proyecto</h3>
+            <div class="gallery">
+                <div class="gallery-item" onclick="openModal(0)">
+                    <img src="images/login_santiagoapostol.png" alt="Login Santiago Apóstol">
+                </div>
+                <div class="gallery-item" onclick="openModal(1)">
+                    <img src="images/login_buruaga.png" alt="Login Sáenz de Buruaga">
+                </div>
+                <div class="gallery-item" onclick="openModal(2)">
+                    <img src="images/funcionando1.png" alt="Sistema funcionando">
+                </div>
+                <div class="gallery-item" onclick="openModal(3)">
+                    <img src="images/seleccion_temas.png" alt="Selección de temas">
+                </div>
+                <div class="gallery-item" onclick="openModal(4)">
+                    <img src="images/IMG_20251106_095547.jpg" alt="Alumnos de FP de Grado Medio en curso de formación">
+                </div>
+                <div class="gallery-item" onclick="openModal(5)">
+                    <img src="images/IMG_20251106_095600.jpg" alt="Alumnos de FP de Grado Medio en curso de formación">
+                </div>
+                <div class="gallery-item" onclick="openModal(6)">
+                    <img src="images/IMG_20251106_095613.jpg" alt="Alumnos de FP de Grado Medio en curso de formación>
+                </div>
+                <div class="gallery-item" onclick="openModal(7)">
+                    <img src="images/IMG_20251106_113823.jpg" alt="Alumnos de FP de Grado Superior en curso de formación">
+                </div>
+                <div class="gallery-item" onclick="openModal(8)">
+                    <img src="images/IMG_20251106_113836.jpg" alt="Alumnos de FP de Grado Superior en curso de formación">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Modal for gallery -->
+    <div id="imageModal" class="modal">
+        <span class="modal-close" onclick="closeModal()">&times;</span>
+        <span class="modal-arrow modal-prev" onclick="changeImage(-1)">&#10094;</span>
+        <img class="modal-content" id="modalImage">
+        <span class="modal-arrow modal-next" onclick="changeImage(1)">&#10095;</span>
+        <div class="modal-caption" id="modalCaption"></div>
+    </div>
+
+    <!-- Manual de Usuario Section -->
+    <section id="manual" class="section">
+        <div class="container">
+            <h2>Manual de Usuario</h2>
+
+            <div class="manual-content">
+                <div class="manual-section">
+                    <h3>1. Acceso al sistema</h3>
+                    <p>Para acceder al servidor de IA, sigue estos pasos:</p>
+                    <ol>
+                        <li>Abre tu navegador web (Chrome, Firefox, Edge, etc.)</li>
+                        <li>Accede a la dirección proporcionada por tu centro:
+                            <ul>
+                                <li><strong>IES Santiago Apóstol:</strong> <code>https://ia.santiagoapostol.net</code></li>
+                                <li><strong>IES Sáenz de Buruaga:</strong> <code>https://ia.iessaenzdeburuaga.es</code></li>
+                            </ul>
+                        </li>
+                        <li>Inicia sesión con tu cuenta de Google del centro educativo (@santiagoapostol.net o @iessaenzdeburuaga.es)</li>
+                    </ol>
+                    <div class="manual-tip">
+                        <strong>Nota:</strong> Solo pueden acceder usuarios con cuentas del dominio educativo del centro.
+                    </div>
+                </div>
+
+                <div class="manual-section">
+                    <h3>2. Interfaz principal</h3>
+                    <p>Una vez dentro, verás la interfaz de Open WebUI con las siguientes áreas:</p>
+                    <ul>
+                        <li><strong>Panel lateral izquierdo:</strong> Historial de conversaciones y selector de temas</li>
+                        <li><strong>Área central:</strong> Ventana de chat principal</li>
+                        <li><strong>Selector de temas:</strong> Elige el área de conocimiento (Química, Electrónica, Programación, etc.)</li>
+                    </ul>
+                </div>
+
+                <div class="manual-section">
+                    <h3>3. Seleccionar un tema</h3>
+                    <p>Antes de hacer una consulta, selecciona el tema adecuado:</p>
+                    <ol>
+                        <li>En la parte superior, busca el selector de temas</li>
+                        <li>Elige el área que corresponda a tu consulta:
+                            <ul>
+                                <li><strong>Química:</strong> Química, laboratorio, análisis</li>
+                                <li><strong>Electricidad y Electrónica:</strong> Electricidad, electrónica, telecomunicaciones</li>
+                                <li><strong>Sostenibilidad:</strong> Informática, programación, redes</li>
+                                <li><strong>FOL:</strong> Formación y Orientación Laboral</li>
+                                <li><strong>Mecanizado:</strong> Mecanizado y fabricación mecánica</li>
+                                <li><strong>etc.</strong> etc.</li>
+                            </ul>
+                        </li>
+                    </ol>
+                    <div class="manual-tip">
+                        <strong>Importante:</strong> Si vas a cambiar de tema, asegúrate de hacer clic en "Nuevo chat" antes de seleccionar el nuevo tema.
+                    </div>
+                </div>
+
+                <div class="manual-section">
+                    <h3>4. Realizar consultas</h3>
+                    <p>Para obtener las mejores respuestas:</p>
+                    <div class="prompt-examples">
+                        <h4>Ejemplos de buenas consultas:</h4>
+                        <div class="prompt-example good">
+                            <span class="label">Pregunta corta</span>
+                            <p>"¿Cuántos bytes tiene la cabecera IP en TCP/IP?"</p>
+                        </div>
+                        <div class="prompt-example good">
+                            <span class="label">Pregunta de contenido</span>
+                            <p>Como si fueras un docente de de Formación Profesional Básica prepara una explicación sencilla sobre qué es un riesgo laboral, qué es un daño derivado del trabajo y pon 5 ejemplos de riesgos típicos en una planta de elaboración alimentaria. Redáctalo para alumnos de 16 años, con frases cortas y ejemplos cercanos. Tómate tu tiempo</p>
+                        </div>
+                        <div class="prompt-example good">
+                            <span class="label">Pregunta de normativa</span>
+                            <p>"Según el REBT, ¿qué secciones deben tener los conductores de fase, neutro y tierra del circuito de tomas de corriente de una vivienda?"</p>
+                        </div>
+                        <div class="prompt-example good">
+                            <span class="label">Generación de examen</span>
+                            <p>Escribe 10 preguntas de respuesta múltiple (test con 4 opciones) sobre tolerancias geométricas para alumnos de 16 años de FP de grado medio. Incluye las respuestas correctas.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="manual-section">
+                    <h3>5. Interpretar las respuestas</h3>
+                    <p>Las respuestas del sistema incluyen:</p>
+                    <ul>
+                        <li><strong>Texto explicativo:</strong> La respuesta generada por la IA</li>
+                        <li><strong>Citas con enlaces:</strong> Referencias a los documentos PDF originales
+                            <div class="citation-example">
+                                <code>[documento.pdf, p.5](/docs/Chemistry/documento.pdf#page=5)</code>
+                            </div>
+                        </li>
+                        <li><strong>Enlaces clicables:</strong> Haz clic en las citas para ver el documento original</li>
+                    </ul>
+                    <div class="manual-tip">
+                        <strong>Verificación:</strong> Siempre puedes verificar la información haciendo clic en las citas para consultar el documento fuente.
+                    </div>
+                </div>
+
+                <div class="manual-section">
+                    <h3>6. Nueva conversación</h3>
+                    <p>Para iniciar una nueva conversación:</p>
+                    <ol>
+                        <li>Haz clic en el botón <strong>"Nueva conversación"</strong> o <strong>"+"</strong> en el panel lateral</li>
+                        <li>Selecciona el tema apropiado para tu nueva consulta</li>
+                        <li>Escribe tu pregunta en el campo de texto</li>
+                    </ol>
+                </div>
+
+                <div class="manual-section">
+                    <h3>7. Historial de conversaciones</h3>
+                    <p>El sistema guarda automáticamente tus conversaciones:</p>
+                    <ul>
+                        <li>Accede al historial desde el panel lateral izquierdo</li>
+                        <li>Haz clic en cualquier conversación anterior para continuarla</li>
+                        <li>Puedes renombrar o eliminar conversaciones</li>
+                    </ul>
+                </div>
+
+                <div class="manual-section">
+                    <h3>8. Consejos para mejores resultados</h3>
+                    <div class="tips-grid">
+                        <div class="tip-card">
+                            <h4>Sé específico</h4>
+                            <p>Cuanto más específica sea tu pregunta, mejor será la respuesta.</p>
+                        </div>
+                        <div class="tip-card">
+                            <h4>Indica el contexto</h4>
+                            <p>Menciona el nivel educativo o el módulo al que te refieres.</p>
+                        </div>
+                        <div class="tip-card">
+                            <h4>Verifica las fuentes</h4>
+                            <p>Usa las citas para comprobar la información en los documentos originales.</p>
+                        </div>
+                        <div class="tip-card">
+                            <h4>Reformula si es necesario</h4>
+                            <p>Si la respuesta no es satisfactoria, intenta reformular tu pregunta.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="manual-section">
+                    <h3>9. Solución de problemas</h3>
+                    <table class="problems-table">
+                        <thead>
+                            <tr>
+                                <th>Problema</th>
+                                <th>Solución</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>No puedo iniciar sesión</td>
+                                <td>Verifica que estás usando tu cuenta del centro educativo (@santiagoapostol.net o @iessaenzdeburuaga.es)</td>
+                            </tr>
+                            <tr>
+                                <td>La respuesta no es relevante</td>
+                                <td>Asegúrate de haber seleccionado el tema correcto y reformula tu pregunta siendo más específico</td>
+                            </tr>
+                            <tr>
+                                <td>No aparecen citas</td>
+                                <td>Es posible que no haya documentos indexados sobre ese tema específico</td>
+                            </tr>
+                            <tr>
+                                <td>El sistema está lento</td>
+                                <td>Espera unos segundos, las respuestas complejas pueden tardar más</td>
+                            </tr>
+                            <tr>
+                                <td>Error de conexión</td>
+                                <td>Verifica tu conexión a la red del centro y recarga la página</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer with logos -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-text">
+                    <p><strong>Proyecto PIATC-2024-002</strong></p>
+                    <p>Servidor de Inteligencia Artificial Local para Formación Profesional</p>
+                    <p>Coordinador: <a href="mailto:jredrejo@santiagoapostol.net">jredrejo@santiagoapostol.net</a> - IES Santiago Apóstol (Almendralejo)</p>
+                    <p>Código fuente disponible en <a href="https://github.com/jredrejo/iasantiago" target="_blank">GitHub</a> bajo licencia GNU GPL v3</p>
+                </div>
+                <div class="logos-container logos-footer">
+                    <img src="logos/gobierno.png" alt="Gobierno de España">
+                    <img src="logos/cofinanciado_ue.png" alt="Cofinanciado por la Unión Europea">
+                    <img src="logos/fondos_europeos.png" alt="Fondos Europeos">
+                    <img src="logos/junta_de_extremadura.png" alt="Junta de Extremadura">
+                    <img src="logos/fp.png" alt="Formación Profesional">
+                    <img src="logos/piatc.png" alt="PIATC">
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2025 - Proyecto de Innovación Aplicada y Transferencia del Conocimiento en FP</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
