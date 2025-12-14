@@ -359,7 +359,7 @@ body {
 }
 
 .gallery-item::after {
-    content: 'Ver imagen';
+    content: attr(data-alt);
     position: absolute;
     bottom: 0;
     left: 0;
@@ -388,6 +388,8 @@ body {
     background-color: rgba(0, 0, 0, 0.95);
     justify-content: center;
     align-items: center;
+    padding: 10px;
+    box-sizing: border-box;
 }
 
 .modal.active {
@@ -395,8 +397,8 @@ body {
 }
 
 .modal-content {
-    max-width: 90%;
-    max-height: 85vh;
+    max-width: calc(100% - 120px);
+    max-height: 75vh;
     object-fit: contain;
     border-radius: 5px;
     box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
@@ -404,18 +406,27 @@ body {
 
 .modal-close {
     position: absolute;
-    top: 20px;
-    right: 35px;
+    top: 10px;
+    right: 15px;
     color: white;
-    font-size: 50px;
+    font-size: 40px;
     font-weight: bold;
     cursor: pointer;
     transition: color 0.3s ease;
     z-index: 2001;
+    background: rgba(0, 0, 0, 0.5);
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
 }
 
 .modal-close:hover {
     color: #159895;
+    background: rgba(0, 0, 0, 0.8);
 }
 
 .modal-arrow {
@@ -423,32 +434,39 @@ body {
     top: 50%;
     transform: translateY(-50%);
     color: white;
-    font-size: 60px;
+    font-size: 50px;
     font-weight: bold;
     cursor: pointer;
-    padding: 20px;
+    padding: 15px;
     transition: all 0.3s ease;
     user-select: none;
     z-index: 2001;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
 }
 
 .modal-arrow:hover {
     color: #159895;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.8);
 }
 
 .modal-prev {
-    left: 20px;
+    left: 10px;
 }
 
 .modal-next {
-    right: 20px;
+    right: 10px;
 }
 
 .modal-caption {
     position: absolute;
-    bottom: 20px;
+    bottom: 10px;
     left: 50%;
     transform: translateX(-50%);
     color: white;
@@ -456,7 +474,8 @@ body {
     padding: 10px 20px;
     background: rgba(0, 0, 0, 0.7);
     border-radius: 5px;
-    font-size: 1.1rem;
+    font-size: 1rem;
+    max-width: 90%;
 }
 
 /* Manual Section */
@@ -732,9 +751,16 @@ body {
         width: 100px;
     }
 
+    .modal-content {
+        max-width: calc(100% - 80px);
+        max-height: 60vh;
+    }
+
     .modal-arrow {
-        font-size: 40px;
-        padding: 10px;
+        font-size: 30px;
+        width: 45px;
+        height: 45px;
+        padding: 8px;
     }
 
     .modal-prev {
@@ -746,9 +772,17 @@ body {
     }
 
     .modal-close {
-        font-size: 35px;
-        top: 10px;
-        right: 15px;
+        font-size: 28px;
+        width: 40px;
+        height: 40px;
+        top: 5px;
+        right: 5px;
+    }
+
+    .modal-caption {
+        font-size: 0.85rem;
+        padding: 8px 12px;
+        bottom: 5px;
     }
 
     .logos-top img,
@@ -792,5 +826,38 @@ body {
     .problems-table th,
     .problems-table td {
         padding: 10px;
+    }
+
+    .modal-content {
+        max-width: calc(100% - 60px);
+        max-height: 55vh;
+    }
+
+    .modal-arrow {
+        font-size: 24px;
+        width: 36px;
+        height: 36px;
+        padding: 6px;
+    }
+
+    .modal-prev {
+        left: 3px;
+    }
+
+    .modal-next {
+        right: 3px;
+    }
+
+    .modal-close {
+        font-size: 24px;
+        width: 36px;
+        height: 36px;
+        top: 3px;
+        right: 3px;
+    }
+
+    .modal-caption {
+        font-size: 0.75rem;
+        padding: 6px 10px;
     }
 }

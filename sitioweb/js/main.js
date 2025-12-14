@@ -4,9 +4,9 @@ const galleryImages = [
     { src: 'images/login_buruaga.png', caption: 'Pantalla de login - IES Sáenz de Buruaga' },
     { src: 'images/funcionando1.png', caption: 'Sistema de IA funcionando' },
     { src: 'images/seleccion_temas.png', caption: 'Interfaz de selección de temas' },
+    { src: 'images/IMG_20251212_141100.jpg', caption: 'Servidor donde está instalado todo el sistema' },
     { src: 'images/IMG_20251106_095547.jpg', caption: 'Alumnos de FP de Grado Medio en curso de formación - Vista 1' },
-    { src: 'images/IMG_20251106_095600.jpg', caption: 'Alumnos de FP de Grado Medio en curso de formación - Vista 2' },
-    { src: 'images/IMG_20251106_095613.jpg', caption: 'Alumnos de FP de Grado Medio en curso de formación - Vista 3' },
+    { src: 'images/IMG_20251106_095613.jpg', caption: 'Alumnos de FP de Grado Medio en curso de formación - Vista 2' },
     { src: 'images/IMG_20251106_113823.jpg', caption: 'Alumnos de FP de Grado Superior en curso de formación - Vista 1' },
     { src: 'images/IMG_20251106_113836.jpg', caption: 'Alumnos de FP de Grado Superior en curso de formación - Vista 2' }
 
@@ -165,7 +165,19 @@ function preloadImages() {
     });
 }
 
+// Set data-alt attributes for gallery items from their img alt text
+function setGalleryDataAlt() {
+    const galleryItems = document.querySelectorAll('.gallery-item');
+    galleryItems.forEach(item => {
+        const img = item.querySelector('img');
+        if (img && img.alt) {
+            item.setAttribute('data-alt', img.alt);
+        }
+    });
+}
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
     preloadImages();
+    setGalleryDataAlt();
 });
