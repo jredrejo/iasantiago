@@ -2,6 +2,7 @@ from whoosh import index
 from whoosh.fields import Schema, ID, TEXT, NUMERIC
 from whoosh.qparser import QueryParser
 import os
+import re
 from typing import List, Dict
 import time
 import logging
