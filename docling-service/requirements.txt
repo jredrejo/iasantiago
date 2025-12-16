@@ -16,4 +16,5 @@ docling-ibm-models==3.10.2
 # torchvision==0.19.0 (from base image)
 
 # Additional GPU-accelerated tools
+opencv-python-headless==4.8.0.76  # Pin to avoid cv2.dnn.DictValue error with easyocr
 easyocr==1.7.2  # GPU OCR (if needed)

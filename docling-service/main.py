@@ -344,43 +344,91 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
         doc = result.document
         elements = []
 
-        # METHOD 0: export_to_markdown (PREFERRED)
+        # METHOD 0: export_to_markdown per page (PRECISE page numbers)
         if hasattr(doc, "export_to_markdown"):
-            logger.info("[DOCLING] Using export_to_markdown()")
+            logger.info("[DOCLING] Using export_to_markdown() with per-page extraction")
             try:
-                markdown = doc.export_to_markdown()
+                # Get total pages from document
+                num_pages = len(doc.pages) if hasattr(doc, "pages") else 0
 
-                if markdown.strip() and len(markdown) > 50:
-                    paragraphs = [
-                        p.strip()
-                        for p in markdown.split("\n\n")
-                        if p.strip() and len(p.strip()) > 30
-                    ]
-                    logger.info(f"[DOCLING] Found {len(paragraphs)} paragraphs")
+                if num_pages > 0:
+                    logger.info(f"[DOCLING] Extracting markdown from {num_pages} pages")
 
-                    for para_idx, para in enumerate(paragraphs):
-                        estimated_page = 1 + (para_idx // 5)
+                    for page_num in range(1, num_pages + 1):
+                        try:
+                            # Export markdown for this specific page
+                            page_md = doc.export_to_markdown(page_no=page_num)
 
-                        elements.append(
-                            {
-                                "type": "text",
-                                "text": para,
-                                "page": estimated_page,
-                                "bbox": None,
-                                "metadata": {
-                                    "docling_type": "markdown_paragraph",
-                                    "source": (
-                                        "docling_gpu"
-                                        if GPU_AVAILABLE
-                                        else "docling_cpu"
-                                    ),
-                                    "method": "export_to_markdown",
-                                    "page_source": "estimated_from_order",  # ← Transparency
-                                },
-                            }
-                        )
+                            if not page_md or not page_md.strip():
+                                continue
 
-                    logger.info(f"[DOCLING] Extracted {len(elements)} elements")
+                            # Split into paragraphs
+                            paragraphs = [
+                                p.strip()
+                                for p in page_md.split("\n\n")
+                                if p.strip() and len(p.strip()) > 30
+                            ]
+
+                            for para in paragraphs:
+                                elements.append(
+                                    {
+                                        "type": "text",
+                                        "text": para,
+                                        "page": page_num,  # ← PRECISE page number
+                                        "bbox": None,
+                                        "metadata": {
+                                            "docling_type": "markdown_paragraph",
+                                            "source": (
+                                                "docling_gpu"
+                                                if GPU_AVAILABLE
+                                                else "docling_cpu"
+                                            ),
+                                            "method": "export_to_markdown_per_page",
+                                            "page_source": "page_iteration",  # ← Precise!
+                                        },
+                                    }
+                                )
+                        except Exception as page_err:
+                            logger.warning(f"[DOCLING] Page {page_num} markdown export failed: {page_err}")
+                            continue
+
+                    if elements:
+                        logger.info(f"[DOCLING] Extracted {len(elements)} elements with precise page numbers")
+                else:
+                    # Fallback: no page count available, use old method with estimation
+                    logger.warning("[DOCLING] No page count available, using estimated pages")
+                    markdown = doc.export_to_markdown()
+
+                    if markdown.strip() and len(markdown) > 50:
+                        paragraphs = [
+                            p.strip()
+                            for p in markdown.split("\n\n")
+                            if p.strip() and len(p.strip()) > 30
+                        ]
+
+                        for para_idx, para in enumerate(paragraphs):
+                            estimated_page = 1 + (para_idx // 5)
+
+                            elements.append(
+                                {
+                                    "type": "text",
+                                    "text": para,
+                                    "page": estimated_page,
+                                    "bbox": None,
+                                    "metadata": {
+                                        "docling_type": "markdown_paragraph",
+                                        "source": (
+                                            "docling_gpu"
+                                            if GPU_AVAILABLE
+                                            else "docling_cpu"
+                                        ),
+                                        "method": "export_to_markdown",
+                                        "page_source": "estimated_from_order",
+                                    },
+                                }
+                            )
+
+                        logger.info(f"[DOCLING] Extracted {len(elements)} elements (estimated pages)")
             except Exception as e:
                 logger.warning(f"[DOCLING] Markdown export failed: {e}")
 
