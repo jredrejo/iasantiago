@@ -39,7 +39,16 @@ docker==7.1.0
 
 # OCR
 pytesseract==0.3.13
-# EasyOCR (GPU-accelerated, safe with PyTorch)
-#easyocr==1.7.1
+
+# ============================================================
+# DOCLING (GPU-accelerated PDF extraction)
+# ============================================================
+docling==2.63.0
+docling-core==2.54.0
+docling-ibm-models==3.10.2
+
+# OCR support (pinned for cv2.dnn.DictValue compatibility with easyocr)
+opencv-python-headless==4.8.0.76
+easyocr==1.7.2
 
 

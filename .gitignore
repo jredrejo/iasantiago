@@ -12,3 +12,5 @@ docling-service/__pycache__/
 seeds/
 test/
 topics/
+.beads/
+.vscode/

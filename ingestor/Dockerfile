@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:25.04-py3
+FROM nvcr.io/nvidia/pytorch:25.11-py3
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Development headers
     libssl-dev \
     libffi-dev \
+    # OpenCV dependencies (required by unstructured-inference)
+    libgl1 \
+    libglib2.0-0 \
     # Clean up
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -30,4 +33,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY . .
 RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Pre-download docling models during image build to avoid runtime downloads
+ENV HF_HOME=/root/.cache/huggingface
+ENV TORCH_HOME=/root/.cache/torch
+ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
+
+RUN mkdir -p /root/.cache/huggingface && \
+    python3 -c "from docling.document_converter import DocumentConverter; DocumentConverter()" || true && \
+    echo "[DOCKERFILE] Docling model caching completed"
+
 ENTRYPOINT ["python", "main.py"]
