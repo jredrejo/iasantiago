@@ -1,7 +1,6 @@
 """
 chunk.py - Enhanced Version with Advanced Chunking and Page Validation
 Extrae: PDF, DOCX, PPTX (sin XLSX)
-Mantiene caché SQLite + LLaVA análisis
 Manejo defensivo de CUDA
 Enhanced chunking with NLTK + Hierarchical with heading tracking + Context-aware with same embedding model
 Enhanced page number validation and adaptive chunking strategies
@@ -137,15 +136,6 @@ if os.getenv("UNSTRUCTURED_ENABLE_CUDA", "true").lower() == "true":
 else:
     os.environ["UNSTRUCTURED_DISABLE_CUDA"] = "1"
     logger.warning("[CONFIG] CUDA DISABLED for Unstructured")
-
-# ============================================================
-# CONFIGURATION: Deshabilitar LLaVA si es necesario
-# ============================================================
-DISABLE_LLAVA = os.getenv("DISABLE_LLAVA", "false").lower() == "false"
-if DISABLE_LLAVA:
-    logger.warning("[CONFIG] LLaVA analysis is DISABLED")
-else:
-    logger.info("[CONFIG] LLaVA analysis is ENABLED")
 
 
 class AdvancedPageBoundaryDetector:
@@ -744,8 +734,133 @@ class ContextAwareChunker:
         return [s.strip() for s in sentences if s.strip()]
 
 
-# (SemanticAwareChunker / AdaptiveChunkingStrategySelector / PageSequenceValidator / SQLiteCacheManager unchanged)
-# ... KEEPING them as in your original file ...
+class PageSequenceValidator:
+    """Validate and fix page number sequences"""
+
+    @staticmethod
+    def validate_and_fix(chunks: list, total_pages: int = None) -> tuple[list, list]:
+        """
+        Validate page sequence and attempt to fix issues
+        Returns: (fixed_chunks, issues_found)
+        """
+        if not chunks:
+            return chunks, []
+
+        issues = []
+
+        # Extract all pages
+        pages = [c.get("page", 1) for c in chunks]
+
+        # Detect issues
+        issues.extend(PageSequenceValidator._detect_invalid_pages(pages))
+        issues.extend(PageSequenceValidator._detect_large_gaps(pages))
+        issues.extend(PageSequenceValidator._detect_out_of_order(pages))
+        if total_pages:
+            issues.extend(
+                PageSequenceValidator._detect_page_overflow(pages, total_pages)
+            )
+
+        # Attempt fixes if issues found
+        if issues:
+            logger.warning(f"[PAGE] Found {len(issues)} issues, attempting fixes...")
+            chunks = PageSequenceValidator._fix_page_numbers(chunks, pages, total_pages)
+
+        return chunks, issues
+
+    @staticmethod
+    def _detect_invalid_pages(pages: list) -> list:
+        """Detect invalid page numbers"""
+        issues = []
+        for i, page in enumerate(pages):
+            if not isinstance(page, int) or page < 1:
+                issues.append(f"Chunk {i}: invalid page number {page}")
+            elif page > 50000:  # Unrealistic page number
+                issues.append(f"Chunk {i}: suspicious page number {page}")
+        return issues
+
+    @staticmethod
+    def _detect_large_gaps(pages: list) -> list:
+        """Detect large gaps in page sequence"""
+        issues = []
+        if not pages:
+            return issues
+
+        sorted_unique = sorted(set(p for p in pages if isinstance(p, int) and p > 0))
+
+        for i in range(1, len(sorted_unique)):
+            gap = sorted_unique[i] - sorted_unique[i - 1]
+            if gap > 10:  # Large gap
+                issues.append(
+                    f"Large gap: {gap} pages between {sorted_unique[i - 1]} and {sorted_unique[i]}"
+                )
+
+        return issues
+
+    @staticmethod
+    def _detect_out_of_order(pages: list) -> list:
+        """Detect out-of-order pages"""
+        issues = []
+
+        for i in range(1, len(pages)):
+            if pages[i] < pages[i - 1]:
+                issues.append(
+                    f"Out of order: chunk {i - 1} page {pages[i - 1]} -> chunk {i} page {pages[i]}"
+                )
+
+        return issues
+
+    @staticmethod
+    def _detect_page_overflow(pages: list, total_pages: int) -> list:
+        """Detect pages that exceed the total page count"""
+        issues = []
+        for i, page in enumerate(pages):
+            if isinstance(page, int) and page > total_pages:
+                issues.append(
+                    f"Chunk {i}: page {page} exceeds total pages {total_pages}"
+                )
+        return issues
+
+    @staticmethod
+    def _fix_page_numbers(chunks: list, pages: list, total_pages: int = None) -> list:
+        """Attempt to fix page number issues"""
+        fixed_chunks = chunks.copy()
+
+        # Fix 1: Replace invalid pages with sequential numbers
+        last_valid_page = 1
+        for i, chunk in enumerate(fixed_chunks):
+            page = chunk.get("page", 1)
+
+            if not isinstance(page, int) or page < 1 or page > 50000:
+                # Use sequential numbering
+                chunk["page"] = last_valid_page
+                logger.debug(f"[FIX] Chunk {i}: invalid page -> {last_valid_page}")
+            else:
+                last_valid_page = page
+
+        # Fix 2: Apply total_pages constraint
+        if total_pages:
+            for i, chunk in enumerate(fixed_chunks):
+                page = chunk.get("page", 1)
+                if isinstance(page, int) and page > total_pages:
+                    chunk["page"] = total_pages
+                    logger.debug(
+                        f"[FIX] Chunk {i}: page {page} -> {total_pages} (clamped)"
+                    )
+
+        # Fix 3: Smooth out large jumps
+        for i in range(1, len(fixed_chunks)):
+            prev_page = fixed_chunks[i - 1].get("page", 1)
+            curr_page = fixed_chunks[i].get("page", 1)
+
+            if curr_page - prev_page > 20:  # Suspicious jump
+                # Assume sequential
+                fixed_chunks[i]["page"] = prev_page + 1
+                logger.debug(
+                    f"[FIX] Chunk {i}: large jump {prev_page}->{curr_page}, "
+                    f"using {prev_page + 1}"
+                )
+
+        return fixed_chunks
 
 
 class RobustPageExtractor:
@@ -926,8 +1041,6 @@ def pdf_to_chunks_with_enhanced_validation(
     pdf_path: str,
     chunk_size: int = 900,
     overlap: int = 120,
-    vllm_url: str = None,
-    cache_db: str = None,
     use_adaptive_chunking: bool = True,
     add_context: bool = True,
     embed_model=None,
@@ -962,36 +1075,22 @@ def pdf_to_chunks_with_enhanced_validation(
     if not elements:
         raise ValueError(f"No elements extracted from PDF: {pdf_path}")
 
-    strategy_selector = AdaptiveChunkingStrategySelector()
-
-    chunks = strategy_selector.select_and_apply_strategy(
+    # Use ContextAwareChunker directly instead of AdaptiveChunkingStrategySelector
+    chunker = ContextAwareChunker(chunk_size, overlap)
+    chunks = chunker.chunk_with_context_preservation(
         elements,
-        chunk_size=chunk_size,
-        overlap=overlap,
         pdf_path=str(pdf_path_p) if detect_visual_boundaries else None,
+        strategy="adaptive",
     )
 
     if validate_pages:
-        # Fix #4: Avoid redundant validation when pages already look sane.
-        quick_issues = False
-        last_page = 1
-        for c in chunks:
-            p = c.get("page", 1)
-            if not isinstance(p, int) or p < 1 or (total_pages and p > total_pages):
-                quick_issues = True
-                break
-            if p < last_page:
-                quick_issues = True
-                break
-            last_page = p
+        # Use comprehensive page validation
+        chunks, issues = PageSequenceValidator.validate_and_fix(chunks, total_pages)
 
-        if quick_issues:
-            chunks, issues = PageSequenceValidator.validate_and_fix(chunks)
-
-            if issues and len(issues) > 30:  # Too many issues = reject file
-                raise ValueError(
-                    f"Page validation failed: {len(issues)} critical issues: {issues[:10]}"
-                )
+        if issues and len(issues) > 30:  # Too many issues = reject file
+            raise ValueError(
+                f"Page validation failed: {len(issues)} critical issues: {issues[:10]}"
+            )
 
     return chunks
 
@@ -1029,32 +1128,6 @@ def check_pdf_has_text(pdf_path: Union[Path, str]) -> bool:
         return True
 
 
-def extract_with_pdfminer(pdf_path: Path) -> List[Dict[str, Any]]:
-    """
-    Extract text using pdfminer.six
-    """
-    try:
-        from pdfminer.high_level import extract_text
-
-        logger.info("Trying pdfminer.six...")
-
-        text = extract_text(str(pdf_path))
-        if text and len(text.strip()) > 100:
-            logger.info(f"pdfminer.six extracted {len(text)} characters")
-            return [
-                {
-                    "type": "text",
-                    "text": text,
-                    "page": 1,
-                    "source": "pdfminer",
-                }
-            ]
-    except Exception as e:
-        logger.warning(f"pdfminer.six failed: {e}")
-
-    return []
-
-
 def process_elements_to_chunks(elements: List[Any]) -> List[Dict[str, Any]]:
     """
     Process unstructured elements into chunks
@@ -1087,33 +1160,86 @@ def extract_text_with_multiple_methods(
     pdf_path: Union[Path, str]
 ) -> List[Dict[str, Any]]:
     """
-    Try multiple text extraction methods in order of preference
+    Hybrid extraction: pypdf for text (fast) + pdfplumber for tables.
+    All methods preserve accurate page numbers.
+    Fallback to unstructured if both fail.
     """
     pdf_path = Path(pdf_path)
     total_pages = get_pdf_total_pages(str(pdf_path))
 
+    # 1. Hybrid approach: pypdf (text) + pdfplumber (tables)
     try:
-        logger.info("Trying optimized unstructured partition_pdf...")
-        elements = fast_partition_pdf(
-            str(pdf_path), strategy="auto", enable_tables=False, total_pages=total_pages
-        )
+        elements = []
 
-        if elements and len(elements) > 0:
-            text_content = "\n".join([str(e) for e in elements if hasattr(e, "text")])
-            if len(text_content.strip()) > 100:
-                logger.info(
-                    f"unstructured partition_pdf extracted {len(elements)} elements"
-                )
-                return process_elements_to_chunks(elements)
+        # 1a. Fast text extraction with pypdf
+        logger.info("Trying pypdf (fastest) for text...")
+        with open(pdf_path, "rb") as file:
+            pdf_reader = pypdf.PdfReader(file)
+
+            for i, page in enumerate(pdf_reader.pages):
+                text = page.extract_text()
+                if text and len(text.strip()) > 10:
+                    elements.append(
+                        {
+                            "type": "text",
+                            "text": text,
+                            "page": i + 1,
+                            "source": "pypdf",
+                        }
+                    )
+
+        # 1b. Table extraction with pdfplumber (only if text was found)
+        if elements:
+            logger.info(
+                f"pypdf extracted {len(elements)} text elements, now extracting tables..."
+            )
+            table_count = 0
+            try:
+                with pdfplumber.open(pdf_path) as pdf:
+                    for i, page in enumerate(pdf.pages):
+                        try:
+                            for table in page.extract_tables():
+                                if table:
+                                    processed_table = []
+                                    for row in table:
+                                        processed_row = [
+                                            str(cell) if cell is not None else ""
+                                            for cell in row
+                                        ]
+                                        processed_table.append(processed_row)
+
+                                    table_text = "\n".join(
+                                        ["\t".join(row) for row in processed_table]
+                                    )
+                                    if table_text.strip():
+                                        elements.append(
+                                            {
+                                                "type": "table",
+                                                "text": table_text,
+                                                "page": i + 1,
+                                                "source": "pdfplumber",
+                                            }
+                                        )
+                                        table_count += 1
+                        except Exception as table_error:
+                            logger.warning(
+                                f"Error extracting table from page {i+1}: {table_error}"
+                            )
+                            continue
+            except Exception as e:
+                logger.warning(f"pdfplumber table extraction failed: {e}")
+
+            logger.info(
+                f"Extracted {len(elements)} elements ({len(elements) - table_count} text, {table_count} tables)"
+            )
+            return elements
+
     except Exception as e:
-        logger.warning(f"unstructured partition_pdf failed: {e}")
+        logger.warning(f"Hybrid pypdf+pdfplumber failed: {e}")
 
-    pdfminer_result = extract_with_pdfminer(pdf_path)
-    if pdfminer_result:
-        return pdfminer_result
-
+    # 2. Fallback: pdfplumber for both text and tables
     try:
-        logger.info("Trying pdfplumber directly...")
+        logger.info("Trying pdfplumber for text+tables...")
         with pdfplumber.open(pdf_path) as pdf:
             elements = []
             for i, page in enumerate(pdf.pages):
@@ -1162,29 +1288,22 @@ def extract_text_with_multiple_methods(
     except Exception as e:
         logger.warning(f"pdfplumber failed: {e}")
 
+    # 3. Last resort: unstructured (may use internal OCR)
     try:
-        logger.info("Trying pypdf...")
-        with open(pdf_path, "rb") as file:
-            pdf_reader = pypdf.PdfReader(file)
-            elements = []
+        logger.info("Trying unstructured partition_pdf...")
+        elements = fast_partition_pdf(
+            str(pdf_path), strategy="auto", enable_tables=False, total_pages=total_pages
+        )
 
-            for i, page in enumerate(pdf_reader.pages):
-                text = page.extract_text()
-                if text and len(text.strip()) > 10:
-                    elements.append(
-                        {
-                            "type": "text",
-                            "text": text,
-                            "page": i + 1,
-                            "source": "pypdf",
-                        }
-                    )
-
-            if elements:
-                logger.info(f"pypdf extracted {len(elements)} elements")
-                return elements
+        if elements and len(elements) > 0:
+            text_content = "\n".join([str(e) for e in elements if hasattr(e, "text")])
+            if len(text_content.strip()) > 100:
+                logger.info(
+                    f"unstructured partition_pdf extracted {len(elements)} elements"
+                )
+                return process_elements_to_chunks(elements)
     except Exception as e:
-        logger.warning(f"pypdf failed: {e}")
+        logger.warning(f"unstructured partition_pdf failed: {e}")
 
     logger.warning("All text extraction methods failed")
     return []

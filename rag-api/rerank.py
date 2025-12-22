@@ -9,30 +9,30 @@ logger = logging.getLogger(__name__)
 class CrossEncoderReranker:
     def __init__(self, model_name: str):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"[RERANKER] Loading model: {model_name}")
-        logger.info(f"[RERANKER] Device: {self.device}")
+        logger.info(f"[RERANKER] Cargando modelo: {model_name}")
+        logger.info(f"[RERANKER] Dispositivo: {self.device}")
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name, trust_remote_code=True
             )
-            logger.info(f"[RERANKER] Tokenizer loaded")
+            logger.info(f"[RERANKER] Tokenizer cargado")
 
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_name,
                 trust_remote_code=True,
-                ignore_mismatched_sizes=True,  # ← Ignora mismatches de tamaño
+                ignore_mismatched_sizes=True,  # ← Ignora diferencias de tamaño
             ).to(self.device)
-            logger.info(f"[RERANKER] Model loaded successfully")
+            logger.info(f"[RERANKER] Modelo cargado exitosamente")
 
             self.model.eval()
         except Exception as e:
-            logger.error(f"[RERANKER] Error loading model: {e}", exc_info=True)
+            logger.error(f"[RERANKER] Error al cargar modelo: {e}", exc_info=True)
             raise
 
     @torch.inference_mode()
     def rerank(self, query: str, passages: List[str], topk: int) -> List[int]:
-        """Rerank passages based on relevance to query"""
+        """Reordena passages según relevancia con el query"""
         if not passages:
             return []
 

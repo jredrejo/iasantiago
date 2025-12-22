@@ -59,12 +59,16 @@ def setup_nltk_data():
 
         test_text_en = "This is a test. It has two sentences."
         result_en = sent_tokenize(test_text_en)
-        logger.info(f"✓ English Punkt tokenizer works: {len(result_en)} sentences detected")
+        logger.info(
+            f"✓ English Punkt tokenizer works: {len(result_en)} sentences detected"
+        )
 
         # Test Spanish punkt tokenizer (requires punkt_tab)
         test_text_es = "Esto es una prueba. Tiene dos oraciones."
-        result_es = sent_tokenize(test_text_es, language='spanish')
-        logger.info(f"✓ Spanish Punkt tokenizer works: {len(result_es)} sentences detected")
+        result_es = sent_tokenize(test_text_es, language="spanish")
+        logger.info(
+            f"✓ Spanish Punkt tokenizer works: {len(result_es)} sentences detected"
+        )
 
         # Test POS tagger
         from nltk.tag import pos_tag

@@ -1,6 +1,6 @@
 """
-Query translation for cross-lingual RAG retrieval.
-Translates non-English queries to English before retrieval.
+Traducción de queries para recuperación RAG multilingüe.
+Traduce queries no ingleses a inglés antes de la recuperación.
 """
 
 from typing import Tuple
@@ -10,10 +10,10 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Cache for translation models
+# Caché de modelos de traducción
 _translator_cache = {}
 
-# Supported languages and their codes
+# Idiomas soportados y sus códigos
 SUPPORTED_LANGS = {
     "es": "Spanish",
     "fr": "French",
@@ -32,8 +32,8 @@ SUPPORTED_LANGS = {
 
 def detect_language(text: str) -> str:
     """
-    Simple language detection using langdetect library.
-    Falls back to 'en' if detection fails.
+    Detección simple de idioma usando la librería langdetect.
+    Usa 'en' como fallback si la detección falla.
     """
     try:
         from langdetect import detect
@@ -50,8 +50,8 @@ def detect_language(text: str) -> str:
 
 def get_translator(source_lang: str, target_lang: str = "en"):
     """
-    Load or retrieve a cached translation model.
-    Uses Helsinki-NLP/opus-mt models for fast, lightweight translation.
+    Carga o recupera un modelo de traducción desde caché.
+    Usa modelos Helsinki-NLP/opus-mt para traducción rápida y ligera.
     """
     cache_key = f"{source_lang}-{target_lang}"
 
@@ -84,62 +84,62 @@ def translate_query(
     query: str, source_lang: str = None, target_lang: str = "en"
 ) -> Tuple[str, str]:
     """
-    Translate query from source language to target language.
+    Traduce un query del idioma origen al idioma destino.
 
     Args:
-        query: The query text to translate
-        source_lang: Source language code (e.g., 'es', 'fr').
-                    If None, will auto-detect.
-        target_lang: Target language code (default: 'en')
+        query: El texto del query a traducir
+        source_lang: Código de idioma origen (ej: 'es', 'fr').
+                    Si es None, se autodetectará.
+        target_lang: Código de idioma destino (default: 'en')
 
     Returns:
         (translated_query, source_language)
     """
-    # Auto-detect language if not provided
+    # Autodetectar idioma si no se proporciona
     if source_lang is None:
         source_lang = detect_language(query)
 
-    # If already in target language, return as-is
+    # Si ya está en el idioma destino, retornar tal cual
     if source_lang == target_lang:
         return query, source_lang
 
-    # Skip translation for English queries
+    # Saltar traducción para queries en inglés
     if source_lang == "en":
         return query, source_lang
 
-    # Try to load and use translator
+    # Intentar cargar y usar el traductor
     translator_info = get_translator(source_lang, target_lang)
 
     if translator_info is None:
         logger.warning(
-            f"Translation unavailable for {source_lang}→{target_lang}, "
-            f"using original query"
+            f"Traducción no disponible para {source_lang}→{target_lang}, "
+            f"usando query original"
         )
         return query, source_lang
 
     tokenizer, model, device = translator_info
 
     try:
-        # Tokenize and translate
+        # Tokenizar y traducir
         inputs = tokenizer(query, return_tensors="pt", padding=True).to(device)
         translated_ids = model.generate(**inputs)
         translated = tokenizer.batch_decode(translated_ids, skip_special_tokens=True)[0]
 
         logger.info(
-            f"🌐 Translated query ({source_lang}→en): {query[:60]}... → {translated[:60]}..."
+            f"🌐 Query traducido ({source_lang}→en): {query[:60]}... → {translated[:60]}..."
         )
 
         return translated, source_lang
 
     except Exception as e:
-        logger.error(f"Translation failed: {e}, using original query")
+        logger.error(f"Traducción falló: {e}, usando query original")
         return query, source_lang
 
 
 def should_translate(query: str) -> bool:
     """
-    Check if query should be translated.
-    Returns True if query is not in English.
+    Verifica si el query debe traducirse.
+    Retorna True si el query no está en inglés.
     """
     try:
         from langdetect import detect

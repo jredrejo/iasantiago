@@ -1,8 +1,8 @@
 # ingestor/docling_extractor.py
 """
-Docling PDF extraction module (ported from docling-service)
-Provides GPU-accelerated PDF extraction with fallback to PyPDF
-Includes crash detection to skip problematic files after repeated failures
+Módulo de extracción de PDF con Docling (portado de docling-service)
+Proporciona extracción de PDF acelerada por GPU con fallback a PyPDF
+Incluye detección de fallos para omitir archivos problemáticos después de fallos repetidos
 """
 
 import copy
@@ -25,7 +25,7 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# EXTRACTION CACHE
+# CACHÉ DE EXTRACCIÓN
 # ============================================================
 
 _extraction_cache: Dict[str, List[Dict[str, Any]]] = {}
@@ -40,72 +40,72 @@ CACHE_FILE = CACHE_DIR / "extraction_cache.json"
 _tables_disabled_after_crash = False
 
 # ============================================================
-# CRASH DETECTION - Track files that cause segfaults
+# DETECCIÓN DE FALLOS - Rastrea archivos que causan segfaults
 # ============================================================
 
 CRASH_STATE_FILE = CACHE_DIR / "crash_state.json"
-MAX_CRASHES_BEFORE_SKIP = 1  # After 1 crash, use unstructured fallback
+MAX_CRASHES_BEFORE_SKIP = 1  # Después de 1 fallo, usar fallback de unstructured
 
-_crash_state: Dict[str, int] = {}  # filename -> crash count
+_crash_state: Dict[str, int] = {}  # nombre_archivo -> contador de fallos
 
 
 def _load_crash_state():
-    """Load crash state from disk."""
+    """Carga el estado de fallos desde disco."""
     global _crash_state
     try:
         if CRASH_STATE_FILE.exists():
             with open(CRASH_STATE_FILE, "r") as f:
                 _crash_state = json.load(f)
             logger.info(
-                f"[DOCLING] Loaded crash state: {len(_crash_state)} files tracked"
+                f"[DOCLING] Estado de fallos cargado: {len(_crash_state)} archivos rastreados"
             )
     except Exception as e:
-        logger.warning(f"[DOCLING] Failed to load crash state: {e}")
+        logger.warning(f"[DOCLING] Error al cargar estado de fallos: {e}")
         _crash_state = {}
 
 
 def _save_crash_state():
-    """Save crash state to disk."""
+    """Guarda el estado de fallos a disco."""
     try:
         with open(CRASH_STATE_FILE, "w") as f:
             json.dump(_crash_state, f)
     except Exception as e:
-        logger.warning(f"[DOCLING] Failed to save crash state: {e}")
+        logger.warning(f"[DOCLING] Error al guardar estado de fallos: {e}")
 
 
 def mark_file_processing(filename: str):
-    """Mark a file as currently being processed (call before docling extraction)."""
+    """Marca un archivo como actualmente en proceso (llamar antes de la extracción docling)."""
     global _crash_state
-    # Increment crash count - will be decremented on success
+    # Incrementar contador de fallos - se decrementará en éxito
     _crash_state[filename] = _crash_state.get(filename, 0) + 1
     _save_crash_state()
     logger.debug(
-        f"[DOCLING] Marked {filename} as processing (count: {_crash_state[filename]})"
+        f"[DOCLING] Archivo {filename} marcado como procesando (contador: {_crash_state[filename]})"
     )
 
 
 def mark_file_success(filename: str):
-    """Mark a file as successfully processed (call after successful extraction)."""
+    """Marca un archivo como procesado exitosamente (llamar después de una extracción exitosa)."""
     global _crash_state
-    # Reset crash count on success
+    # Reiniciar contador de fallos en éxito
     if filename in _crash_state:
         del _crash_state[filename]
         _save_crash_state()
-        logger.debug(f"[DOCLING] Cleared crash state for {filename}")
+        logger.debug(f"[DOCLING] Estado de fallos limpiado para {filename}")
 
 
 class DoclingCrashLimitExceeded(Exception):
-    """Raised when a file has crashed too many times and should use alternative extraction."""
+    """Se raise cuando un archivo ha fallado demasiadas veces y debe usar extracción alternativa."""
 
     pass
 
 
 def should_skip_docling(filename: str) -> bool:
-    """Check if a file has crashed too many times and should use fallback."""
+    """Verifica si un archivo ha fallado demasiadas veces y debe usar fallback."""
     count = _crash_state.get(filename, 0)
     if count >= MAX_CRASHES_BEFORE_SKIP:
         logger.warning(
-            f"[DOCLING] File {filename} has crashed {count} times - skipping docling"
+            f"[DOCLING] El archivo {filename} ha fallado {count} veces - omitiendo docling"
         )
         return True
     return False
@@ -117,9 +117,11 @@ def _load_cache():
         if CACHE_FILE.exists():
             with open(CACHE_FILE, "r") as f:
                 _extraction_cache = json.load(f)
-            logger.info(f"[DOCLING] Loaded {len(_extraction_cache)} cached extractions")
+            logger.info(
+                f"[DOCLING] Cargadas {len(_extraction_cache)} extracciones en caché"
+            )
     except Exception as e:
-        logger.warning(f"[DOCLING] Failed to load cache: {e}")
+        logger.warning(f"[DOCLING] Error al cargar caché: {e}")
 
 
 def _save_cache():
@@ -127,7 +129,7 @@ def _save_cache():
         with open(CACHE_FILE, "w") as f:
             json.dump(_extraction_cache, f)
     except Exception as e:
-        logger.warning(f"[DOCLING] Failed to save cache: {e}")
+        logger.warning(f"[DOCLING] Error al guardar caché: {e}")
 
 
 def _get_file_hash(file_path: Path) -> str:
@@ -136,7 +138,7 @@ def _get_file_hash(file_path: Path) -> str:
 
 
 # ============================================================
-# GPU CONFIGURATION
+# CONFIGURACIÓN DE GPU
 # ============================================================
 
 GPU_AVAILABLE = False
@@ -145,20 +147,20 @@ GPU_AVAILABLE = False
 def setup_gpu() -> bool:
     global GPU_AVAILABLE
     if not torch.cuda.is_available():
-        logger.warning("[DOCLING] CUDA not available, running on CPU")
+        logger.warning("[DOCLING] CUDA no disponible, ejecutando en CPU")
         GPU_AVAILABLE = False
         return False
 
     gpu_count = torch.cuda.device_count()
-    logger.info(f"[DOCLING] Found {gpu_count} CUDA device(s)")
+    logger.info(f"[DOCLING] Encontrados {gpu_count} dispositivos CUDA")
 
     for i in range(gpu_count):
         props = torch.cuda.get_device_properties(i)
-        logger.info(f"[DOCLING] Device {i}: {props.name}")
-        logger.info(f"[DOCLING]   - Total memory: {props.total_memory / 1e9:.2f} GB")
+        logger.info(f"[DOCLING] Dispositivo {i}: {props.name}")
+        logger.info(f"[DOCLING]   - Memoria total: {props.total_memory / 1e9:.2f} GB")
 
     memory_fraction = float(os.getenv("DOCLING_GPU_MEMORY_FRACTION", "0.30"))
-    logger.info(f"[DOCLING] Setting memory fraction: {memory_fraction:.2%}")
+    logger.info(f"[DOCLING] Fracción de memoria configurada: {memory_fraction:.2%}")
 
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
@@ -171,19 +173,19 @@ def setup_gpu() -> bool:
 
 
 # ============================================================
-# DOCLING INITIALIZATION
+# INICIALIZACIÓN DE DOCLING
 # ============================================================
 
 
 def get_docling_converter():
     try:
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = False  # Disabled - PDFs have text layer
+        pipeline_options.do_ocr = False  # Deshabilitado - los PDFs tienen capa de texto
         pipeline_options.do_table_structure = not _tables_disabled_after_crash
         pipeline_options.generate_page_images = False
         pipeline_options.generate_picture_images = False
 
-        logger.info("[DOCLING] Pipeline options:")
+        logger.info("[DOCLING] Opciones del pipeline:")
         logger.info(f"  - do_ocr: {pipeline_options.do_ocr}")
         logger.info(f"  - do_table_structure: {pipeline_options.do_table_structure}")
 
@@ -197,13 +199,13 @@ def get_docling_converter():
         return DocumentConverter(format_options=format_options)
 
     except Exception as e:
-        logger.error(f"[DOCLING] Error initializing DocumentConverter: {e}")
+        logger.error(f"[DOCLING] Error al inicializar DocumentConverter: {e}")
         raise
 
 
 def validate_pdf(pdf_path: Path) -> tuple:
     """
-    Validate PDF and return (is_valid, error_message)
+    Valida el PDF y retorna (es_valido, mensaje_de_error)
     """
     try:
         with open(pdf_path, "rb") as f:
@@ -211,15 +213,15 @@ def validate_pdf(pdf_path: Path) -> tuple:
             num_pages = len(reader.pages)
 
             if num_pages == 0:
-                return False, "PDF has no pages"
+                return False, "El PDF no tiene páginas"
 
-            logger.info(f"[DOCLING] PDF validation: {num_pages} pages")
+            logger.info(f"[DOCLING] Validación de PDF: {num_pages} páginas")
 
             if reader.is_encrypted:
-                logger.warning("[DOCLING] PDF is encrypted")
-                return False, "PDF is encrypted"
+                logger.warning("[DOCLING] El PDF está encriptado")
+                return False, "El PDF está encriptado"
 
-            # Check page sizes (first 5 pages)
+            # Verificar tamaños de página (primeras 5 páginas)
             for page_num, page in enumerate(reader.pages[:5], 1):
                 try:
                     mediabox = page.mediabox
@@ -227,27 +229,30 @@ def validate_pdf(pdf_path: Path) -> tuple:
                     height = float(mediabox.height)
 
                     if width <= 0 or height <= 0:
-                        return False, f"Page {page_num} has invalid dimensions"
+                        return False, f"Página {page_num} tiene dimensiones inválidas"
                 except Exception as e:
-                    return False, f"Cannot determine page size for page {page_num}"
+                    return (
+                        False,
+                        f"No se puede determinar el tamaño de página para página {page_num}",
+                    )
 
             return True, None
 
     except Exception as e:
-        logger.error(f"[DOCLING] PDF validation failed: {e}")
+        logger.error(f"[DOCLING] Validación de PDF falló: {e}")
         return False, str(e)
 
 
 # ============================================================
-# FALLBACK: PyPDF-based extraction
+# FALLBACK: Extracción basada en PyPDF
 # ============================================================
 
 
 def extract_with_pypdf_fallback(pdf_path: Path) -> List[Dict[str, Any]]:
     """
-    Fallback extraction using PyPDF when Docling fails.
+    Extracción de fallback usando PyPDF cuando Docling falla.
     """
-    logger.warning("[DOCLING] Using PyPDF fallback extraction")
+    logger.warning("[DOCLING] Usando extracción de fallback PyPDF")
 
     elements = []
 
@@ -255,7 +260,7 @@ def extract_with_pypdf_fallback(pdf_path: Path) -> List[Dict[str, Any]]:
         with open(pdf_path, "rb") as f:
             reader = pypdf.PdfReader(f)
             num_pages = len(reader.pages)
-            logger.info(f"[DOCLING] Extracting from {num_pages} pages via PyPDF")
+            logger.info(f"[DOCLING] Extrayendo de {num_pages} páginas vía PyPDF")
 
             for page_num in range(num_pages):
                 try:
@@ -289,86 +294,88 @@ def extract_with_pypdf_fallback(pdf_path: Path) -> List[Dict[str, Any]]:
                         )
 
                 except Exception as e:
-                    logger.error(f"[DOCLING] Error on page {page_num + 1}: {e}")
+                    logger.error(f"[DOCLING] Error en página {page_num + 1}: {e}")
                     continue
 
-            logger.info(f"[DOCLING] PyPDF extracted {len(elements)} elements")
+            logger.info(f"[DOCLING] PyPDF extrajo {len(elements)} elementos")
             return elements
 
     except Exception as e:
-        logger.error(f"[DOCLING] PyPDF extraction failed: {e}", exc_info=True)
+        logger.error(f"[DOCLING] Extracción PyPDF falló: {e}", exc_info=True)
         raise
 
 
 # ============================================================
-# MAIN EXTRACTION LOGIC
+# LÓGICA PRINCIPAL DE EXTRACCIÓN
 # ============================================================
 
 
 def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
     """
-    Extract structured elements from PDF using GPU-accelerated Docling.
-    Falls back to PyPDF if Docling fails or file has crashed too many times.
+    Extrae elementos estructurados del PDF usando Docling acelerado por GPU.
+    Usa fallback a PyPDF si Docling falla o el archivo ha fallado demasiadas veces.
     """
     global _extraction_cache
 
     filename = pdf_path.name
 
-    # Check cache first
+    # Verificar caché primero
     file_hash = _get_file_hash(pdf_path)
     if file_hash in _extraction_cache:
-        logger.info(f"[DOCLING] Cache hit for {filename}")
+        logger.info(f"[DOCLING] Cache hit para {filename}")
         return copy.deepcopy(_extraction_cache[file_hash])
 
-    # Check if this file has crashed too many times - raise exception to trigger unstructured fallback
+    # Verificar si este archivo ha fallado demasiadas veces - raise exception para activar fallback de unstructured
     if should_skip_docling(filename):
         raise DoclingCrashLimitExceeded(
-            f"File {filename} has crashed {_crash_state.get(filename, 0)} times - use alternative extraction"
+            f"El archivo {filename} ha fallado {_crash_state.get(filename, 0)} veces - usar extracción alternativa"
         )
 
     file_size_mb = pdf_path.stat().st_size / 1e6
-    logger.info(f"[DOCLING] Processing: {filename}")
-    logger.info(f"[DOCLING] File size: {file_size_mb:.2f} MB")
+    logger.info(f"[DOCLING] Procesando: {filename}")
+    logger.info(f"[DOCLING] Tamaño de archivo: {file_size_mb:.2f} MB")
 
-    # Validate PDF first
+    # Validar PDF primero
     is_valid, error_msg = validate_pdf(pdf_path)
     if not is_valid:
-        logger.error(f"[DOCLING] PDF validation failed: {error_msg}")
+        logger.error(f"[DOCLING] Validación de PDF falló: {error_msg}")
         return extract_with_pypdf_fallback(pdf_path)
 
-    # Mark file as processing (crash detection)
+    # Marcar archivo como procesando (detección de fallos)
     mark_file_processing(filename)
 
-    # GPU memory cleanup
+    # Limpieza de memoria GPU
     if GPU_AVAILABLE:
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
         mem_before = torch.cuda.memory_allocated() / 1e9
-        logger.info(f"[DOCLING] GPU memory before: {mem_before:.2f} GB")
+        logger.info(f"[DOCLING] Memoria GPU antes: {mem_before:.2f} GB")
 
     start_time = time.time()
     converter = None
 
     try:
         converter = get_docling_converter()
-        logger.info("[DOCLING] Starting conversion...")
+        logger.info("[DOCLING] Iniciando conversión...")
         result = converter.convert(str(pdf_path))
-        logger.info("[DOCLING] Conversion complete")
+        logger.info("[DOCLING] Conversión completada")
 
         if not hasattr(result, "document"):
-            raise ValueError("Invalid Docling result - missing document")
+            raise ValueError("Resultado de Docling inválido - falta documento")
 
         doc = result.document
         elements = []
 
-        # METHOD 0: export_to_markdown per page (PRECISE page numbers)
+        # MÉTODO 0: export_to_markdown por página (NÚMEROS DE PÁGINA PRECISOS)
         if hasattr(doc, "export_to_markdown"):
-            logger.info("[DOCLING] Using export_to_markdown() with per-page extraction")
+            logger.info(
+                "[DOCLING] Usando export_to_markdown() con extracción por página"
+            )
             try:
                 num_pages = len(doc.pages) if hasattr(doc, "pages") else 0
 
                 if num_pages > 0:
-                    logger.info(f"[DOCLING] Extracting markdown from {num_pages} pages")
+                    logger.info(f"[DOCLING] Extrayendo markdown de {num_pages} páginas")
 
                     for page_num in range(1, num_pages + 1):
                         try:
@@ -404,17 +411,19 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                 )
                         except Exception as page_err:
                             logger.warning(
-                                f"[DOCLING] Page {page_num} failed: {page_err}"
+                                f"[DOCLING] Página {page_num} falló: {page_err}"
                             )
                             continue
 
                     if elements:
                         logger.info(
-                            f"[DOCLING] Extracted {len(elements)} elements with precise pages"
+                            f"[DOCLING] Extraídos {len(elements)} elementos con páginas precisas"
                         )
                 else:
-                    # Fallback: estimate pages
-                    logger.warning("[DOCLING] No page count, using estimated pages")
+                    # Fallback: estimar páginas
+                    logger.warning(
+                        "[DOCLING] Sin conteo de páginas, usando páginas estimadas"
+                    )
                     markdown = doc.export_to_markdown()
 
                     if markdown.strip() and len(markdown) > 50:
@@ -445,11 +454,11 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                                 }
                             )
             except Exception as e:
-                logger.warning(f"[DOCLING] Markdown export failed: {e}")
+                logger.warning(f"[DOCLING] Export markdown falló: {e}")
 
-        # METHOD 1: export_to_dict for precise page numbers (fallback)
+        # MÉTODO 1: export_to_dict para números de página precisos (fallback)
         if not elements and hasattr(doc, "export_to_dict"):
-            logger.info("[DOCLING] Using export_to_dict() fallback")
+            logger.info("[DOCLING] Usando export_to_dict() fallback")
             try:
                 doc_dict = doc.export_to_dict()
 
@@ -494,35 +503,37 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                         )
 
                     logger.info(
-                        f"[DOCLING] export_to_dict extracted {len(elements)} elements"
+                        f"[DOCLING] export_to_dict extrajo {len(elements)} elementos"
                     )
             except Exception as e:
-                logger.warning(f"[DOCLING] Dict export failed: {e}")
+                logger.warning(f"[DOCLING] Export dict falló: {e}")
 
-        # If no elements, use PyPDF fallback
+        # Si no hay elementos, usar fallback PyPDF
         if not elements:
-            logger.warning("[DOCLING] No elements extracted - using PyPDF fallback")
+            logger.warning(
+                "[DOCLING] No se extrajeron elementos - usando fallback PyPDF"
+            )
             return extract_with_pypdf_fallback(pdf_path)
 
         elapsed = time.time() - start_time
-        logger.info(f"[DOCLING] Extracted {len(elements)} elements in {elapsed:.2f}s")
+        logger.info(f"[DOCLING] Extraídos {len(elements)} elementos en {elapsed:.2f}s")
 
-        # Cache the result
+        # Cachear el resultado
         _extraction_cache[file_hash] = copy.deepcopy(elements)
         _save_cache()
 
-        # Mark as successful - clear crash counter
+        # Marcar como exitoso - limpiar contador de fallos
         mark_file_success(filename)
 
         return elements
 
     except Exception as e:
-        logger.error(f"[DOCLING] Extraction failed: {e}", exc_info=True)
-        # Don't mark success - crash counter remains incremented
+        logger.error(f"[DOCLING] Extracción falló: {e}", exc_info=True)
+        # No marcar éxito - contador de fallos permanece incrementado
         return extract_with_pypdf_fallback(pdf_path)
 
     finally:
-        # Cleanup
+        # Limpieza
         if converter:
             del converter
 
@@ -534,7 +545,7 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
             torch.cuda.synchronize()
 
 
-# Initialize GPU and load state on module import
+# Inicializar GPU y cargar estado al importar módulo
 setup_gpu()
 _load_cache()
 _load_crash_state()

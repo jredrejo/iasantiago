@@ -1,8 +1,11 @@
+import faulthandler
 import glob
 import hashlib
 import json
 import logging
 import os
+import signal
+import sys
 from chunk import pdf_to_chunks_with_enhanced_validation
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +13,38 @@ from typing import Any
 
 import numpy as np
 import torch
+
+
+# ============================================================
+# CRITICAL: Force exit on segfault
+# CUDA/C libraries may catch SIGSEGV but not exit, leaving
+# the container in a zombie state. This ensures container restart.
+# ============================================================
+
+# Enable faulthandler for better crash diagnostics
+# This must be done BEFORE any CUDA/PyTorch imports in child modules
+faulthandler.enable(file=sys.stderr, all_threads=True)
+
+
+def _force_exit_on_signal(signum: int, frame) -> None:
+    """Force immediate exit on fatal signals to trigger container restart."""
+    signal_name = signal.Signals(signum).name
+    print(
+        f"\n[FATAL] Caught {signal_name} - forcing exit to trigger container restart",
+        file=sys.stderr,
+        flush=True,
+    )
+    # Use os._exit() to bypass Python cleanup which might hang
+    os._exit(128 + signum)
+
+
+# Install signal handlers for fatal signals
+# Note: These run BEFORE C library handlers so they take precedence
+for sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGABRT):
+    try:
+        signal.signal(sig, _force_exit_on_signal)
+    except (OSError, ValueError):
+        pass  # Some signals can't be caught in certain contexts
 from docling_client import DoclingClient, DoclingCrashLimitExceeded
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
@@ -31,10 +66,17 @@ os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 # EMBEDDINGS DEVICE: Todo en GPU con float16
 # - Modelo en GPU con float16 (~650MB vs 1.3GB en float32)
 # - Inference en GPU
-# - Total: LLaVA 16.7GB + embeddings 650MB = ~17.4GB (cabe)
 # ============================================================
 EMBEDDING_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EMBEDDING_DTYPE = "float16"
+
+# Re-register signal handlers AFTER PyTorch/CUDA initialization
+# CUDA libraries may override Python signal handlers during init
+for sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGABRT):
+    try:
+        signal.signal(sig, _force_exit_on_signal)
+    except (OSError, ValueError):
+        pass
 
 # Setup logging
 logging.basicConfig(
@@ -56,6 +98,79 @@ docling_client = DoclingClient(enable_fallback=True) if ENABLE_DOCLING else None
 logger.info(
     f"[CONFIG] Docling extraction: {'ENABLED (local)' if ENABLE_DOCLING else 'DISABLED'}"
 )
+
+
+# ============================================================
+# HEARTBEAT: For healthcheck to detect stuck containers
+# ============================================================
+HEARTBEAT_FILE = "/tmp/ingestor_heartbeat"
+
+
+def update_heartbeat(current_file: str = "") -> None:
+    """Update heartbeat file with current timestamp and file being processed."""
+    try:
+        import time
+
+        with open(HEARTBEAT_FILE, "w") as f:
+            f.write(f"{time.time()}\n{current_file}\n")
+    except Exception:
+        pass  # Don't let heartbeat issues affect processing
+
+
+# ============================================================
+# WATCHDOG: Force exit if process hangs (e.g., glibc corruption)
+# ============================================================
+WATCHDOG_TIMEOUT = 300  # 5 minutes - same as healthcheck threshold
+WATCHDOG_CHECK_INTERVAL = 60  # Check every minute
+
+
+def _watchdog_thread() -> None:
+    """Background thread that monitors heartbeat and forces exit on stall.
+
+    This catches cases where the process hangs without raising a signal,
+    such as glibc 'corrupted double-linked list' errors.
+    """
+    import time
+    import threading
+
+    logger.info("[WATCHDOG] Started - monitoring for stalled processing")
+
+    while True:
+        time.sleep(WATCHDOG_CHECK_INTERVAL)
+
+        try:
+            if os.path.exists(HEARTBEAT_FILE):
+                with open(HEARTBEAT_FILE, "r") as f:
+                    lines = f.readlines()
+                    if lines:
+                        last_heartbeat = float(lines[0].strip())
+                        current_file = lines[1].strip() if len(lines) > 1 else "unknown"
+                        age = time.time() - last_heartbeat
+
+                        if age > WATCHDOG_TIMEOUT:
+                            logger.error(
+                                f"[WATCHDOG] Heartbeat stale for {age:.0f}s (limit: {WATCHDOG_TIMEOUT}s)"
+                            )
+                            logger.error(
+                                f"[WATCHDOG] Last file being processed: {current_file}"
+                            )
+                            logger.error(
+                                "[WATCHDOG] Forcing exit to trigger container restart"
+                            )
+                            sys.stdout.flush()
+                            sys.stderr.flush()
+                            os._exit(1)  # Force immediate exit
+        except Exception as e:
+            # Don't let watchdog errors affect normal operation
+            logger.debug(f"[WATCHDOG] Error checking heartbeat: {e}")
+
+
+def start_watchdog() -> None:
+    """Start the watchdog thread as a daemon."""
+    import threading
+
+    watchdog = threading.Thread(target=_watchdog_thread, daemon=True, name="watchdog")
+    watchdog.start()
 
 
 # ============================================================
@@ -530,7 +645,7 @@ def process_docling_elements(
     return chunks
 
 
-def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = None):
+def index_pdf(topic: str, pdf_path: str):
     """Index a single PDF file to both Qdrant and Whoosh"""
 
     if state.is_already_processed(pdf_path):
@@ -554,7 +669,7 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     except Exception as e:
         logger.warning(f"Could not determine page count: {e}")
 
-    # Use CPU for embeddings (vLLM-LLaVA uses GPU)
+    # Embeddings device configuration
     device = EMBEDDING_DEVICE
     logger.info(f"Device: {device}")
 
@@ -592,8 +707,6 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
     ensure_whoosh(topic)
 
     logger.info(f"Extracting chunks from PDF...")
-    vllm_url = vllm_url or VLLM_URL
-    cache_db = cache_db or LLAVA_CACHE_DB
 
     if docling_client:
         try:
@@ -601,9 +714,7 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
 
             # Define fallback function
             def fallback_extraction(path):
-                return pdf_to_chunks_with_enhanced_validation(
-                    str(path), vllm_url=vllm_url, cache_db=cache_db
-                )
+                return pdf_to_chunks_with_enhanced_validation(str(path))
 
             # Extract with Docling (with automatic fallback)
             raw_elements = docling_client.extract_pdf_sync(
@@ -621,23 +732,17 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
             logger.info(
                 "[DOCLING] Using unstructured extraction (page-accurate fallback)"
             )
-            chunks = pdf_to_chunks_with_enhanced_validation(
-                pdf_path, vllm_url=vllm_url, cache_db=cache_db
-            )
+            chunks = pdf_to_chunks_with_enhanced_validation(pdf_path)
 
         except Exception as e:
             logger.error(f"[DOCLING] Failed: {e}", exc_info=True)
             logger.info("[DOCLING] Using unstructured extraction (fallback)")
-            chunks = pdf_to_chunks_with_enhanced_validation(
-                pdf_path, vllm_url=vllm_url, cache_db=cache_db
-            )
+            chunks = pdf_to_chunks_with_enhanced_validation(pdf_path)
     else:
         # Docling disabled, use original method
         logger.info(f"[EXTRACTION] Using original method (Docling disabled)")
         try:
-            chunks = pdf_to_chunks_with_enhanced_validation(
-                pdf_path, vllm_url=vllm_url, cache_db=cache_db
-            )
+            chunks = pdf_to_chunks_with_enhanced_validation(pdf_path)
 
         except Exception as e:
             logger.error(f"[ERROR] Failed to extract text from PDF: {e}", exc_info=True)
@@ -850,11 +955,6 @@ def initial_scan():
     logger.info(f"BM25_BASE_DIR: {BM25_BASE_DIR}")
     logger.info(f"QDRANT_URL: {QDRANT_URL}")
 
-    vllm_url = os.getenv("VLLM_URL", "http://vllm-llava:8000")
-    cache_db = os.getenv("LLAVA_CACHE_DB", "/tmp/llava_cache/llava_cache.db")
-    logger.info(f"VLLM_URL: {vllm_url}")
-    logger.info(f"LLAVA_CACHE_DB: {cache_db}")
-
     stats = state.get_stats()
     logger.info(f"\n[STATE] Previous processing state:")
     logger.info(f"  - Total files processed: {stats['total_processed']}")
@@ -898,8 +998,10 @@ def initial_scan():
                 continue
 
             pdf_count += 1
+            # Update heartbeat before each PDF - allows healthcheck to detect stuck containers
+            update_heartbeat(os.path.basename(abs_pdf))
             try:
-                success = index_pdf(t, abs_pdf, vllm_url=vllm_url, cache_db=cache_db)
+                success = index_pdf(t, abs_pdf)
                 if not success:
                     error_count += 1
             except Exception as e:
@@ -1237,4 +1339,6 @@ if __name__ == "__main__":
 
     else:
         # Default: scan y indexa
+        # Start watchdog to detect hung processes (glibc corruption, etc.)
+        start_watchdog()
         initial_scan()

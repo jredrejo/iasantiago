@@ -2,7 +2,7 @@
 """
 verify_retrieval.py
 
-Script para verificar que el retrieval está funcionando correctamente.
+Script para verificar que el retrieval funciona correctamente.
 Ejecutar DENTRO del contenedor rag-api:
 
     docker exec rag-api python /app/verify_retrieval.py
@@ -12,7 +12,7 @@ import sys
 import logging
 from collections import defaultdict
 
-# Setup logging
+# Configuración de logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
@@ -26,7 +26,7 @@ try:
 
     logger.info("✅ Imports exitosos")
 except ImportError as e:
-    logger.error(f"❌ Error importing: {e}")
+    logger.error(f"❌ Error importando: {e}")
     sys.exit(1)
 
 
@@ -44,7 +44,7 @@ def verify_qdrant_collections():
                 logger.info(f"✅ {topic}:")
                 logger.info(f"   - Colección: {coll}")
                 logger.info(f"   - Puntos: {stats['points_count']}")
-                logger.info(f"   - Vector size: {stats['vector_size']}")
+                logger.info(f"   - Tamaño vector: {stats['vector_size']}")
             else:
                 logger.warning(f"⚠️  {topic}: Colección vacía o no existe")
         except Exception as e:
@@ -86,19 +86,19 @@ def verify_qdrant_diversity():
 
             if len(files) == 1:
                 logger.error(
-                    f"   ❌ CRÍTICO: Solo 1 archivo. Problema de IDs colisivos"
+                    f"   ❌ CRÍTICO: Solo 1 archivo. Problema de IDs colisionantes"
                 )
             elif len(files) < 3:
-                logger.warning(f"   ⚠️  Solo {len(files)} archivos (esperaba >=3)")
+                logger.warning(f"   ⚠️  Solo {len(files)} archivos (se esperaban >=3)")
 
         except Exception as e:
             logger.error(f"❌ {topic}: Error - {e}")
 
 
 def verify_retrieval_queries():
-    """Prueba queries reales para ver si trae de múltiples archivos"""
+    """Prueba queries reales para ver si traen de múltiples archivos"""
     logger.info("\n" + "=" * 80)
-    logger.info("🔍 VERIFICACIÓN 3: Test de queries")
+    logger.info("🔍 VERIFICACIÓN 3: Prueba de queries")
     logger.info("=" * 80)
 
     test_queries = {
@@ -123,7 +123,7 @@ def verify_retrieval_queries():
         if topic not in test_queries:
             continue
 
-        logger.info(f"\n📍 Topic: {topic}")
+        logger.info(f"\n📍 Tema: {topic}")
         queries = test_queries[topic]
 
         for query in queries:
@@ -131,10 +131,10 @@ def verify_retrieval_queries():
                 debug_info = debug_retrieval(topic, query)
 
                 logger.info(f"  Query: '{query}'")
-                logger.info(f"    - Dense hits: {debug_info['dense_hits']}")
-                logger.info(f"    - BM25 hits: {debug_info['bm25_hits']}")
-                logger.info(f"    - Merged: {debug_info['merged_results']}")
-                logger.info(f"    - Unique files: {debug_info['unique_files']}")
+                logger.info(f"    - Resultados densos: {debug_info['dense_hits']}")
+                logger.info(f"    - Resultados BM25: {debug_info['bm25_hits']}")
+                logger.info(f"    - Mezclados: {debug_info['merged_results']}")
+                logger.info(f"    - Archivos únicos: {debug_info['unique_files']}")
 
                 if debug_info["unique_files"] > 1:
                     logger.info(f"    ✅ OK - {debug_info['unique_files']} archivos")
@@ -157,12 +157,12 @@ def main():
     logger.info("\n" + "=" * 80)
     logger.info("✅ VERIFICACIÓN COMPLETADA")
     logger.info("=" * 80)
-    logger.info("\n📋 CHECKLIST:")
+    logger.info("\n📋 LISTA DE VERIFICACIÓN:")
     logger.info("  [ ] ¿Todas las colecciones existen y tienen puntos?")
     logger.info("  [ ] ¿Hay múltiples archivos en cada colección?")
     logger.info("  [ ] ¿Las queries traen de múltiples archivos?")
     logger.info("  [ ] ¿Los scores híbridos son razonables?")
-    logger.info("\nSi algo falla, revisar los logs de arriba ⬆️")
+    logger.info("\nSi algo falla, revisa los logs de arriba ⬆️")
     logger.info("=" * 80 + "\n")
 
 

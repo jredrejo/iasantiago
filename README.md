@@ -24,10 +24,7 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
   │   │   │   └─────► vLLM (puerto 8000)
   │   │   │           Generación de texto (LLM en GPU)
   │   │   │
-  │   │   └─────────► vLLM-LLaVA (puerto 8002)
-  │   │               Análisis de imágenes/tablas
-  │   │
-  │   └─────────────► Whoosh (BM25)
+  │   └───┴─────────► Whoosh (BM25)
   │                   Búsqueda léxica (índices locales)
   │
   └─────────────────► Qdrant (puertos 6333/6334)
@@ -35,9 +32,7 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
 
 ┌─────────────────┐
 │    Ingestor     │ ← Indexación de PDFs (ejecución única)
-│                 │   • Extracción con Unstructured.io
-│                 │   • Análisis LLaVA (imágenes/tablas)
-│                 │   • Cache SQLite (70x speedup)
+│                 │   • Extracción con Docling + Unstructured.io
 │                 │   • Embeddings a Qdrant + BM25
 └─────────────────┘
 ```
@@ -58,7 +53,6 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
 - **Re-ranking**: Jina Reranker multilingüe mejora relevancia
 - **Límites por archivo**: Máximo N fragmentos por documento (evita monopolios)
 - **Límite de contexto dinámico**: Control por tokens (6000 default)
-- **Cache LLaVA**: SQLite para análisis de imágenes/tablas (70x speedup)
 - **Telemetría**: Logs en `retrieval.jsonl` con rotación automática
 - **Estado persistente**: Tracking de archivos procesados (evita reindexación)
 
@@ -183,10 +177,6 @@ sudo cp documento.pdf /opt/iasantiago-rag/topics/Chemistry/
 
 2. Ejecutar ingestor:
 
-```bash
-cd ingestor
-./manage_gpu.sh ingest
-```
 
 El ingestor:
 - Solo procesa archivos nuevos o modificados (tracking con hash MD5)
@@ -441,7 +431,7 @@ cat /opt/iasantiago-rag/eval_summary.csv
 │
 ├── ingestor/                   # Indexador de PDFs
 │   ├── main.py                # Loop principal
-│   ├── chunk.py               # Extracción con Unstructured + LLaVA
+│   ├── chunk.py               # Extracción con Unstructured
 │   ├── settings.py
 │   └── requirements.txt
 │

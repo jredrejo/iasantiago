@@ -121,7 +121,9 @@ def sanitize_query_for_bm25(query: str, max_length: int = 200) -> str:
 
     for pattern in system_patterns:
         if re.match(pattern, query, re.IGNORECASE):
-            logger.warning(f"⚠️  Sistema query detectado, ignorando BM25: {query[:80]}...")
+            logger.warning(
+                f"⚠️  Sistema query detectado, ignorando BM25: {query[:80]}..."
+            )
             return ""  # Retornar vacío = skip BM25
 
     # 2. Solo bloquear patrones CLARAMENTE de código/prompt, no preguntas con markdown

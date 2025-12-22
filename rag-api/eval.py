@@ -2,11 +2,13 @@ from typing import List, Dict
 
 
 def recall_at_k(pred_files: List[str], rel_files: List[str], k: int) -> float:
+    """Calcula Recall@k: ¿está algún archivo relevante en los primeros k resultados?"""
     pred = pred_files[:k]
     return 1.0 if any(p in rel_files for p in pred) else 0.0
 
 
 def mrr(pred_files: List[str], rel_files: List[str]) -> float:
+    """Calcula Mean Reciprocal Rank: inverso del ranking del primer resultado relevante"""
     for i, p in enumerate(pred_files, start=1):
         if p in rel_files:
             return 1.0 / i
@@ -14,6 +16,7 @@ def mrr(pred_files: List[str], rel_files: List[str]) -> float:
 
 
 def aggregate_eval(queries: List[Dict], k_list=[1, 3, 5, 10]) -> Dict:
+    """Agrega métricas de evaluación sobre múltiples queries"""
     # queries: [{query, topic, relevant_files:[...], retrieved:[{file_path,...}, ...]}]
     out = {"n": len(queries)}
     for k in k_list:

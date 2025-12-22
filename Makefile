@@ -41,8 +41,6 @@ reset: gen-env
 	@sudo rm -rf data/whoosh/.processing_state.json
 	@sudo rm -rf data/storage/*
 	@sudo rm -rf data/whoosh/*
-
-	@docker volume rm iasantiago-rag_llava_cache
 	@docker compose up -d ingestor
 
 bench:
