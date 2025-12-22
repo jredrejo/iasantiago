@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from docling_client import DoclingClient
+from docling_client import DoclingClient, DoclingCrashLimitExceeded
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 from settings import *
@@ -48,18 +48,13 @@ logger.info(f"[CACHE] HF_HOME: {os.environ['HF_HOME']}")
 
 client = QdrantClient(url=QDRANT_URL)
 
-# docling initialiation
-DOCLING_URL = os.getenv("DOCLING_URL", "http://docling-service:8003")
+# docling initialization (local extraction - no external service needed)
 ENABLE_DOCLING = os.getenv("ENABLE_DOCLING", "true").lower() == "true"
 
-docling_client = (
-    DoclingClient(docling_url=DOCLING_URL, enable_fallback=True)
-    if ENABLE_DOCLING
-    else None
-)
+docling_client = DoclingClient(enable_fallback=True) if ENABLE_DOCLING else None
 
 logger.info(
-    f"[CONFIG] Docling extraction: {'ENABLED' if ENABLE_DOCLING else 'DISABLED'}"
+    f"[CONFIG] Docling extraction: {'ENABLED (local)' if ENABLE_DOCLING else 'DISABLED'}"
 )
 
 
@@ -620,11 +615,19 @@ def index_pdf(topic: str, pdf_path: str, vllm_url: str = None, cache_db: str = N
 
             logger.info(f"[DOCLING] ✓ Processed into {len(chunks)} chunks")
 
-        except Exception as e:
-            logger.error(f"[DOCLING] Failed completely: {e}", exc_info=True)
-            logger.info("[DOCLING] Using original extraction method")
+        except DoclingCrashLimitExceeded as e:
+            # File has crashed docling too many times - use unstructured (preserves page numbers)
+            logger.warning(f"[DOCLING] {e}")
+            logger.info(
+                "[DOCLING] Using unstructured extraction (page-accurate fallback)"
+            )
+            chunks = pdf_to_chunks_with_enhanced_validation(
+                pdf_path, vllm_url=vllm_url, cache_db=cache_db
+            )
 
-            # Final fallback to original method
+        except Exception as e:
+            logger.error(f"[DOCLING] Failed: {e}", exc_info=True)
+            logger.info("[DOCLING] Using unstructured extraction (fallback)")
             chunks = pdf_to_chunks_with_enhanced_validation(
                 pdf_path, vllm_url=vllm_url, cache_db=cache_db
             )

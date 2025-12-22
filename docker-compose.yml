@@ -18,52 +18,7 @@ services:
       timeout: 3s
       retries: 30
 
-  docling-service:
-    build:
-      context: ./docling-service
-      dockerfile: Dockerfile
-    container_name: docling-service
-    restart: unless-stopped
-    ipc: host
-    shm_size: 16gb
-    env_file: .env
-    ulimits:
-      memlock: -1
-      stack: 67108864
-      core: 0
-    environment:
-      - TZ=${TZ}
-      - CUDA_VISIBLE_DEVICES=0 # ⭐ Enable GPU
-      - TORCH_CUDA_ARCH_LIST=89 # RTX 5090
-      # Limit GPU memory for Docling
-      - DOCLING_GPU_MEMORY_FRACTION=${DOCLING_GPU_MEMORY_FRACTION}
-      # PyTorch memory management - avoid expandable segments which can cause corruption
-      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF}
-      - PYTORCH_NO_CUDA_MEMORY_CACHING=1 # Disable caching temporarily
-      - TORCH_USE_CUDA_DSA=1
-      - CUDA_LAUNCH_BLOCKING=${CUDA_LAUNCH_BLOCKING}
-      # Reduce table model batch size to prevent OOM during table detection
-      - DOCLING_TABLE_MAX_BATCH_SIZE=${DOCLING_TABLE_MAX_BATCH_SIZE}
-      # Cache paths for HuggingFace models (docling uses HF models)
-      - HF_HOME=/root/.cache/huggingface
-      - TORCH_HOME=/root/.cache/torch
-      - TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
-      - HF_HUB_OFFLINE=0
-    volumes:
-      - huggingface_cache:/root/.cache/huggingface
-      - docling_cache:/cache/docling
-    ports:
-      - "8003:8003"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu] # ⭐ GPU access
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # docling-service removed - extraction now runs inside ingestor
 
   vllm:
     image: vllm/vllm-openai:nightly
@@ -219,7 +174,7 @@ services:
       context: ./ingestor
       dockerfile: Dockerfile
     container_name: ingestor
-    restart: "no"
+    restart: on-failure  # Restart on crash (segfault), but not on clean exit
     ipc: host
     ulimits:
       memlock: -1
@@ -228,9 +183,10 @@ services:
     env_file: .env
     environment:
       - HF_HOME=/models_cache
-      # vLLM-LLaVA disabled - ingestor will work without it (no image/table analysis)
-      # - VLLM_URL=http://vllm-llava:8000
-      # - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
+      - TORCH_HOME=/root/.cache/torch
+      - TRANSFORMERS_CACHE=/models_cache/transformers
+      - VLLM_URL=http://vllm-llava:8000
+      - LLAVA_CACHE_DB=/llava_cache/llava_cache.db
       - TOPIC_BASE_DIR=/topics
       - BM25_BASE_DIR=/whoosh
       - MIN_IMAGE_WIDTH=100
@@ -241,6 +197,8 @@ services:
       - NUMBA_NUM_THREADS=10 # Para NumPy/numba
       - MKL_NUM_THREADS=10 # Para Intel MKL
       - OPENBLAS_NUM_THREADS=10 # Para OpenBLAS
+      # Docling GPU settings (now running inside ingestor)
+      - DOCLING_GPU_MEMORY_FRACTION=${DOCLING_GPU_MEMORY_FRACTION:-0.30}
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
@@ -248,10 +206,11 @@ services:
       - llava_cache:/llava_cache
       - ./ingestor:/app
       - /var/run/docker.sock:/var/run/docker.sock
+      - docling_cache:/cache/docling  # Docling extraction cache
     depends_on:
       - qdrant
-      # vllm-llava removed - optional for image/table analysis
-      - docling-service
+      - vllm-llava
+      # docling-service removed - extraction now runs inside ingestor
     deploy:
       resources:
         reservations:

@@ -87,4 +87,3 @@ os.environ["TESSERACT_LANG"] = "spa+eng"
 os.environ["OCR_LANGUAGES"] = "spa+eng"
 os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"
 os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"
-

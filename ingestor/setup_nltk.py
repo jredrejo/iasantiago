@@ -32,6 +32,7 @@ def setup_nltk_data():
     # Datos necesarios para Unstructured
     required_data = [
         "punkt",
+        "punkt_tab",  # Required for Spanish tokenizer
         "averaged_perceptron_tagger",
         "averaged_perceptron_tagger_eng",
         "universal_tagset",
@@ -53,12 +54,17 @@ def setup_nltk_data():
     # Verificar que los datos existan
     logger.info("\nVerifying NLTK data...")
     try:
-        # Test punkt tokenizer
+        # Test English punkt tokenizer
         from nltk.tokenize import sent_tokenize
 
-        test_text = "This is a test. It has two sentences."
-        result = sent_tokenize(test_text)
-        logger.info(f"✓ Punkt tokenizer works: {len(result)} sentences detected")
+        test_text_en = "This is a test. It has two sentences."
+        result_en = sent_tokenize(test_text_en)
+        logger.info(f"✓ English Punkt tokenizer works: {len(result_en)} sentences detected")
+
+        # Test Spanish punkt tokenizer (requires punkt_tab)
+        test_text_es = "Esto es una prueba. Tiene dos oraciones."
+        result_es = sent_tokenize(test_text_es, language='spanish')
+        logger.info(f"✓ Spanish Punkt tokenizer works: {len(result_es)} sentences detected")
 
         # Test POS tagger
         from nltk.tag import pos_tag
