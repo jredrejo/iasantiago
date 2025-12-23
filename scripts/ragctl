@@ -23,7 +23,7 @@ import argparse
 from pathlib import Path
 
 # ---------- Config por defecto (se respeta .env si existe) ----------
-BASE = Path("/opt/iasantiago-rag")
+BASE = Path("/docker/iaburuaga-rag")
 ENV_PATH = BASE / ".env"
 
 def load_env():
