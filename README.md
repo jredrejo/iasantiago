@@ -211,6 +211,10 @@ make restart                   # Reiniciar
 make reset                     # Borra todo y reindexa
 make seed                      # Crea ejemplos
 
+# Modos de operación
+make ingest                    # Modo ingestión: detiene vllm/rag-api/openwebui y lanza ingestor
+make web                       # Modo web: detiene ingestor y lanza oauth2-proxy
+
 # Ver estado del ingestor
 docker compose logs ingestor
 cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq

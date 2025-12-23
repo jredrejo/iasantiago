@@ -29,6 +29,31 @@ from unstructured.partition.pdf import partition_pdf
 logger = logging.getLogger(__name__)
 
 # ============================================================
+# HEARTBEAT CALLBACK: Para operaciones largas que necesitan señalar actividad
+# ============================================================
+_heartbeat_callback: Optional[callable] = None
+
+
+def set_heartbeat_callback(callback: Optional[callable]) -> None:
+    """Establece un callback para ser llamado durante operaciones largas.
+
+    Permite al caller (main.py) actualizar el heartbeat del watchdog
+    durante operaciones que toman más tiempo que el timeout del watchdog.
+    """
+    global _heartbeat_callback
+    _heartbeat_callback = callback
+
+
+def call_heartbeat(context: str = "") -> None:
+    """Llama al callback de heartbeat si está configurado."""
+    if _heartbeat_callback is not None:
+        try:
+            _heartbeat_callback(context)
+        except Exception:
+            pass  # No dejar que errores de heartbeat afecten el procesamiento
+
+
+# ============================================================
 # PDF PAGE COUNT CACHE (avoid redundant PDF opens)
 # ============================================================
 
@@ -1353,10 +1378,14 @@ class EasyOCRProcessor:
                 logger.info(
                     "[EASYOCR] This may take 2-5 minutes depending on network speed"
                 )
+                # Heartbeat antes de descarga larga para evitar timeout del watchdog
+                call_heartbeat("easyocr_model_download")
             else:
                 logger.info("[EASYOCR] Using existing models")
 
             logger.info("[EASYOCR] Initializing reader...")
+            # Heartbeat antes de inicialización (puede tardar con descarga de modelos)
+            call_heartbeat("easyocr_init")
             self.reader = easyocr.Reader(
                 ["es", "en"],
                 gpu=self.use_gpu,
@@ -1366,6 +1395,8 @@ class EasyOCRProcessor:
                 recognizer=True,
                 verbose=False,
             )
+            # Heartbeat después de inicialización exitosa
+            call_heartbeat("easyocr_init_done")
 
             EasyOCRProcessor._reader_cache = self.reader
 
@@ -1431,6 +1462,8 @@ class EasyOCRProcessor:
         first_page = min(page_nums)
         last_page = max(page_nums)
 
+        # Heartbeat antes de conversión de imágenes (puede tardar)
+        call_heartbeat(f"ocr_batch_{first_page}-{last_page}")
         images = convert_from_path(
             pdf_path,
             first_page=first_page,
@@ -1453,6 +1486,8 @@ class EasyOCRProcessor:
                     temp_files.append((actual_page_num, tmp.name))
 
             for page_num, tmp_path in temp_files:
+                # Heartbeat cada página para señalar actividad durante OCR largo
+                call_heartbeat(f"ocr_page_{page_num}")
                 text = self.extract_text_from_image(tmp_path)
                 results[page_num] = text
 
@@ -1729,6 +1764,8 @@ def extract_elements_from_pdf_gpu(
                 for batch_start in range(1, num_pages + 1, BATCH_SIZE):
                     batch_end = min(batch_start + BATCH_SIZE - 1, num_pages)
                     page_nums = list(range(batch_start, batch_end + 1))
+                    # Heartbeat antes de cada batch para señalar actividad
+                    call_heartbeat(f"easyocr_batch_{batch_start}-{batch_end}")
 
                     page_texts = ocr_processor.process_pdf_page_batch(
                         pdf_path, page_nums
@@ -1761,12 +1798,16 @@ def extract_elements_from_pdf_gpu(
 
     try:
         logger.info("[OCR] Using Tesseract (unstructured ocr_only)")
+        # Heartbeat antes de Tesseract OCR
+        call_heartbeat("tesseract_ocr")
 
         if num_pages > 0:
             BATCH_SIZE = 20
             for batch_start in range(1, num_pages + 1, BATCH_SIZE):
                 batch_end = min(batch_start + BATCH_SIZE - 1, num_pages)
                 page_nums = list(range(batch_start, batch_end + 1))
+                # Heartbeat antes de cada batch de Tesseract
+                call_heartbeat(f"tesseract_batch_{batch_start}-{batch_end}")
 
                 raw = fast_partition_pdf(
                     pdf_path,

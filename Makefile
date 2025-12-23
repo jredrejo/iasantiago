@@ -8,7 +8,8 @@ DATE := $(shell date +%F_%H%M%S)
         backup backup-topics backup-qdrant backup-whoosh restore \
         watcher-on watcher-off \
         publish-docs unpublish-docs \
-        eval-sample eval-file eval-nightly
+        eval-sample eval-file eval-nightly \
+        ingest web
 
 
 gen-env:
@@ -59,6 +60,17 @@ tail:
 
 rag-restart:
 	docker compose restart rag-api
+
+# ------- Modo ingestión / web -------
+ingest:
+	@echo "Deteniendo vllm, rag-api, openwebui y lanzando ingestor..."
+	docker compose stop vllm rag-api openwebui oauth2-proxy || true
+	docker compose up -d ingestor
+
+web:
+	@echo "Deteniendo ingestor y lanzando oauth2-proxy..."
+	docker compose stop ingestor || true
+	docker compose up -d oauth2-proxy
 
 # ------- Backups -------
 backup: backup-topics backup-qdrant backup-whoosh

@@ -6,7 +6,7 @@ import logging
 import os
 import signal
 import sys
-from chunk import pdf_to_chunks_with_enhanced_validation
+from chunk import pdf_to_chunks_with_enhanced_validation, set_heartbeat_callback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -948,6 +948,9 @@ def index_pdf(topic: str, pdf_path: str):
 
 def initial_scan():
     """Scan all topic directories and index PDFs"""
+    # Configurar callback de heartbeat para operaciones largas en chunk.py
+    set_heartbeat_callback(update_heartbeat)
+
     logger.info("\n" + "=" * 60)
     logger.info("STARTING INITIAL SCAN")
     logger.info("=" * 60)

@@ -24,6 +24,17 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 logger = logging.getLogger(__name__)
 
+# Heartbeat support for long-running Docling operations
+try:
+    from chunk import call_heartbeat
+
+    HEARTBEAT_AVAILABLE = True
+except ImportError:
+    HEARTBEAT_AVAILABLE = False
+    logger.warning(
+        "[DOCLING] Heartbeat not available - watchdog may timeout on long extractions"
+    )
+
 # ============================================================
 # CACHÉ DE EXTRACCIÓN
 # ============================================================
@@ -357,6 +368,11 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
     try:
         converter = get_docling_converter()
         logger.info("[DOCLING] Iniciando conversión...")
+
+        # Heartbeat antes de la operación larga de conversión (puede tardar varios minutos)
+        if HEARTBEAT_AVAILABLE:
+            call_heartbeat(f"docling_convert_{filename}")
+
         result = converter.convert(str(pdf_path))
         logger.info("[DOCLING] Conversión completada")
 
@@ -378,6 +394,10 @@ def extract_elements_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
                     logger.info(f"[DOCLING] Extrayendo markdown de {num_pages} páginas")
 
                     for page_num in range(1, num_pages + 1):
+                        # Heartbeat cada 5 páginas para señalar actividad al watchdog
+                        if HEARTBEAT_AVAILABLE and page_num % 5 == 0:
+                            call_heartbeat(f"docling_page_{page_num}")
+
                         try:
                             page_md = doc.export_to_markdown(page_no=page_num)
 

@@ -145,6 +145,12 @@ services:
       - OPENBLAS_NUM_THREADS=10 # Para OpenBLAS
       # Docling GPU settings (now running inside ingestor)
       - DOCLING_GPU_MEMORY_FRACTION=${DOCLING_GPU_MEMORY_FRACTION:-0.30}
+      # CUDA configuration for Docling (matches vLLM settings for RTX 5090)
+      - TORCH_CUDA_ARCH_LIST=89 # RTX5090 arquitectura 89
+      - CUDA_LAUNCH_BLOCKING=0 # Ejecución async (no bloqueante)
+      - PYTORCH_ALLOC_CONF=max_split_size_mb:512 # Reducir fragmentación de memoria
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID # Ordenamiento consistente de dispositivos
+      - CUDA_VISIBLE_DEVICES=0 # Selección explícita de GPU
     volumes:
       - models_cache:/models_cache
       - ${TOPIC_BASE_DIR}:/topics
