@@ -43,9 +43,9 @@ pytesseract==0.3.13
 # ============================================================
 # DOCLING (GPU-accelerated PDF extraction)
 # ============================================================
-docling==2.63.0
-docling-core==2.54.0
-docling-ibm-models==3.10.2
+docling==2.65.0
+docling-core==2.57.0
+docling-ibm-models==3.10.3
 
 # OCR support (pinned for cv2.dnn.DictValue compatibility with easyocr)
 opencv-python-headless==4.8.0.76
