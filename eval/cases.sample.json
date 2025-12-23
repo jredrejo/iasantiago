@@ -2,51 +2,51 @@
   {
     "query": "definición formal de la ley de Ohm y su fórmula",
     "topic": "Electronics",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Electronics/sample1.pdf"]
   },
   {
     "query": "cómo calcular la resistencia equivalente en serie y paralelo",
     "topic": "Electronics",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Electronics/sample1.pdf"]
   },
   {
     "query": "propiedades de los ácidos y bases según Bronsted-Lowry",
     "topic": "Chemistry",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Chemistry/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Chemistry/sample1.pdf"]
   },
   {
     "query": "qué es el pH y cómo se calcula",
     "topic": "Chemistry",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Chemistry/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Chemistry/sample1.pdf"]
   },
   {
     "query": "estructura básica de un programa en Python (función main, imports)",
     "topic": "Programming",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Programming/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Programming/sample1.pdf"]
   },
   {
     "query": "complejidad temporal de la búsqueda binaria",
     "topic": "Programming",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Programming/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Programming/sample1.pdf"]
   },
   {
     "query": "ejemplos de aplicación de la ley de Ohm en circuitos mixtos",
     "topic": "Electronics",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Electronics/sample1.pdf"]
   },
   {
     "query": "diferencias entre ácidos fuertes y débiles con ejemplos",
     "topic": "Chemistry",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Chemistry/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Chemistry/sample1.pdf"]
   },
   {
     "query": "ventajas y desventajas de listas vs. arrays en Python",
     "topic": "Programming",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Programming/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Programming/sample1.pdf"]
   },
   {
     "query": "relación entre voltaje, corriente y resistencia en un divisor",
     "topic": "Electronics",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Electronics/sample1.pdf"]
   }
 ]

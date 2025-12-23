@@ -5,7 +5,7 @@ Wants=network-online.target docker.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/iasantiago-rag
+WorkingDirectory=/docker/iaburuaga-rag
 ExecStart=/bin/bash -c '/usr/bin/docker compose up -d --no-start && /usr/bin/docker compose start qdrant vllm rag-api openwebui oauth2-proxy'
 ExecStop=/usr/bin/docker compose stop
 RemainAfterExit=yes

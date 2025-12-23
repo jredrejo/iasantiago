@@ -3,5 +3,5 @@ Description=IASantiago backups (topics, qdrant, whoosh)
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/iasantiago-rag
+WorkingDirectory=/docker/iaburuaga-rag
 ExecStart=/usr/bin/make backup

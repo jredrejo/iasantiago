@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE=/opt/iasantiago-rag
+BASE=/docker/iaburuaga-rag
 
 # TLS self-signed (ajusta si tienes tu propia CA)
 mkdir -p $BASE/nginx/certs

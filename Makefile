@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 ENV_FILE := .env
-BACKUP_DIR := /opt/iasantiago-rag/backups
+BACKUP_DIR := /docker/iaburuaga-rag/backups
 DATE := $(shell date +%F_%H%M%S)
 
 .PHONY: gen-env up down stop seed reset bench \
@@ -78,17 +78,17 @@ backup: backup-topics backup-qdrant backup-whoosh
 
 backup-topics:
 	@sudo mkdir -p $(BACKUP_DIR)
-	sudo tar -C /opt/iasantiago-rag -czf $(BACKUP_DIR)/topics-$(DATE).tgz topics
+	sudo tar -C /docker/iaburuaga-rag -czf $(BACKUP_DIR)/topics-$(DATE).tgz topics
 	@echo "[OK] topics -> $(BACKUP_DIR)/topics-$(DATE).tgz"
 
 backup-qdrant:
 	@sudo mkdir -p $(BACKUP_DIR)
-	sudo tar -C /opt/iasantiago-rag -czf $(BACKUP_DIR)/qdrant-$(DATE).tgz data/storage
+	sudo tar -C /docker/iaburuaga-rag -czf $(BACKUP_DIR)/qdrant-$(DATE).tgz data/storage
 	@echo "[OK] qdrant -> $(BACKUP_DIR)/qdrant-$(DATE).tgz"
 
 backup-whoosh:
 	@sudo mkdir -p $(BACKUP_DIR)
-	sudo tar -C /opt/iasantiago-rag -czf $(BACKUP_DIR)/whoosh-$(DATE).tgz data/whoosh
+	sudo tar -C /docker/iaburuaga-rag -czf $(BACKUP_DIR)/whoosh-$(DATE).tgz data/whoosh
 	@echo "[OK] whoosh -> $(BACKUP_DIR)/whoosh-$(DATE).tgz"
 
 # Uso:
@@ -98,10 +98,10 @@ restore:
 	@echo "Restaurando backup $(BACKUP) (se requiere ventana de mantenimiento)..."
 	docker compose down
 	sudo rm -rf data/storage/* data/whoosh/*
-	sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/qdrant-$(BACKUP).tgz
-	sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/whoosh-$(BACKUP).tgz
+	sudo tar -C /docker/iaburuaga-rag -xzf $(BACKUP_DIR)/qdrant-$(BACKUP).tgz
+	sudo tar -C /docker/iaburuaga-rag -xzf $(BACKUP_DIR)/whoosh-$(BACKUP).tgz
 	@echo "Opcionalmente restaura topics si procede:"
-	@echo "  sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/topics-$(BACKUP).tgz"
+	@echo "  sudo tar -C /docker/iaburuaga-rag -xzf $(BACKUP_DIR)/topics-$(BACKUP).tgz"
 	docker compose up -d
 
 # ------- Watcher on/off (override de comando en ingestor) -------
@@ -132,7 +132,7 @@ publish-docs:
 	@sudo bash -c 'tee /etc/nginx/conf.d/iasantiago-docs.conf >/dev/null <<NGINX\n\
 location /docs/ {\n\
     autoindex on;\n\
-    alias /opt/iasantiago-rag/topics/;\n\
+    alias /docker/iaburuaga-rag/topics/;\n\
 }\n\
 NGINX'
 	sudo nginx -t
