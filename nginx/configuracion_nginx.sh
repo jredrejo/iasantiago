@@ -22,7 +22,7 @@ DOMAINS=("ia.iessaenzdeburuaga.es" )
 MAIN_DOMAIN="ia.iessaenzdeburuaga.es"
 # Todos los nombres (incluyendo local) para nginx
 ALL_DOMAINS="ia.iessaenzdeburuaga.es"
-CERT_PATH="/opt/iasantiago-rag/nginx/certs"
+CERT_PATH="/docker/iaburuaga-rag/nginx/certs"
 LETSENCRYPT_PATH="/etc/letsencrypt/live/$MAIN_DOMAIN"
 NGINX_CONF="/etc/nginx/nginx.conf"
 
@@ -192,7 +192,7 @@ http {
     # Documentos estáticos
     location /docs/ {
       autoindex on;
-      alias /opt/iasantiago-rag/topics/;
+      alias /docker/iaburuaga-rag/topics/;
 
       # Security headers
       add_header X-Content-Type-Options nosniff;
@@ -237,10 +237,10 @@ mkdir -p /etc/letsencrypt/renewal-hooks/post
 cat > /etc/letsencrypt/renewal-hooks/post/nginx.sh << 'EOF'
 #!/bin/bash
 # Copiar certificados a ruta personalizada
-cp /etc/letsencrypt/live/ia.iessaenzdeburuaga.es/fullchain.pem /opt/iasantiago-rag/nginx/certs/server.crt
-cp /etc/letsencrypt/live/ia.iessaenzdeburuaga.es/privkey.pem /opt/iasantiago-rag/nginx/certs/server.key
-chmod 644 /opt/iasantiago-rag/nginx/certs/server.crt
-chmod 600 /opt/iasantiago-rag/nginx/certs/server.key
+cp /etc/letsencrypt/live/ia.iessaenzdeburuaga.es/fullchain.pem /docker/iaburuaga-rag/nginx/certs/server.crt
+cp /etc/letsencrypt/live/ia.iessaenzdeburuaga.es/privkey.pem /docker/iaburuaga-rag/nginx/certs/server.key
+chmod 644 /docker/iaburuaga-rag/nginx/certs/server.crt
+chmod 600 /docker/iaburuaga-rag/nginx/certs/server.key
 # Recargar nginx
 systemctl reload nginx
 EOF

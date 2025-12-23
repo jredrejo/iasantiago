@@ -88,7 +88,7 @@ Check telemetry to see translation stats:
 
 ```bash
 # View detected languages
-cat /opt/iasantiago-rag/rag-api/retrieval.jsonl | \
+cat /docker/iaburuaga-rag/rag-api/retrieval.jsonl | \
   jq '.original_language' | sort | uniq -c
 
 # See translated queries

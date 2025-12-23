@@ -1,4 +1,4 @@
-/opt/iasantiago-rag/rag-api/retrieval.jsonl {
+/docker/iaburuaga-rag/rag-api/retrieval.jsonl {
     daily
     rotate 14
     compress

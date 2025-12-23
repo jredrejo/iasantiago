@@ -248,11 +248,11 @@ View translation statistics:
 
 ```bash
 # See original languages in queries
-cat /opt/iasantiago-rag/rag-api/retrieval.jsonl | \
+cat /docker/iaburuaga-rag/rag-api/retrieval.jsonl | \
   jq '.original_language' | sort | uniq -c
 
 # See which queries were translated
-cat /opt/iasantiago-rag/rag-api/retrieval.jsonl | \
+cat /docker/iaburuaga-rag/rag-api/retrieval.jsonl | \
   jq 'select(.translated_query != null) | .translated_query' | head -20
 ```
 

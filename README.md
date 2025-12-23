@@ -70,8 +70,8 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
 
 ```bash
 # Crear directorio del proyecto
-sudo mkdir -p /opt/iasantiago-rag
-cd /opt/iasantiago-rag
+sudo mkdir -p /docker/iaburuaga-rag
+cd /docker/iaburuaga-rag
 
 # Descargar código
 wget https://github.com/jredrejo/iasantiago/archive/refs/heads/main.zip
@@ -91,7 +91,7 @@ Variables esenciales:
 ```bash
 # Temas
 TOPIC_LABELS=Chemistry,Electronics,Programming
-TOPIC_BASE_DIR=/opt/iasantiago-rag/topics
+TOPIC_BASE_DIR=/docker/iaburuaga-rag/topics
 
 # Google OAuth
 OAUTH2_CLIENT_ID=tu-client-id.apps.googleusercontent.com
@@ -152,9 +152,9 @@ sudo systemctl reload nginx
 
 ```bash
 # Enlazar servicios
-sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag.service /etc/systemd/system/
-sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag-eval.service /etc/systemd/system/
-sudo ln -sf /opt/iasantiago-rag/systemd/iasantiago-rag-eval.timer /etc/systemd/system/
+sudo ln -sf /docker/iaburuaga-rag/systemd/iasantiago-rag.service /etc/systemd/system/
+sudo ln -sf /docker/iaburuaga-rag/systemd/iasantiago-rag-eval.service /etc/systemd/system/
+sudo ln -sf /docker/iaburuaga-rag/systemd/iasantiago-rag-eval.timer /etc/systemd/system/
 
 # Activar
 sudo systemctl daemon-reload
@@ -162,7 +162,7 @@ sudo systemctl enable --now iasantiago-rag.service
 sudo systemctl enable --now iasantiago-rag-eval.timer
 
 # Configurar logrotate
-sudo ln -sf /opt/iasantiago-rag/systemd/logrotate-telemetry /etc/logrotate.d/iasantiago-rag
+sudo ln -sf /docker/iaburuaga-rag/systemd/logrotate-telemetry /etc/logrotate.d/iasantiago-rag
 ```
 
 ## Uso del Sistema
@@ -172,7 +172,7 @@ sudo ln -sf /opt/iasantiago-rag/systemd/logrotate-telemetry /etc/logrotate.d/ias
 1. Copiar PDFs a la carpeta del tema:
 
 ```bash
-sudo cp documento.pdf /opt/iasantiago-rag/topics/Chemistry/
+sudo cp documento.pdf /docker/iaburuaga-rag/topics/Chemistry/
 ```
 
 2. Ejecutar ingestor:
@@ -217,21 +217,21 @@ make web                       # Modo web: detiene ingestor y lanza oauth2-proxy
 
 # Ver estado del ingestor
 docker compose logs ingestor
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq
+cat /docker/iaburuaga-rag/data/whoosh/.processing_state.json | jq
 ```
 
 ### Backups
 
 ```bash
 # Backup completo
-sudo rsync -av /opt/iasantiago-rag/data/ /backups/iasantiago-$(date +%F)/
-sudo rsync -av /opt/iasantiago-rag/topics/ /backups/topics-$(date +%F)/
+sudo rsync -av /docker/iaburuaga-rag/data/ /backups/iasantiago-$(date +%F)/
+sudo rsync -av /docker/iaburuaga-rag/topics/ /backups/topics-$(date +%F)/
 
 # Solo Qdrant
-sudo rsync -av /opt/iasantiago-rag/data/storage/ /backups/qdrant-$(date +%F)/
+sudo rsync -av /docker/iaburuaga-rag/data/storage/ /backups/qdrant-$(date +%F)/
 
 # Solo Whoosh
-sudo rsync -av /opt/iasantiago-rag/data/whoosh/ /backups/whoosh-$(date +%F)/
+sudo rsync -av /docker/iaburuaga-rag/data/whoosh/ /backups/whoosh-$(date +%F)/
 ```
 
 ### Monitoreo
@@ -248,7 +248,7 @@ curl http://localhost:6333/        # Qdrant
 
 ```bash
 # Ver últimas consultas
-tail -f /opt/iasantiago-rag/rag-api/retrieval.jsonl | jq
+tail -f /docker/iaburuaga-rag/rag-api/retrieval.jsonl | jq
 
 # Estadísticas
 cat retrieval.jsonl | jq '.topic' | sort | uniq -c
@@ -258,10 +258,10 @@ cat retrieval.jsonl | jq '.topic' | sort | uniq -c
 
 ```bash
 # Ver archivos procesados
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.processed | length'
+cat /docker/iaburuaga-rag/data/whoosh/.processing_state.json | jq '.processed | length'
 
 # Ver archivos fallidos
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.failed'
+cat /docker/iaburuaga-rag/data/whoosh/.processing_state.json | jq '.failed'
 ```
 
 ## Configuración Avanzada
@@ -374,12 +374,12 @@ cat > /tmp/eval_cases.json <<'EOF'
   {
     "query": "definición de ley de Ohm",
     "topic": "Electronics",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Electronics/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Electronics/sample1.pdf"]
   },
   {
     "query": "ácidos y bases",
     "topic": "Chemistry",
-    "relevant_files": ["/opt/iasantiago-rag/topics/Chemistry/sample1.pdf"]
+    "relevant_files": ["/docker/iaburuaga-rag/topics/Chemistry/sample1.pdf"]
   }
 ]
 EOF
@@ -405,13 +405,13 @@ sudo systemctl list-timers | grep iasantiago
 sudo systemctl start iasantiago-rag-eval.service
 
 # Ver resultados
-cat /opt/iasantiago-rag/eval_summary.csv
+cat /docker/iaburuaga-rag/eval_summary.csv
 ```
 
 ## Estructura del Proyecto
 
 ```
-/opt/iasantiago-rag/
+/docker/iaburuaga-rag/
 ├── docker-compose.yml          # Orquestación de servicios
 ├── Makefile                    # Comandos útiles
 ├── .env                        # Configuración
@@ -477,13 +477,13 @@ docker compose restart rag-api openwebui
 
 ```bash
 # ¿Archivos indexados?
-ls -lh /opt/iasantiago-rag/topics/Chemistry/
+ls -lh /docker/iaburuaga-rag/topics/Chemistry/
 
 # ¿Ingestor ejecutado?
 docker compose logs ingestor | tail -50
 
 # ¿Estado del ingestor?
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq
+cat /docker/iaburuaga-rag/data/whoosh/.processing_state.json | jq
 
 # ¿Colecciones en Qdrant?
 curl http://localhost:6333/collections | jq
@@ -531,7 +531,7 @@ curl -I https://accounts.google.com
 docker compose logs ingestor | grep ERROR
 
 # Ver archivos fallidos
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.failed'
+cat /docker/iaburuaga-rag/data/whoosh/.processing_state.json | jq '.failed'
 
 # Aumentar memoria del contenedor
 nano docker-compose.yml
@@ -567,7 +567,7 @@ Si no hay salida a Internet:
 ## Actualizaciones
 
 ```bash
-cd /opt/iasantiago-rag
+cd /docker/iaburuaga-rag
 
 # Backup
 sudo rsync -av data/ /backups/data-$(date +%F)/
