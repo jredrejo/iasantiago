@@ -1,4 +1,5 @@
 import faulthandler
+import gc
 import glob
 import hashlib
 import json
@@ -14,20 +15,19 @@ from typing import Any
 import numpy as np
 import torch
 
-
 # ============================================================
-# CRITICAL: Force exit on segfault
-# CUDA/C libraries may catch SIGSEGV but not exit, leaving
-# the container in a zombie state. This ensures container restart.
+# CRÍTICO: Forzar salida en segfault
+# Las librerías CUDA/C pueden capturar SIGSEGV pero no salir, dejando
+# el contenedor en estado zombie. Esto asegura el reinicio del contenedor.
 # ============================================================
 
-# Enable faulthandler for better crash diagnostics
-# This must be done BEFORE any CUDA/PyTorch imports in child modules
+# Habilitar faulthandler para mejores diagnósticos de fallos
+# Esto debe hacerse ANTES de cualquier import CUDA/PyTorch en módulos hijos
 faulthandler.enable(file=sys.stderr, all_threads=True)
 
 
 def _force_exit_on_signal(signum: int, frame) -> None:
-    """Force immediate exit on fatal signals to trigger container restart."""
+    """Forzar salida inmediata en señales fatales para disparar reinicio de contenedor."""
     signal_name = signal.Signals(signum).name
     print(
         f"\n[FATAL] Caught {signal_name} - forcing exit to trigger container restart",
@@ -38,13 +38,13 @@ def _force_exit_on_signal(signum: int, frame) -> None:
     os._exit(128 + signum)
 
 
-# Install signal handlers for fatal signals
-# Note: These run BEFORE C library handlers so they take precedence
+# Instalar manejadores de señales para señales fatales
+# Nota: Estos ejecutan ANTES de los manejadores de librería C, así que tienen prioridad
 for sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGABRT):
     try:
         signal.signal(sig, _force_exit_on_signal)
     except (OSError, ValueError):
-        pass  # Some signals can't be caught in certain contexts
+        pass  # Algunas señales no pueden ser capturadas en ciertos contextos
 from docling_client import DoclingClient, DoclingCrashLimitExceeded
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
@@ -53,32 +53,32 @@ from whoosh import index
 from whoosh.fields import ID, NUMERIC, TEXT, Schema
 
 # ============================================================
-# CRITICAL: Configure model cache directory BEFORE imports
-# Use only HF_HOME (TRANSFORMERS_CACHE is deprecated in v5)
+# CRÍTICO: Configurar directorio de caché de modelos ANTES de imports
+# Usar solo HF_HOME (TRANSFORMERS_CACHE está deprecado en v5)
 # ============================================================
 MODEL_CACHE_DIR = "/models_cache"
 os.environ["HF_HOME"] = MODEL_CACHE_DIR
 
-# Create cache directory if it doesn't exist
+# Crear directorio de caché si no existe
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 
 # ============================================================
-# EMBEDDINGS DEVICE: Todo en GPU con float16
+# DISPOSITIVO DE EMBEDDINGS: Todo en GPU con float16
 # - Modelo en GPU con float16 (~650MB vs 1.3GB en float32)
-# - Inference en GPU
+# - Inferencia en GPU
 # ============================================================
 EMBEDDING_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EMBEDDING_DTYPE = "float16"
 
-# Re-register signal handlers AFTER PyTorch/CUDA initialization
-# CUDA libraries may override Python signal handlers during init
+# Re-registrar manejadores de señales DESPUÉS de inicialización PyTorch/CUDA
+# Las librerías CUDA pueden sobrescribir manejadores de señales Python durante init
 for sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGABRT):
     try:
         signal.signal(sig, _force_exit_on_signal)
     except (OSError, ValueError):
         pass
 
-# Setup logging
+# Configuración de logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -90,7 +90,7 @@ logger.info(f"[CACHE] HF_HOME: {os.environ['HF_HOME']}")
 
 client = QdrantClient(url=QDRANT_URL)
 
-# docling initialization (local extraction - no external service needed)
+# Inicialización de docling (extracción local - no se necesita servicio externo)
 ENABLE_DOCLING = os.getenv("ENABLE_DOCLING", "true").lower() == "true"
 
 docling_client = DoclingClient(enable_fallback=True) if ENABLE_DOCLING else None
@@ -101,37 +101,41 @@ logger.info(
 
 
 # ============================================================
-# HEARTBEAT: For healthcheck to detect stuck containers
+# HEARTBEAT: Para que healthcheck detecte contenedores atascados
 # ============================================================
 HEARTBEAT_FILE = "/tmp/ingestor_heartbeat"
 
+# Tamaño Mega-batch para codificar textos muy grandes y prevenir GPU OOM
+# Limpia la cache de GPU entre lotes
+ENCODING_MEGA_BATCH_SIZE = 5000
+
 
 def update_heartbeat(current_file: str = "") -> None:
-    """Update heartbeat file with current timestamp and file being processed."""
+    """Actualizar archivo de heartbeat con timestamp actual y archivo siendo procesado."""
     try:
         import time
 
         with open(HEARTBEAT_FILE, "w") as f:
             f.write(f"{time.time()}\n{current_file}\n")
     except Exception:
-        pass  # Don't let heartbeat issues affect processing
+        pass  # No dejar que problemas de heartbeat afecten el procesamiento
 
 
 # ============================================================
-# WATCHDOG: Force exit if process hangs (e.g., glibc corruption)
+# WATCHDOG: Forzar salida si el proceso se bloquea (ej. corrupción de glibc)
 # ============================================================
-WATCHDOG_TIMEOUT = 300  # 5 minutes - same as healthcheck threshold
-WATCHDOG_CHECK_INTERVAL = 60  # Check every minute
+WATCHDOG_TIMEOUT = 450  # 7.5 minutes - same as healthcheck threshold
+WATCHDOG_CHECK_INTERVAL = 60  # Revisar cada minuto
 
 
 def _watchdog_thread() -> None:
-    """Background thread that monitors heartbeat and forces exit on stall.
+    """Thread en segundo plano que monitorea heartbeat y fuerza salida en bloqueo.
 
-    This catches cases where the process hangs without raising a signal,
-    such as glibc 'corrupted double-linked list' errors.
+    Esto captura casos donde el proceso se cuelga sin levantar una señal,
+    como errores de 'corrupted double-linked list' de glibc.
     """
-    import time
     import threading
+    import time
 
     logger.info("[WATCHDOG] Started - monitoring for stalled processing")
 
@@ -161,12 +165,12 @@ def _watchdog_thread() -> None:
                             sys.stderr.flush()
                             os._exit(1)  # Force immediate exit
         except Exception as e:
-            # Don't let watchdog errors affect normal operation
+            # No dejar que errores de watchdog afecten la operación normal
             logger.debug(f"[WATCHDOG] Error checking heartbeat: {e}")
 
 
 def start_watchdog() -> None:
-    """Start the watchdog thread as a daemon."""
+    """Iniciar el thread de watchdog como daemon."""
     import threading
 
     watchdog = threading.Thread(target=_watchdog_thread, daemon=True, name="watchdog")
@@ -174,7 +178,7 @@ def start_watchdog() -> None:
 
 
 # ============================================================
-# STATE TRACKING: Rastrear archivos ya procesados
+# SEGUIMIENTO DE ESTADO: Rastrear archivos ya procesados
 # ============================================================
 STATE_FILE = "/whoosh/.processing_state.json"
 
@@ -314,7 +318,7 @@ state = ProcessingState()
 
 
 # ============================================================
-# VECTOR VALIDATION: Asegurar vectores válidos para Qdrant
+# VALIDACIÓN DE VECTORES: Asegurar vectores válidos para Qdrant
 # ============================================================
 def validate_and_fix_vectors(vecs, dims):
     """
@@ -344,7 +348,9 @@ def validate_and_fix_vectors(vecs, dims):
 
         # Verificar dimensión
         if len(vec) != dims:
-            logger.warning(f"Vector {i} has wrong dimension: {len(vec)} != {dims}")
+            logger.warning(
+                f"Vector {i} tiene dimensión incorrecta: {len(vec)} != {dims}"
+            )
             invalid_count += 1
             # Rellenar o truncar
             if len(vec) < dims:
@@ -388,7 +394,7 @@ def validate_and_fix_vectors(vecs, dims):
 
 
 # ============================================================
-# MODEL CACHE: Carga modelos con caché persistente
+# CACHÉ DE MODELOS: Carga modelos con caché persistente
 # ============================================================
 class ModelCache:
     """Gestiona caché de modelos SentenceTransformer"""
@@ -397,7 +403,7 @@ class ModelCache:
         self.models = {}
         self.cache_info_file = os.path.join(MODEL_CACHE_DIR, ".model_cache_info.json")
         self.use_gpu = torch.cuda.is_available()
-        self.gpu_failed = False  # Track si GPU falló
+        self.gpu_failed = False  # Rastrea si GPU falló
         logger.info("[CACHE] Initializing model cache")
 
     def get_model(self, model_name: str, device: str = "cpu") -> SentenceTransformer:
@@ -460,33 +466,93 @@ class ModelCache:
     def encode_with_gpu(
         self, model: SentenceTransformer, texts: list, batch_size: int = 32
     ):
-        """Encode textos con GPU/CPU fallback automático"""
-        device = str(model.device)
-        logger.info(f"[CACHE] Encoding {len(texts)} texts on {device}")
+        """Codifica textos con fallback automático GPU/CPU.
 
-        try:
-            # Intenta encoding en dispositivo actual
-            vecs = model.encode(
-                texts,
-                normalize_embeddings=True,
-                batch_size=batch_size,
-                show_progress_bar=True,
-                convert_to_tensor=True,
+        Para conjuntos de texto grandes (>ENCODING_MEGA_BATCH_SIZE), procesa en mega-batches
+        con limpieza de caché GPU entre batches para prevenir OOM.
+        """
+        device = str(model.device)
+        total_texts = len(texts)
+        logger.info(f"[CACHE] Codificando {total_texts} textos en {device}")
+
+        # Para conjuntos de texto grandes, usar procesamiento por mega-batches para prevenir OOM de GPU
+        use_mega_batching = total_texts > ENCODING_MEGA_BATCH_SIZE
+
+        if use_mega_batching:
+            total_mega_batches = (
+                total_texts + ENCODING_MEGA_BATCH_SIZE - 1
+            ) // ENCODING_MEGA_BATCH_SIZE
+            logger.info(
+                f"[CACHE] Conjunto de texto grande detectado, procesando en {total_mega_batches} mega-batches de {ENCODING_MEGA_BATCH_SIZE}"
             )
 
-            # Convierte a float32 numpy array
-            if torch.is_tensor(vecs):
-                vecs = vecs.float().cpu().numpy()
+        try:
+            if use_mega_batching:
+                all_vecs = []
+                for mega_batch_num, mega_start in enumerate(
+                    range(0, total_texts, ENCODING_MEGA_BATCH_SIZE), 1
+                ):
+                    mega_end = min(mega_start + ENCODING_MEGA_BATCH_SIZE, total_texts)
+                    batch_texts = texts[mega_start:mega_end]
 
-            return vecs
+                    update_heartbeat(f"encoding_batch_{mega_start}-{mega_end}")
+                    logger.info(
+                        f"[CACHE] Mega-batch {mega_batch_num}/{total_mega_batches}: "
+                        f"codificando textos {mega_start + 1}-{mega_end}"
+                    )
+
+                    # Codificar este mega-batch
+                    vecs = model.encode(
+                        batch_texts,
+                        normalize_embeddings=True,
+                        batch_size=batch_size,
+                        show_progress_bar=True,
+                        convert_to_tensor=True,
+                    )
+
+                    # Convertir a numpy inmediatamente para liberar memoria GPU
+                    if torch.is_tensor(vecs):
+                        vecs = vecs.float().cpu().numpy()
+
+                    all_vecs.append(vecs)
+
+                    # Limpiar caché GPU entre mega-batches
+                    if "cuda" in device.lower() and mega_batch_num < total_mega_batches:
+                        torch.cuda.empty_cache()
+                        gc.collect()
+
+                # Concatenar todos los resultados
+                return np.concatenate(all_vecs, axis=0)
+            else:
+                # Codificación por batch único original para conjuntos de texto más pequeños
+                vecs = model.encode(
+                    texts,
+                    normalize_embeddings=True,
+                    batch_size=batch_size,
+                    show_progress_bar=True,
+                    convert_to_tensor=True,
+                )
+
+                # Convertir a array numpy float32
+                if torch.is_tensor(vecs):
+                    vecs = vecs.float().cpu().numpy()
+
+                return vecs
 
         except RuntimeError as e:
             error_msg = str(e)
 
             # Si es error de CUDA, intentar fallback a CPU
             if "CUDA" in error_msg or "cuda" in error_msg:
-                logger.error(f"[CACHE] GPU encoding failed: {e}")
-                logger.warning("[CACHE] Falling back to CPU encoding...")
+                logger.error(f"[CACHE] Codificación GPU falló: {e}")
+                logger.warning("[CACHE] Haciendo fallback a codificación en CPU...")
+
+                # Limpiar estado de GPU antes del fallback
+                try:
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                except Exception:
+                    pass
 
                 # Marcar GPU como fallida
                 self.gpu_failed = True
@@ -497,20 +563,55 @@ class ModelCache:
                     if hasattr(model, "half"):
                         model = model.float()  # Volver a float32
 
-                    # Reintentar en CPU
-                    vecs = model.encode(
-                        texts,
-                        normalize_embeddings=True,
-                        batch_size=batch_size,
-                        show_progress_bar=True,
-                        convert_to_tensor=True,
-                    )
+                    # Reintentar en CPU con mega-batching para conjuntos grandes
+                    if use_mega_batching:
+                        all_vecs = []
+                        for mega_batch_num, mega_start in enumerate(
+                            range(0, total_texts, ENCODING_MEGA_BATCH_SIZE), 1
+                        ):
+                            mega_end = min(
+                                mega_start + ENCODING_MEGA_BATCH_SIZE, total_texts
+                            )
+                            batch_texts = texts[mega_start:mega_end]
 
-                    if torch.is_tensor(vecs):
-                        vecs = vecs.float().cpu().numpy()
+                            update_heartbeat(
+                                f"cpu_encoding_batch_{mega_start}-{mega_end}"
+                            )
+                            logger.info(
+                                f"[CACHE] CPU mega-batch {mega_batch_num}/{total_mega_batches}: "
+                                f"encoding texts {mega_start + 1}-{mega_end}"
+                            )
 
-                    logger.info("[CACHE] Successfully encoded on CPU")
-                    return vecs
+                            vecs = model.encode(
+                                batch_texts,
+                                normalize_embeddings=True,
+                                batch_size=batch_size,
+                                show_progress_bar=True,
+                                convert_to_tensor=True,
+                            )
+
+                            if torch.is_tensor(vecs):
+                                vecs = vecs.float().cpu().numpy()
+
+                            all_vecs.append(vecs)
+                            gc.collect()
+
+                        logger.info("[CACHE] Successfully encoded on CPU")
+                        return np.concatenate(all_vecs, axis=0)
+                    else:
+                        vecs = model.encode(
+                            texts,
+                            normalize_embeddings=True,
+                            batch_size=batch_size,
+                            show_progress_bar=True,
+                            convert_to_tensor=True,
+                        )
+
+                        if torch.is_tensor(vecs):
+                            vecs = vecs.float().cpu().numpy()
+
+                        logger.info("[CACHE] Successfully encoded on CPU")
+                        return vecs
 
                 except Exception as cpu_error:
                     logger.error(f"[CACHE] CPU fallback also failed: {cpu_error}")
@@ -589,18 +690,18 @@ def process_docling_elements(
     elements: list[dict[str, Any]], pdf_path: str, total_pages: int = None
 ) -> list[dict[str, Any]]:
     """
-    Convert Docling elements to your chunk format
-    Preserves compatibility with existing pipeline
+    Convierte elementos Docling al formato de chunks
+    Mantiene compatibilidad con el pipeline existente
 
     Args:
-        elements: List of elements from Docling service
-        pdf_path: Path to PDF file
-        total_pages: Total number of pages in PDF (for validation)
+        elements: Lista de elementos del servicio Docling
+        pdf_path: Ruta al archivo PDF
+        total_pages: Número total de páginas en PDF (para validación)
     """
     chunks = []
 
     for i, elem in enumerate(elements):
-        # Validate and clamp page number
+        # Validar y acotar número de página
         page = elem.get("page", 1)
         if not isinstance(page, int):
             try:
@@ -611,7 +712,7 @@ def process_docling_elements(
                 )
                 page = 1
 
-        # Clamp page number to valid range
+        # Acotar número de página al rango válido
         if total_pages:
             if page < 1 or page > total_pages:
                 original_page = page
@@ -637,8 +738,8 @@ def process_docling_elements(
             "metadata": elem.get("metadata", {}),
         }
 
-        # For tables and images, you can still apply LLaVA analysis
-        # if needed (your existing logic)
+        # Para tablas e imágenes, todavía puedes aplicar análisis LLaVA
+        # si es necesario (tu lógica existente)
 
         chunks.append(chunk)
 
@@ -646,7 +747,7 @@ def process_docling_elements(
 
 
 def index_pdf(topic: str, pdf_path: str):
-    """Index a single PDF file to both Qdrant and Whoosh"""
+    """Indexar un archivo PDF a Qdrant y Whoosh"""
 
     if state.is_already_processed(pdf_path):
         return True
@@ -657,7 +758,7 @@ def index_pdf(topic: str, pdf_path: str):
     logger.info(f"{'=' * 60}")
 
     # ============================================================
-    # EXTRACT TOTAL PAGES: For page number validation
+    # EXTRAER TOTAL DE PÁGINAS: Para validación de número de página
     # ============================================================
     total_pages = None
     try:
@@ -669,7 +770,7 @@ def index_pdf(topic: str, pdf_path: str):
     except Exception as e:
         logger.warning(f"Could not determine page count: {e}")
 
-    # Embeddings device configuration
+    # Configuración del dispositivo de embeddings
     device = EMBEDDING_DEVICE
     logger.info(f"Device: {device}")
 
@@ -689,7 +790,7 @@ def index_pdf(topic: str, pdf_path: str):
             logger.warning(f"CUDA info error: {e}")
 
     # ============================================================
-    # USE MODEL CACHE: Obtener modelo desde caché
+    # USAR CACHÉ DE MODELOS: Obtener modelo desde caché
     # ============================================================
     embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
     logger.info(f"Loading embedding model: {embed_name}")
@@ -712,22 +813,22 @@ def index_pdf(topic: str, pdf_path: str):
         try:
             logger.info(f"[EXTRACTION] Trying Docling for {Path(pdf_path).name}")
 
-            # Define fallback function
+            # Definir función de fallback
             def fallback_extraction(path):
                 return pdf_to_chunks_with_enhanced_validation(str(path))
 
-            # Extract with Docling (with automatic fallback)
+            # Extraer con Docling (con fallback automático)
             raw_elements = docling_client.extract_pdf_sync(
                 Path(pdf_path), fallback_func=fallback_extraction
             )
 
-            # Convert to chunks with page validation
+            # Convertir a chunks con validación de páginas
             chunks = process_docling_elements(raw_elements, pdf_path, total_pages)
 
             logger.info(f"[DOCLING] ✓ Processed into {len(chunks)} chunks")
 
         except DoclingCrashLimitExceeded as e:
-            # File has crashed docling too many times - use unstructured (preserves page numbers)
+            # El archivo ha fallado docling demasiadas veces - usar unstructured (preserva números de página)
             logger.warning(f"[DOCLING] {e}")
             logger.info(
                 "[DOCLING] Using unstructured extraction (page-accurate fallback)"
@@ -739,8 +840,8 @@ def index_pdf(topic: str, pdf_path: str):
             logger.info("[DOCLING] Using unstructured extraction (fallback)")
             chunks = pdf_to_chunks_with_enhanced_validation(pdf_path)
     else:
-        # Docling disabled, use original method
-        logger.info(f"[EXTRACTION] Using original method (Docling disabled)")
+        # Docling deshabilitado, usar método original
+        logger.info(f"[EXTRACTION] Usando método original (Docling deshabilitado)")
         try:
             chunks = pdf_to_chunks_with_enhanced_validation(pdf_path)
 
@@ -761,16 +862,16 @@ def index_pdf(topic: str, pdf_path: str):
 
     logger.info(f"Encoding {len(texts)} chunks...")
     try:
-        # Usa GPU inference si está disponible
-        # ✅ IMPORTANTE: intfloat/multilingual-e5-large-instruct requiere prefixes específicos
+        # Usa inferencia en GPU si está disponible
+        # ✅ IMPORTANTE: intfloat/multilingual-e5-large-instruct requiere prefijos específicos
         embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
 
         if "e5" in embed_name.lower():
-            # Usa prefix de documento para indexación
+            # Usa prefijo de documento para indexación
             texts_to_encode = [
                 f"Represent this document for retrieval: {text}" for text in texts
             ]
-            logger.info("[E5] Using 'Represent this document for retrieval:' prefix")
+            logger.info("[E5] Usando prefijo 'Represent this document for retrieval:'")
         else:
             texts_to_encode = texts
             logger.info(f"[EMBED] No prefix needed for {embed_name}")
@@ -784,15 +885,15 @@ def index_pdf(topic: str, pdf_path: str):
         # CRÍTICO: Validar y corregir vectores antes de enviar a Qdrant
         vecs = validate_and_fix_vectors(vecs, dims)
 
-        # DEBUG: Verifica dimensión y tipo
+        # DEBUG: Verificar dimensión y tipo
         if len(vecs) > 0:
-            logger.info(f"[OK] Encoded {len(vecs)} vectors")
-            logger.info(f"[DEBUG] Vector type: {type(vecs)}")
-            logger.info(f"[DEBUG] First vector type: {type(vecs[0])}")
-            logger.info(f"[DEBUG] Vector dimension: {len(vecs[0])}")
-            logger.info(f"[DEBUG] First value type: {type(vecs[0][0])}")
+            logger.info(f"[OK] Codificados {len(vecs)} vectores")
+            logger.info(f"[DEBUG] Tipo de vector: {type(vecs)}")
+            logger.info(f"[DEBUG] Tipo del primer vector: {type(vecs[0])}")
+            logger.info(f"[DEBUG] Dimensión del vector: {len(vecs[0])}")
+            logger.info(f"[DEBUG] Tipo del primer valor: {type(vecs[0][0])}")
         else:
-            logger.warning("[DEBUG] Empty vector")
+            logger.warning("[DEBUG] Vector vacío")
 
     except Exception as e:
         logger.error(f"[ERROR] Failed to encode chunks: {e}", exc_info=True)
@@ -801,20 +902,20 @@ def index_pdf(topic: str, pdf_path: str):
 
     payloads = []
     for idx, c in enumerate(chunks):
-        # Validate page number against PDF boundaries
+        # Validar número de página contra los límites del PDF
         page = c.get("page", 1)
 
-        # Convert to int if needed
+        # Convertir a int si es necesario
         if not isinstance(page, int):
             try:
                 page = int(page)
             except (ValueError, TypeError):
                 logger.warning(
-                    f"[MAIN] Invalid page type {type(page)} in chunk {idx}, using 1"
+                    f"[MAIN] Tipo de página inválido {type(page)} en chunk {idx}, usando 1"
                 )
                 page = 1
 
-        # Validate page range [1, total_pages]
+        # Validar rango de página [1, total_pages]
         if total_pages:
             if page < 1 or page > total_pages:
                 original_page = page
@@ -888,20 +989,20 @@ def index_pdf(topic: str, pdf_path: str):
         writer = idx.writer(limitmb=512, procs=0, multisegment=True)
 
         for i, c in enumerate(chunks):
-            # Validate page number for BM25 indexing (same validation as Qdrant)
+            # Validar número de página para indexación BM25 (misma validación que Qdrant)
             page = c.get("page", 1)
 
-            # Convert to int if needed
+            # Convertir a int si es necesario
             if not isinstance(page, int):
                 try:
                     page = int(page)
                 except (ValueError, TypeError):
                     logger.warning(
-                        f"[MAIN] Invalid page type {type(page)} in chunk {i} for BM25, using 1"
+                        f"[MAIN] Tipo de página inválido {type(page)} en chunk {i} para BM25, usando 1"
                     )
                     page = 1
 
-            # Validate page range [1, total_pages]
+            # Validar rango de página [1, total_pages]
             if total_pages:
                 if page < 1 or page > total_pages:
                     original_page = page
@@ -947,12 +1048,12 @@ def index_pdf(topic: str, pdf_path: str):
 
 
 def initial_scan():
-    """Scan all topic directories and index PDFs"""
+    """Escanear todos los directorios de topic e indexar PDFs"""
     # Configurar callback de heartbeat para operaciones largas en chunk.py
     set_heartbeat_callback(update_heartbeat)
 
     logger.info("\n" + "=" * 60)
-    logger.info("STARTING INITIAL SCAN")
+    logger.info("INICIANDO SCAN INICIAL")
     logger.info("=" * 60)
     logger.info(f"TOPIC_BASE_DIR: {TOPIC_BASE_DIR}")
     logger.info(f"BM25_BASE_DIR: {BM25_BASE_DIR}")
@@ -1001,7 +1102,7 @@ def initial_scan():
                 continue
 
             pdf_count += 1
-            # Update heartbeat before each PDF - allows healthcheck to detect stuck containers
+            # Actualizar heartbeat antes de cada PDF - permite que healthcheck detecte contenedores atascados
             update_heartbeat(os.path.basename(abs_pdf))
             try:
                 success = index_pdf(t, abs_pdf)
@@ -1020,14 +1121,16 @@ def initial_scan():
     state.update_scan_time()
 
     logger.info("\n" + "=" * 60)
-    logger.info("INITIAL SCAN COMPLETED")
+    logger.info("SCAN INICIAL COMPLETADO")
     logger.info("=" * 60)
-    logger.info(f"New PDFs processed: {pdf_count}")
-    logger.info(f"PDFs skipped (already processed): {skipped_count}")
-    logger.info(f"Errors: {error_count}")
-    logger.info(f"Time elapsed: {elapsed_time:.2f} seconds")
+    logger.info(f"Nuevos PDFs procesados: {pdf_count}")
+    logger.info(f"PDFs omitidos (ya procesados): {skipped_count}")
+    logger.info(f"Errores: {error_count}")
+    logger.info(f"Tiempo transcurrido: {elapsed_time:.2f} segundos")
     if pdf_count > 0:
-        logger.info(f"Average time per new PDF: {elapsed_time / pdf_count:.2f} seconds")
+        logger.info(
+            f"Tiempo promedio por nuevo PDF: {elapsed_time / pdf_count:.2f} segundos"
+        )
     logger.info("=" * 60 + "\n")
 
 
@@ -1049,10 +1152,10 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
 
     try:
         logger.info(
-            f"Querying Qdrant collection '{coll}' for points with file_path={pdf_path}"
+            f"Consultando colección Qdrant '{coll}' para puntos con file_path={pdf_path}"
         )
 
-        # Busca TODOS los puntos con este file_path
+        # Buscar TODOS los puntos con este file_path
         points_result = client.scroll(
             collection_name=coll,
             limit=10000,  # Asumir máx 10k puntos por archivo
@@ -1084,13 +1187,13 @@ def delete_pdf_from_indexes(topic: str, pdf_path: str):
     # BORRAR DE WHOOSH
     # ============================================================
     try:
-        logger.info(f"Querying Whoosh index for file_path={pdf_path}")
+        logger.info(f"Consultando índice Whoosh para file_path={pdf_path}")
 
         idx_path = os.path.join(BM25_BASE_DIR, topic)
         idx = index.open_dir(idx_path)
         writer = idx.writer()
 
-        # Borra todos los documentos con este file_path
+        # Borrar todos los documentos con este file_path
         deleted_count = writer.delete_by_term("file_path", pdf_path)
 
         writer.commit()
@@ -1132,7 +1235,9 @@ def delete_all_files_from_topic(topic: str):
     # VERIFICAR QUE EL TOPIC EXISTA
     # ============================================================
     if topic not in TOPIC_LABELS:
-        logger.error(f"Topic '{topic}' not found in configured topics: {TOPIC_LABELS}")
+        logger.error(
+            f"Topic '{topic}' no encontrado en los topics configurados: {TOPIC_LABELS}"
+        )
         return False
 
     coll = topic_collection(topic)
@@ -1145,13 +1250,15 @@ def delete_all_files_from_topic(topic: str):
             # Obtener información antes de borrar
             collection_info = client.get_collection(collection_name=coll)
             points_count = collection_info.points_count
-            logger.info(f"Found {points_count} points in Qdrant collection '{coll}'")
+            logger.info(
+                f"Encontrados {points_count} puntos en colección Qdrant '{coll}'"
+            )
 
             # Borrar colección completa
             client.delete_collection(collection_name=coll)
-            logger.info(f"✅ Deleted entire Qdrant collection '{coll}'")
+            logger.info(f"✅ Borrada colección completa Qdrant '{coll}'")
         else:
-            logger.warning(f"Qdrant collection '{coll}' does not exist")
+            logger.warning(f"Colección Qdrant '{coll}' no existe")
             points_count = 0
 
     except Exception as e:
@@ -1169,20 +1276,22 @@ def delete_all_files_from_topic(topic: str):
                 idx = index.open_dir(idx_path)
                 with idx.searcher() as searcher:
                     doc_count = searcher.doc_count()
-                logger.info(f"Found {doc_count} documents in Whoosh index '{idx_path}'")
+                logger.info(
+                    f"Encontrados {doc_count} documentos en índice Whoosh '{idx_path}'"
+                )
             except Exception:
                 doc_count = 0
                 logger.warning(
-                    f"Could not count documents in Whoosh index '{idx_path}'"
+                    f"No se pudieron contar documentos en índice Whoosh '{idx_path}'"
                 )
 
             # Borrar carpeta completa del índice
             import shutil
 
             shutil.rmtree(idx_path)
-            logger.info(f"✅ Deleted entire Whoosh index '{idx_path}'")
+            logger.info(f"✅ Borrado índice completo Whoosh '{idx_path}'")
         else:
-            logger.warning(f"Whoosh index '{idx_path}' does not exist")
+            logger.warning(f"Índice Whoosh '{idx_path}' no existe")
             doc_count = 0
 
     except Exception as e:
@@ -1207,7 +1316,7 @@ def delete_all_files_from_topic(topic: str):
         # También limpiar archivos fallidos de este topic
         failed_to_remove = []
         for file_path in list(state.state["failed"].keys()):
-            # Check if the file path belongs to this topic's directory
+            # Verificar si la ruta del archivo pertenece al directorio de este topic
             topic_dir = os.path.join(TOPIC_BASE_DIR, topic)
             if (
                 topic_dir in file_path
@@ -1216,35 +1325,39 @@ def delete_all_files_from_topic(topic: str):
                 failed_to_remove.append(file_path)
 
         state._save_state()
-        logger.info(f"✅ Removed {removed_count} processed files from state")
+        logger.info(f"✅ Removidos {removed_count} archivos procesados del estado")
         if failed_to_remove:
-            logger.info(f"✅ Removed {len(failed_to_remove)} failed files from state")
+            logger.info(
+                f"✅ Removidos {len(failed_to_remove)} archivos fallidos del estado"
+            )
 
     except Exception as e:
         logger.error(f"Error updating processing state: {e}", exc_info=True)
         return False
 
     # ============================================================
-    # RECOSNCTRUIR ESTRUCTURA VACÍA (para que esté listo para re-indexar)
+    # RECONSTRUIR ESTRUCTURA VACÍA (para que esté listo para re-indexar)
     # ============================================================
     try:
         # Recrear carpeta de Whoosh vacía
         ensure_whoosh(topic)
 
-        # Obtener dimensión del embedding model para este topic
+        # Obtener dimensión del modelo de embedding para este topic
         embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
         try:
             # Cargar modelo temporalmente para obtener dimensión
             temp_model = model_cache.get_model(embed_name, device="cpu")
             dims = temp_model.get_sentence_embedding_dimension()
-            logger.info(f"Embedding dimension for topic '{topic}': {dims}")
+            logger.info(f"Dimensión de embedding para topic '{topic}': {dims}")
 
             # Recrear colección de Qdrant vacía
             ensure_qdrant(topic, dims)
-            logger.info(f"✅ Recreated empty Qdrant collection '{coll}'")
+            logger.info(f"✅ Recreada colección vacía Qdrant '{coll}'")
         except Exception as e:
-            logger.warning(f"Could not recreate Qdrant collection: {e}")
-            logger.warning(f"Will be created automatically when first file is indexed")
+            logger.warning(f"No se pudo recrear colección Qdrant: {e}")
+            logger.warning(
+                f"Se creará automáticamente cuando se indexe el primer archivo"
+            )
 
     except Exception as e:
         logger.error(f"Error recreating empty structures: {e}", exc_info=True)
@@ -1314,12 +1427,14 @@ if __name__ == "__main__":
 
             topic = sys.argv[2]
 
-            print(f"⚠️  WARNING: This will delete ALL files from topic '{topic}'")
-            print(f"   This action cannot be undone!")
-            print(f"   Available topics: {', '.join(TOPIC_LABELS)}")
+            print(
+                f"⚠️  ADVERTENCIA: Esto borrará TODOS los archivos del topic '{topic}'"
+            )
+            print(f"   Esta acción no se puede deshacer!")
+            print(f"   Topics disponibles: {', '.join(TOPIC_LABELS)}")
 
             # Pedir confirmación
-            """ 
+            """
             try:
                 confirm = input(f"Type 'DELETE {topic.upper()}' to confirm: ").strip()
                 if confirm != f"DELETE {topic.upper()}":
@@ -1333,15 +1448,19 @@ if __name__ == "__main__":
             sys.exit(0 if success else 1)
 
         else:
-            print(f"Unknown command: {command}")
-            print("Available commands:")
-            print("  delete <topic> <pdf_path>     - Delete a specific PDF")
-            print("  delete-topic <topic>          - Delete ALL files from topic")
-            print("  (no command)                  - Scan and index all topics")
+            print(f"Comando desconocido: {command}")
+            print("Comandos disponibles:")
+            print("  delete <topic> <pdf_path>     - Borrar un PDF específico")
+            print(
+                "  delete-topic <topic>          - Borrar TODOS los archivos de un topic"
+            )
+            print(
+                "  (sin comando)                 - Escanear e indexar todos los topics"
+            )
             sys.exit(1)
 
     else:
-        # Default: scan y indexa
-        # Start watchdog to detect hung processes (glibc corruption, etc.)
+        # Default: escanear e indexar
+        # Iniciar watchdog para detectar procesos atascados (corrupción glibc, etc.)
         start_watchdog()
         initial_scan()

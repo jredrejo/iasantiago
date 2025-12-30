@@ -45,10 +45,10 @@ QDRANT_BATCH_SIZE = int(os.getenv("QDRANT_BATCH_SIZE", "100"))
 
 
 # ============================================================
-# TESSERACT OCR OPTIMIZATION
+# CONFIGURACIÓN DE TESSERACT OCR OPTIMIZACIÓN
 # ============================================================
 
-# Enable OpenMP for Tesseract (multi-threading)
+# Habilitar OpenMP para Tesseract (multi-threading)
 os.environ["OMP_NUM_THREADS"] = str(max(1, multiprocessing.cpu_count() - 2))
 os.environ["OMP_THREAD_LIMIT"] = str(multiprocessing.cpu_count())
 

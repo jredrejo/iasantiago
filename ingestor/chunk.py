@@ -1,29 +1,29 @@
 """
-chunk.py - Enhanced Version with Advanced Chunking and Page Validation
+chunk.py - Versión mejorada con chunking avanzado y validación de páginas
 Extrae: PDF, DOCX, PPTX (sin XLSX)
 Manejo defensivo de CUDA
-Enhanced chunking with NLTK + Hierarchical with heading tracking + Context-aware with same embedding model
-Enhanced page number validation and adaptive chunking strategies
+Chunking mejorado con NLTK + Jerárquico con seguimiento de encabezados + Context-aware con el mismo modelo de embedding
+Validación mejorada de números de página y estrategias de chunking adaptativo
 """
 
+import inspect
 import logging
 import os
 import re
 import sqlite3
 import ssl
-import torch
-import urllib.request
-import inspect
 import tempfile
+import urllib.request
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import nltk
 import numpy as np
 import pdfplumber
 import pypdf
+import torch
 from unstructured.partition.pdf import partition_pdf
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,19 @@ def call_heartbeat(context: str = "") -> None:
 
 
 # ============================================================
-# PDF PAGE COUNT CACHE (avoid redundant PDF opens)
+# CONFIGURACIÓN DE PROCESAMIENTO POR LOTES: Para PDFs grandes para prevenir bloqueos del servidor
+# ============================================================
+LARGE_PDF_BATCH_SIZE = 1000  # Process PDFs >1000 pages in batches
+
+
+# ============================================================
+# CACHÉ DE CONTEO DE PÁGINAS PDF (evitar aperturas redundantes de PDF)
 # ============================================================
 
 
 @lru_cache(maxsize=256)
 def get_pdf_total_pages(pdf_path: str) -> Optional[int]:
-    """Return total page count for a PDF, cached by file path."""
+    """Retorna conteo total de páginas para un PDF, cacheado por ruta de archivo."""
     try:
         with pdfplumber.open(pdf_path) as pdf:
             return len(pdf.pages)
@@ -71,9 +77,9 @@ def get_pdf_total_pages(pdf_path: str) -> Optional[int]:
         return None
 
 
-# Fix SSL issues for model downloads
+# Arreglar problemas SSL para descargas de modelos
 def setup_ssl_context():
-    """Setup SSL context to handle certificate issues"""
+    """Configurar contexto SSL para manejar problemas de certificados"""
     try:
         # Create unverified SSL context (use with caution)
         ssl._create_default_https_context = ssl._create_unverified_context
@@ -99,9 +105,9 @@ os.environ["UNSTRUCTURED_LANGUAGES"] = "spa,eng"  # Spanish primero, luego Engli
 os.environ["UNSTRUCTURED_FALLBACK_LANGUAGE"] = "eng"  # English si no se puede Spanish
 
 
-# Try to download punkt data with error handling
+# Intentar descargar datos punkt con manejo de errores
 def ensure_nltk_data():
-    """Ensure NLTK data is available with fallback options"""
+    """Asegurar que los datos NLTK estén disponibles con opciones de fallback"""
     try:
         # Check if punkt is already available
         nltk.data.find("tokenizers/punkt")
@@ -124,7 +130,7 @@ _cached_sent_tokenizer = None
 
 
 def get_sent_tokenizer():
-    """Get cached sentence tokenizer"""
+    """Obtener tokenizador de oraciones cacheado"""
     global _cached_sent_tokenizer
     if _cached_sent_tokenizer is None:
         try:
@@ -153,7 +159,7 @@ def get_sent_tokenizer():
 
 
 # ============================================================
-# GPU CONFIG FOR UNSTRUCTURED
+# CONFIGURACIÓN DE GPU PARA UNSTRUCTURED
 # ============================================================
 if os.getenv("UNSTRUCTURED_ENABLE_CUDA", "true").lower() == "true":
     os.environ.pop("UNSTRUCTURED_DISABLE_CUDA", None)
@@ -165,7 +171,7 @@ else:
 
 class AdvancedPageBoundaryDetector:
     """
-    Advanced page boundary detection using multiple techniques
+    Detección avanzada de límites de página usando múltiples técnicas
     """
 
     def __init__(self):
@@ -174,10 +180,10 @@ class AdvancedPageBoundaryDetector:
 
     def detect_boundaries(self, pdf_path: str) -> Dict[int, Dict[str, float]]:
         """
-        Detect page boundaries using multiple techniques:
-        - Visual analysis of PDF structure
-        - Text content markers
-        - PDF metadata
+        Detectar límites de página usando múltiples técnicas:
+        - Análisis visual de estructura PDF
+        - Marcadores de contenido de texto
+        - Metadatos PDF
         """
         boundaries = {}
 
@@ -199,7 +205,7 @@ class AdvancedPageBoundaryDetector:
         return boundaries
 
     def _get_text_top(self, page) -> float:
-        """Get the topmost text coordinate on a page"""
+        """Obtener la coordenada de texto más superior en una página"""
         try:
             words = page.extract_words()
             if words:
@@ -209,7 +215,7 @@ class AdvancedPageBoundaryDetector:
             return 0
 
     def _get_text_bottom(self, page) -> float:
-        """Get the bottommost text coordinate on a page"""
+        """Obtener la coordenada de texto más inferior en una página"""
         try:
             words = page.extract_words()
             if words:
@@ -220,7 +226,7 @@ class AdvancedPageBoundaryDetector:
 
     def assign_precise_page(self, elem, boundaries: Dict[int, Dict[str, float]]) -> int:
         """
-        Assign page number with higher precision using boundary information
+        Asignar número de página con mayor precisión usando información de límites
         """
         if not boundaries:
             return elem.get("page", 1)
@@ -253,8 +259,8 @@ class AdvancedPageBoundaryDetector:
 
 class ContextAwareChunker:
     """
-    Advanced chunking that maintains context across page boundaries
-    while preserving accurate page attribution
+    Chunking avanzado que mantiene contexto a través de límites de página
+    mientras preserva atribución precisa de página
     """
 
     def __init__(
@@ -281,7 +287,7 @@ class ContextAwareChunker:
         strategy: str = "adaptive",
     ) -> List[Dict[str, Any]]:
         """
-        Chunk document while preserving context and page accuracy
+        Dividir documento en chunks preservando contexto y precisión de página
         """
         boundaries = {}
         if (
@@ -325,7 +331,7 @@ class ContextAwareChunker:
         boundaries: Dict[int, Dict[str, float]],
         pdf_path: str = None,
     ) -> Dict[int, List[Dict]]:
-        """Group elements by page with enhanced page detection."""
+        """Agrupar elementos por página con detección de página mejorada."""
         page_groups = defaultdict(list)
 
         for elem in elements:
@@ -346,7 +352,7 @@ class ContextAwareChunker:
         return dict(page_groups)
 
     def _select_context_elements(self, prev_page_elements: List[Dict]) -> List[Dict]:
-        """Select relevant elements from previous page for context"""
+        """Seleccionar elementos relevantes de la página anterior para contexto"""
         headings = [
             e for e in prev_page_elements if e.get("type") in ["heading", "title"]
         ]
@@ -760,13 +766,13 @@ class ContextAwareChunker:
 
 
 class PageSequenceValidator:
-    """Validate and fix page number sequences"""
+    """Validar y corregir secuencias de números de página"""
 
     @staticmethod
     def validate_and_fix(chunks: list, total_pages: int = None) -> tuple[list, list]:
         """
-        Validate page sequence and attempt to fix issues
-        Returns: (fixed_chunks, issues_found)
+        Validar secuencia de páginas e intentar corregir problemas
+        Returns: (chunks_corregidos, problemas_encontrados)
         """
         if not chunks:
             return chunks, []
@@ -794,7 +800,7 @@ class PageSequenceValidator:
 
     @staticmethod
     def _detect_invalid_pages(pages: list) -> list:
-        """Detect invalid page numbers"""
+        """Detectar números de página inválidos"""
         issues = []
         for i, page in enumerate(pages):
             if not isinstance(page, int) or page < 1:
@@ -805,7 +811,7 @@ class PageSequenceValidator:
 
     @staticmethod
     def _detect_large_gaps(pages: list) -> list:
-        """Detect large gaps in page sequence"""
+        """Detectar huecos grandes en la secuencia de páginas"""
         issues = []
         if not pages:
             return issues
@@ -823,7 +829,7 @@ class PageSequenceValidator:
 
     @staticmethod
     def _detect_out_of_order(pages: list) -> list:
-        """Detect out-of-order pages"""
+        """Detectar páginas fuera de orden"""
         issues = []
 
         for i in range(1, len(pages)):
@@ -836,7 +842,7 @@ class PageSequenceValidator:
 
     @staticmethod
     def _detect_page_overflow(pages: list, total_pages: int) -> list:
-        """Detect pages that exceed the total page count"""
+        """Detectar páginas que exceden el conteo total de páginas"""
         issues = []
         for i, page in enumerate(pages):
             if isinstance(page, int) and page > total_pages:
@@ -847,7 +853,7 @@ class PageSequenceValidator:
 
     @staticmethod
     def _fix_page_numbers(chunks: list, pages: list, total_pages: int = None) -> list:
-        """Attempt to fix page number issues"""
+        """Intentar corregir problemas de números de página"""
         fixed_chunks = chunks.copy()
 
         # Fix 1: Replace invalid pages with sequential numbers
@@ -889,21 +895,23 @@ class PageSequenceValidator:
 
 
 class RobustPageExtractor:
-    """Multi-strategy page number extraction with validation"""
+    """Extracción de número de página con múltiples estrategias y validación"""
 
-    _cache = {}  # element cache
-    _pdf_layout_cache: Dict[str, List[float]] = {}  # pdf_path -> page heights cache
+    _cache = {}  # caché de elementos
+    _pdf_layout_cache: Dict[str, List[float]] = (
+        {}
+    )  # pdf_path -> caché de alturas de página
 
     @staticmethod
     def extract_page_number(elem, pdf_path: str = None, fallback_page: int = 1) -> int:
         """
-        Extract page number with multiple validation strategies
-        Priority order:
-        1. Element metadata (page_number)
-        2. Element coordinates (for PDFs)
-        3. Sequential inference from previous elements
-        4. Text content analysis (page markers)
-        5. Fallback to default
+        Extraer número de página con múltiples estrategias de validación
+        Orden de prioridad:
+        1. Metadatos del elemento (page_number)
+        2. Coordenadas del elemento (para PDFs)
+        3. Inferencia secuencial de elementos anteriores
+        4. Análisis de contenido de texto (marcadores de página)
+        5. Fallback al valor por defecto
         """
         elem_id = id(elem)
         if elem_id in RobustPageExtractor._cache:
@@ -964,7 +972,7 @@ class RobustPageExtractor:
 
     @staticmethod
     def _extract_from_coordinates(elem, pdf_path: str = None) -> Optional[int]:
-        """Extract page from element coordinates (uses cached PDF layout for speed)."""
+        """Extraer página de coordenadas del elemento (usa layout PDF cacheado para velocidad)."""
         try:
             if not hasattr(elem, "metadata") or not hasattr(
                 elem.metadata, "coordinates"
@@ -1073,7 +1081,7 @@ def pdf_to_chunks_with_enhanced_validation(
     detect_visual_boundaries: bool = True,
 ) -> List[Dict[str, Any]]:
     """
-    Enhanced PDF to chunks conversion with improved page validation and chunking
+    Conversión mejorada de PDF a chunks con validación de página y chunking mejorados
     """
     pdf_path_p = Path(pdf_path)
 
@@ -1122,8 +1130,8 @@ def pdf_to_chunks_with_enhanced_validation(
 
 def check_pdf_has_text(pdf_path: Union[Path, str]) -> bool:
     """
-    Check if PDF likely has extractable text using multiple methods.
-    Accepts Path or str for call-site compatibility.
+    Verificar si el PDF probablemente tiene texto extraible usando múltiples métodos.
+    Acepta Path o str para compatibilidad con el sitio de llamada.
     """
     try:
         pdf_path = Path(pdf_path)
@@ -1136,14 +1144,14 @@ def check_pdf_has_text(pdf_path: Union[Path, str]) -> bool:
                 page = pdf_reader.pages[i]
                 text = page.extract_text()
                 if text and len(text.strip()) > 50:
-                    logger.info(f"pypdf detected text on page {i+1}")
+                    logger.info(f"pypdf detected text on page {i + 1}")
                     return True
 
         with pdfplumber.open(pdf_path) as pdf:
             for i, page in enumerate(pdf.pages[:10]):
                 text = page.extract_text()
                 if text and len(text.strip()) > 50:
-                    logger.info(f"pdfplumber detected text on page {i+1}")
+                    logger.info(f"pdfplumber detected text on page {i + 1}")
                     return True
 
         logger.info("No extractable text detected in PDF")
@@ -1155,7 +1163,7 @@ def check_pdf_has_text(pdf_path: Union[Path, str]) -> bool:
 
 def process_elements_to_chunks(elements: List[Any]) -> List[Dict[str, Any]]:
     """
-    Process unstructured elements into chunks
+    Procesar elementos no estructurados en chunks
     """
     chunks = []
 
@@ -1182,36 +1190,69 @@ def process_elements_to_chunks(elements: List[Any]) -> List[Dict[str, Any]]:
 
 
 def extract_text_with_multiple_methods(
-    pdf_path: Union[Path, str]
+    pdf_path: Union[Path, str],
 ) -> List[Dict[str, Any]]:
     """
-    Hybrid extraction: pypdf for text (fast) + pdfplumber for tables.
-    All methods preserve accurate page numbers.
-    Fallback to unstructured if both fail.
+    Extracción híbrida: pypdf para texto (rápido) + pdfplumber para tablas.
+    Todos los métodos preservan números de página precisos.
+    Fallback a unstructured si ambos fallan.
     """
     pdf_path = Path(pdf_path)
     total_pages = get_pdf_total_pages(str(pdf_path))
 
     # 1. Hybrid approach: pypdf (text) + pdfplumber (tables)
+    # Use batch processing for large PDFs to prevent server stalls
+    is_large_pdf = total_pages is not None and total_pages > LARGE_PDF_BATCH_SIZE
     try:
         elements = []
 
         # 1a. Fast text extraction with pypdf
-        logger.info("Trying pypdf (fastest) for text...")
-        with open(pdf_path, "rb") as file:
-            pdf_reader = pypdf.PdfReader(file)
+        if is_large_pdf:
+            total_batches = (
+                total_pages + LARGE_PDF_BATCH_SIZE - 1
+            ) // LARGE_PDF_BATCH_SIZE
+            logger.info(
+                f"Large PDF detected ({total_pages} pages), processing with pypdf in {total_batches} batches..."
+            )
+            for batch_num, batch_start in enumerate(
+                range(0, total_pages, LARGE_PDF_BATCH_SIZE), 1
+            ):
+                batch_end = min(batch_start + LARGE_PDF_BATCH_SIZE, total_pages)
+                call_heartbeat(f"pypdf_batch_{batch_start + 1}-{batch_end}")
+                logger.info(
+                    f"pypdf batch {batch_num}/{total_batches}: pages {batch_start + 1}-{batch_end}"
+                )
 
-            for i, page in enumerate(pdf_reader.pages):
-                text = page.extract_text()
-                if text and len(text.strip()) > 10:
-                    elements.append(
-                        {
-                            "type": "text",
-                            "text": text,
-                            "page": i + 1,
-                            "source": "pypdf",
-                        }
-                    )
+                with open(pdf_path, "rb") as file:
+                    pdf_reader = pypdf.PdfReader(file)
+                    for i in range(batch_start, batch_end):
+                        page = pdf_reader.pages[i]
+                        text = page.extract_text()
+                        if text and len(text.strip()) > 10:
+                            elements.append(
+                                {
+                                    "type": "text",
+                                    "text": text,
+                                    "page": i + 1,  # Correct 1-indexed page number
+                                    "source": "pypdf",
+                                }
+                            )
+        else:
+            logger.info("Trying pypdf (fastest) for text...")
+            with open(pdf_path, "rb") as file:
+                pdf_reader = pypdf.PdfReader(file)
+
+                for i, page in enumerate(pdf_reader.pages):
+                    text = page.extract_text()
+                    if text and len(text.strip()) > 10:
+                        elements.append(
+                            {
+                                "type": "text",
+                                "text": text,
+                                "page": i + 1,
+                                "source": "pypdf",
+                            }
+                        )
 
         # 1b. Table extraction with pdfplumber (only if text was found)
         if elements:
@@ -1220,8 +1261,136 @@ def extract_text_with_multiple_methods(
             )
             table_count = 0
             try:
+                if is_large_pdf:
+                    for batch_num, batch_start in enumerate(
+                        range(0, total_pages, LARGE_PDF_BATCH_SIZE), 1
+                    ):
+                        batch_end = min(batch_start + LARGE_PDF_BATCH_SIZE, total_pages)
+                        call_heartbeat(
+                            f"pdfplumber_tables_batch_{batch_start + 1}-{batch_end}"
+                        )
+                        logger.info(
+                            f"pdfplumber tables batch {batch_num}/{total_batches}: pages {batch_start + 1}-{batch_end}"
+                        )
+
+                        with pdfplumber.open(pdf_path) as pdf:
+                            for i in range(batch_start, batch_end):
+                                page = pdf.pages[i]
+                                try:
+                                    for table in page.extract_tables():
+                                        if table:
+                                            processed_table = []
+                                            for row in table:
+                                                processed_row = [
+                                                    (
+                                                        str(cell)
+                                                        if cell is not None
+                                                        else ""
+                                                    )
+                                                    for cell in row
+                                                ]
+                                                processed_table.append(processed_row)
+
+                                            table_text = "\n".join(
+                                                [
+                                                    "\t".join(row)
+                                                    for row in processed_table
+                                                ]
+                                            )
+                                            if table_text.strip():
+                                                elements.append(
+                                                    {
+                                                        "type": "table",
+                                                        "text": table_text,
+                                                        "page": i
+                                                        + 1,  # Correct 1-indexed page number
+                                                        "source": "pdfplumber",
+                                                    }
+                                                )
+                                                table_count += 1
+                                except Exception as table_error:
+                                    logger.warning(
+                                        f"Error extracting table from page {i + 1}: {table_error}"
+                                    )
+                                    continue
+                else:
+                    with pdfplumber.open(pdf_path) as pdf:
+                        for i, page in enumerate(pdf.pages):
+                            try:
+                                for table in page.extract_tables():
+                                    if table:
+                                        processed_table = []
+                                        for row in table:
+                                            processed_row = [
+                                                str(cell) if cell is not None else ""
+                                                for cell in row
+                                            ]
+                                            processed_table.append(processed_row)
+
+                                        table_text = "\n".join(
+                                            ["\t".join(row) for row in processed_table]
+                                        )
+                                        if table_text.strip():
+                                            elements.append(
+                                                {
+                                                    "type": "table",
+                                                    "text": table_text,
+                                                    "page": i + 1,
+                                                    "source": "pdfplumber",
+                                                }
+                                            )
+                                            table_count += 1
+                            except Exception as table_error:
+                                logger.warning(
+                                    f"Error extracting table from page {i + 1}: {table_error}"
+                                )
+                                continue
+            except Exception as e:
+                logger.warning(f"pdfplumber table extraction failed: {e}")
+
+            logger.info(
+                f"Extracted {len(elements)} elements ({len(elements) - table_count} text, {table_count} tables)"
+            )
+            return elements
+
+    except Exception as e:
+        logger.warning(f"Hybrid pypdf+pdfplumber failed: {e}")
+
+    # 2. Fallback: pdfplumber for both text and tables
+    try:
+        elements = []
+        if is_large_pdf:
+            total_batches = (
+                total_pages + LARGE_PDF_BATCH_SIZE - 1
+            ) // LARGE_PDF_BATCH_SIZE
+            logger.info(
+                f"Trying pdfplumber fallback for large PDF ({total_pages} pages) in {total_batches} batches..."
+            )
+            for batch_num, batch_start in enumerate(
+                range(0, total_pages, LARGE_PDF_BATCH_SIZE), 1
+            ):
+                batch_end = min(batch_start + LARGE_PDF_BATCH_SIZE, total_pages)
+                call_heartbeat(
+                    f"pdfplumber_fallback_batch_{batch_start + 1}-{batch_end}"
+                )
+                logger.info(
+                    f"pdfplumber fallback batch {batch_num}/{total_batches}: pages {batch_start + 1}-{batch_end}"
+                )
+
                 with pdfplumber.open(pdf_path) as pdf:
-                    for i, page in enumerate(pdf.pages):
+                    for i in range(batch_start, batch_end):
+                        page = pdf.pages[i]
+                        text = page.extract_text()
+                        if text and len(text.strip()) > 10:
+                            elements.append(
+                                {
+                                    "type": "text",
+                                    "text": text,
+                                    "page": i + 1,  # Correct 1-indexed page number
+                                    "source": "pdfplumber",
+                                }
+                            )
+
                         try:
                             for table in page.extract_tables():
                                 if table:
@@ -1236,80 +1405,66 @@ def extract_text_with_multiple_methods(
                                     table_text = "\n".join(
                                         ["\t".join(row) for row in processed_table]
                                     )
-                                    if table_text.strip():
-                                        elements.append(
-                                            {
-                                                "type": "table",
-                                                "text": table_text,
-                                                "page": i + 1,
-                                                "source": "pdfplumber",
-                                            }
-                                        )
-                                        table_count += 1
+                                    elements.append(
+                                        {
+                                            "type": "table",
+                                            "text": table_text,
+                                            "page": i
+                                            + 1,  # Correct 1-indexed page number
+                                            "source": "pdfplumber",
+                                        }
+                                    )
                         except Exception as table_error:
                             logger.warning(
-                                f"Error extracting table from page {i+1}: {table_error}"
+                                f"Error extracting table from page {i + 1}: {table_error}"
                             )
                             continue
-            except Exception as e:
-                logger.warning(f"pdfplumber table extraction failed: {e}")
+        else:
+            logger.info("Trying pdfplumber for text+tables...")
+            with pdfplumber.open(pdf_path) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    text = page.extract_text()
+                    if text and len(text.strip()) > 10:
+                        elements.append(
+                            {
+                                "type": "text",
+                                "text": text,
+                                "page": i + 1,
+                                "source": "pdfplumber",
+                            }
+                        )
 
-            logger.info(
-                f"Extracted {len(elements)} elements ({len(elements) - table_count} text, {table_count} tables)"
-            )
+                    try:
+                        for table in page.extract_tables():
+                            if table:
+                                processed_table = []
+                                for row in table:
+                                    processed_row = [
+                                        str(cell) if cell is not None else ""
+                                        for cell in row
+                                    ]
+                                    processed_table.append(processed_row)
+
+                                table_text = "\n".join(
+                                    ["\t".join(row) for row in processed_table]
+                                )
+                                elements.append(
+                                    {
+                                        "type": "table",
+                                        "text": table_text,
+                                        "page": i + 1,
+                                        "source": "pdfplumber",
+                                    }
+                                )
+                    except Exception as table_error:
+                        logger.warning(
+                            f"Error extracting table from page {i + 1}: {table_error}"
+                        )
+                        continue
+
+        if elements:
+            logger.info(f"pdfplumber extracted {len(elements)} elements")
             return elements
-
-    except Exception as e:
-        logger.warning(f"Hybrid pypdf+pdfplumber failed: {e}")
-
-    # 2. Fallback: pdfplumber for both text and tables
-    try:
-        logger.info("Trying pdfplumber for text+tables...")
-        with pdfplumber.open(pdf_path) as pdf:
-            elements = []
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text()
-                if text and len(text.strip()) > 10:
-                    elements.append(
-                        {
-                            "type": "text",
-                            "text": text,
-                            "page": i + 1,
-                            "source": "pdfplumber",
-                        }
-                    )
-
-                try:
-                    for table in page.extract_tables():
-                        if table:
-                            processed_table = []
-                            for row in table:
-                                processed_row = [
-                                    str(cell) if cell is not None else ""
-                                    for cell in row
-                                ]
-                                processed_table.append(processed_row)
-
-                            table_text = "\n".join(
-                                ["\t".join(row) for row in processed_table]
-                            )
-                            elements.append(
-                                {
-                                    "type": "table",
-                                    "text": table_text,
-                                    "page": i + 1,
-                                    "source": "pdfplumber",
-                                }
-                            )
-                except Exception as table_error:
-                    logger.warning(
-                        f"Error extracting table from page {i+1}: {table_error}"
-                    )
-                    continue
-
-            if elements:
-                logger.info(f"pdfplumber extracted {len(elements)} elements")
-                return elements
     except Exception as e:
         logger.warning(f"pdfplumber failed: {e}")
 
@@ -1335,7 +1490,7 @@ def extract_text_with_multiple_methods(
 
 
 class EasyOCRProcessor:
-    """GPU-accelerated OCR using EasyOCR with PyTorch backend"""
+    """OCR acelerado por GPU usando EasyOCR con backend PyTorch"""
 
     _reader_cache = None
     _initialization_attempted = False
@@ -1452,8 +1607,9 @@ class EasyOCRProcessor:
             return ""
 
     def process_pdf_page_batch(self, pdf_path: str, page_nums: list) -> dict:
-        from pdf2image import convert_from_path
         import tempfile as _tempfile
+
+        from pdf2image import convert_from_path
 
         logger.debug(
             f"[EASYOCR] Processing pages {page_nums} for {os.path.basename(pdf_path)}"
@@ -1502,7 +1658,7 @@ class EasyOCRProcessor:
 
 
 def _partition_pdf_compat(filename: str, **kwargs):
-    """Call unstructured.partition.pdf.partition_pdf passing only supported kwargs."""
+    """Llamar a unstructured.partition.pdf.partition_pdf pasando solo kwargs soportados."""
     from unstructured.partition.pdf import partition_pdf as _partition_pdf
 
     sig = inspect.signature(_partition_pdf)
@@ -1535,19 +1691,19 @@ def fast_partition_pdf(
     pdf_path: str,
     strategy: str = "auto",
     *,
-    pages: Optional[List[int]] = None,  # 1-indexed page numbers
-    enable_tables: bool = False,  # tables are expensive; default OFF (speed)
+    pages: Optional[List[int]] = None,  # números de página 1-indexados
+    enable_tables: bool = False,  # tablas son costosas; default OFF (velocidad)
     hi_res_model_name: Optional[str] = None,
     total_pages: Optional[int] = None,
 ) -> List[Any]:
     """
-    Speed + page-accuracy optimized wrapper around unstructured.partition_pdf.
+    Wrapper optimizado para velocidad + precisión de página alrededor de unstructured.partition_pdf.
 
     Fixes:
-      - supports page restriction (pages=...) to avoid reprocessing whole PDFs in batches
-      - avoids table inference by default (enable_tables=False) for speed
-      - filters kwargs to what the installed unstructured version supports
-      - when slicing PDFs, remaps page_number to original numbering if needed
+      - soporta restricción de páginas (pages=...) para evitar reprocesar PDFs completos en batches
+      - evita inferencia de tablas por defecto (enable_tables=False) para velocidad
+      - filtra kwargs a lo soportado por la versión de unstructured instalada
+      - al cortar PDFs, remapea page_number a numeración original si es necesario
     """
     if total_pages is None:
         total_pages = get_pdf_total_pages(str(pdf_path))
@@ -1659,12 +1815,12 @@ def extract_elements_best_effort(
     total_pages: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Unified extraction entrypoint (Fixes #1 and #5):
-      - If the PDF has extractable text: run ONE hi_res pass (tables off) and accept if sufficient.
-      - Otherwise: run OCR pipeline (EasyOCR -> Tesseract) once.
-      - Validate page numbers once at the end.
+    Punto de entrada de extracción unificado (Fixes #1 y #5):
+      - Si el PDF tiene texto extraible: ejecutar UN pase hi_res (tables off) y aceptar si es suficiente.
+      - De lo contrario: ejecutar pipeline OCR (EasyOCR -> Tesseract) una vez.
+      - Validar números de página una vez al final.
 
-    Priority: page accuracy first, then speed.
+    Prioridad: precisión de página primero, luego velocidad.
     """
     if total_pages is None:
         total_pages = get_pdf_total_pages(str(pdf_path))
@@ -1719,14 +1875,14 @@ def extract_elements_best_effort(
 
 def batch_unstructured_processing(pdf_path: str) -> List[Any]:
     """
-    Backwards-compatible entrypoint.
+    Punto de entrada compatible con versiones anteriores.
 
     Fixes:
-      - removes per-batch trial-and-error (Fix #1)
-      - avoids repeated PDF opens for page count (Fix #3)
-      - avoids validating per batch (Fix #4)
+      - elimina prueba y error por batch (Fix #1)
+      - evita aperturas repetidas de PDF para conteo de páginas (Fix #3)
+      - evita validar por batch (Fix #4)
 
-    Now routes through extract_elements_best_effort().
+    Ahora ruta a través de extract_elements_best_effort().
     """
     return extract_elements_best_effort(str(pdf_path))
 
@@ -1737,16 +1893,16 @@ def extract_elements_from_pdf_gpu(
     total_pages: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
-    OCR extraction pipeline with accurate page numbers and minimal redundancy.
+    Pipeline de extracción OCR con números de página precisos y redundancia mínima.
 
     Fixes:
-      - uses cached page count (Fix #3)
-      - avoids redundant strategy attempts (Fix #1)
-      - validates page numbers once at the end (Fix #4)
+      - usa conteo de páginas cacheado (Fix #3)
+      - evita intentos de estrategias redundantes (Fix #1)
+      - valida números de página una vez al final (Fix #4)
 
-    Behavior:
-      - EasyOCR (GPU) if available
-      - Fallback to Tesseract via unstructured ocr_only
+    Comportamiento:
+      - EasyOCR (GPU) si está disponible
+      - Fallback a Tesseract vía unstructured ocr_only
     """
     if total_pages is None:
         total_pages = get_pdf_total_pages(str(pdf_path))
