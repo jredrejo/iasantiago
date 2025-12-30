@@ -14,3 +14,5 @@ test/
 topics/
 .beads/
 .vscode/
+*.pyc
+*/__pycache__/*
