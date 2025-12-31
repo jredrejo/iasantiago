@@ -66,9 +66,7 @@ async def with_retry(
                 raise
 
             # Calcular tiempo de espera con backoff exponencial
-            tiempo_espera = min(
-                config.base_delay * (2**intento), config.max_delay
-            )
+            tiempo_espera = min(config.base_delay * (2**intento), config.max_delay)
 
             logger.warning(
                 f"Intento {intento + 1}/{config.max_retries} de '{operation_name}' "
@@ -122,9 +120,7 @@ def sync_with_retry(
                 )
                 raise
 
-            tiempo_espera = min(
-                config.base_delay * (2**intento), config.max_delay
-            )
+            tiempo_espera = min(config.base_delay * (2**intento), config.max_delay)
 
             logger.warning(
                 f"Intento {intento + 1}/{config.max_retries} de '{operation_name}' "

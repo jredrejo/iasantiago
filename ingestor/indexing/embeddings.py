@@ -63,7 +63,9 @@ def validate_and_fix_vectors(
 
         # Verificar dimensión
         if len(vec) != dims:
-            logger.warning(f"Vector {i} tiene dimensión incorrecta: {len(vec)} != {dims}")
+            logger.warning(
+                f"Vector {i} tiene dimensión incorrecta: {len(vec)} != {dims}"
+            )
             invalid_count += 1
             # Rellenar o truncar
             if len(vec) < dims:

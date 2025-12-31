@@ -219,7 +219,9 @@ class QdrantService:
             points_count = collection_info.points_count
 
             self.client.delete_collection(collection_name=coll)
-            logger.info(f"[QDRANT] Eliminada colección '{coll}' ({points_count} puntos)")
+            logger.info(
+                f"[QDRANT] Eliminada colección '{coll}' ({points_count} puntos)"
+            )
             return True
         else:
             logger.warning(f"[QDRANT] Colección '{coll}' no existe")

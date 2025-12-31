@@ -207,3 +207,58 @@ def update_heartbeat(current_file: str = "") -> None:
 def start_watchdog() -> None:
     """Inicia el hilo watchdog (compatibilidad hacia atrás)."""
     get_heartbeat_manager().start_watchdog()
+
+
+class BackgroundHeartbeat:
+    """
+    Context manager que actualiza el heartbeat en segundo plano.
+
+    Útil para operaciones muy largas donde no es posible llamar
+    a call_heartbeat() periódicamente (ej. EasyOCR readtext).
+
+    Uso:
+        with BackgroundHeartbeat("procesando_ocr_pagina_42", interval=30):
+            resultado = operacion_muy_larga()
+    """
+
+    def __init__(self, context: str, interval: float = 30.0):
+        """
+        Args:
+            context: Contexto para el heartbeat
+            interval: Intervalo en segundos entre actualizaciones
+        """
+        self._context = context
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _heartbeat_loop(self) -> None:
+        """Hilo que actualiza heartbeat periódicamente."""
+        while not self._stop_event.wait(self._interval):
+            update_heartbeat(self._context)
+            call_heartbeat(self._context)
+
+    def __enter__(self) -> "BackgroundHeartbeat":
+        """Inicia el hilo de heartbeat."""
+        # Actualizar inmediatamente
+        update_heartbeat(self._context)
+        call_heartbeat(self._context)
+
+        # Iniciar hilo de fondo
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name=f"bg-heartbeat-{self._context[:20]}",
+        )
+        self._thread.start()
+        logger.debug(f"[HEARTBEAT] Background heartbeat iniciado: {self._context}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Detiene el hilo de heartbeat."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        logger.debug(f"[HEARTBEAT] Background heartbeat detenido: {self._context}")
+        return None

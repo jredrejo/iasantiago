@@ -83,8 +83,12 @@ class ModelCache:
                 logger.info(f"Embedder {model_name} cargado exitosamente")
 
             except Exception as e:
-                logger.error(f"Error al cargar embedder {model_name}: {e}", exc_info=True)
-                raise RuntimeError(f"No se pudo cargar el modelo de embedding {model_name}: {e}")
+                logger.error(
+                    f"Error al cargar embedder {model_name}: {e}", exc_info=True
+                )
+                raise RuntimeError(
+                    f"No se pudo cargar el modelo de embedding {model_name}: {e}"
+                )
 
         return cls._embedders[model_name]
 

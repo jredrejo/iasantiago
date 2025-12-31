@@ -179,7 +179,9 @@ class ExtractionCache:
             if self._cache_file.exists():
                 with open(self._cache_file, "r") as f:
                     self._cache = json.load(f)
-                logger.info(f"[CACHE] Cargadas {len(self._cache)} extracciones en caché")
+                logger.info(
+                    f"[CACHE] Cargadas {len(self._cache)} extracciones en caché"
+                )
         except Exception as e:
             logger.warning(f"[CACHE] Error al cargar caché: {e}")
             self._cache = {}

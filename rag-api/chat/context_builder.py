@@ -77,7 +77,9 @@ Usa este contexto para responder las preguntas del usuario. Siempre cita las fue
             )
             enhanced = self._truncate_system_prompt(context_text, max_tokens)
             new_tokens = self.count_tokens(enhanced)
-            logger.info(f"System prompt truncado: {current_tokens} -> {new_tokens} tokens")
+            logger.info(
+                f"System prompt truncado: {current_tokens} -> {new_tokens} tokens"
+            )
 
         return enhanced
 
@@ -117,10 +119,12 @@ Responde usando solo información del contexto. Cita las fuentes con formato: [a
         messages = []
 
         # 1. System prompt
-        messages.append({
-            "role": "system",
-            "content": enhanced_system_prompt,
-        })
+        messages.append(
+            {
+                "role": "system",
+                "content": enhanced_system_prompt,
+            }
+        )
 
         # 2. Historial de conversación (sin mensajes system del usuario)
         for msg in user_messages:
@@ -132,10 +136,12 @@ Responde usando solo información del contexto. Cita las fuentes con formato: [a
                 content = msg.get("content", "")
 
             if role != "system":
-                messages.append({
-                    "role": role,
-                    "content": content,
-                })
+                messages.append(
+                    {
+                        "role": role,
+                        "content": content,
+                    }
+                )
 
         logger.info(
             f"Mensajes construidos: {len(messages)} "
@@ -152,9 +158,7 @@ Responde usando solo información del contexto. Cita las fuentes con formato: [a
     ):
         """Log del estado del contexto RAG"""
         if not context_text or context_text == no_context_message:
-            logger.warning(
-                "SIN contexto RAG disponible - modelo en riesgo de alucinar"
-            )
+            logger.warning("SIN contexto RAG disponible - modelo en riesgo de alucinar")
         else:
             logger.info(f"Contexto proporcionado: {num_chunks} chunks")
             logger.debug(f"Preview contexto: {context_text[:200]}...")

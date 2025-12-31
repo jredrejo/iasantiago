@@ -222,7 +222,9 @@ class ExtractionPipeline:
         total_chars = sum(len(e.text.strip()) for e in elements)
 
         # Usar umbral más bajo para el último extractor (último recurso)
-        min_chars_threshold = self.min_chars_last_resort if is_last_resort else self.min_chars
+        min_chars_threshold = (
+            self.min_chars_last_resort if is_last_resort else self.min_chars
+        )
 
         if total_chars < min_chars_threshold:
             logger.info(
@@ -261,7 +263,9 @@ class ExtractionPipeline:
                 page = 1
 
             if total_pages and page > total_pages:
-                issues.append(f"Elemento {i}: Página {page} -> {total_pages} (ajustado)")
+                issues.append(
+                    f"Elemento {i}: Página {page} -> {total_pages} (ajustado)"
+                )
                 page = total_pages
 
             # Crear nuevo elemento con página validada
@@ -277,7 +281,9 @@ class ExtractionPipeline:
             )
 
         if issues:
-            logger.info(f"[PIPELINE] Corregidos {len(issues)} problemas de número de página")
+            logger.info(
+                f"[PIPELINE] Corregidos {len(issues)} problemas de número de página"
+            )
 
         return validated
 

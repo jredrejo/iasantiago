@@ -106,7 +106,9 @@ def _execute_search(
     query_for_embedding = prepare_query_for_retrieval(query, embed_name)
 
     # Generar embedding
-    q_vec = embedder.encode([query_for_embedding], normalize_embeddings=True)[0].tolist()
+    q_vec = embedder.encode([query_for_embedding], normalize_embeddings=True)[
+        0
+    ].tolist()
 
     # Búsqueda densa
     dense_hits = search_dense(topic, q_vec, dense_k)
@@ -188,7 +190,9 @@ def hybrid_retrieve_enhanced(
     merged = deduplicate_chunks(merged)
 
     # Límite por archivo según modo
-    max_per_file = MAX_CHUNKS_PER_FILE_GENERATIVE if is_generative else MAX_CHUNKS_PER_FILE
+    max_per_file = (
+        MAX_CHUNKS_PER_FILE_GENERATIVE if is_generative else MAX_CHUNKS_PER_FILE
+    )
     mode_name = "GENERATIVO" if is_generative else "RESPUESTA"
     logger.info(f"[HYBRID] Usando max_per_file={max_per_file} (modo {mode_name})")
 
@@ -224,7 +228,9 @@ def bm25_only_enhanced(
     hits = bm25_search_safe(BM25_BASE_DIR, topic, query, final_topk * 3)
 
     # Límite por archivo según modo
-    max_per_file = MAX_CHUNKS_PER_FILE_GENERATIVE if is_generative else MAX_CHUNKS_PER_FILE
+    max_per_file = (
+        MAX_CHUNKS_PER_FILE_GENERATIVE if is_generative else MAX_CHUNKS_PER_FILE
+    )
     mode_name = "GENERATIVO" if is_generative else "RESPUESTA"
     logger.info(f"[BM25] Usando max_per_file={max_per_file} (modo {mode_name})")
 
@@ -318,7 +324,9 @@ def choose_retrieval_enhanced(
         }
     else:
         logger.info(f"Query normal ({q_tokens} tokens) - usando Hybrid")
-        results, meta = hybrid_retrieve_enhanced(topic, query, final_topk, is_generative)
+        results, meta = hybrid_retrieve_enhanced(
+            topic, query, final_topk, is_generative
+        )
         meta["mode"] = "hybrid"
         meta["topk"] = final_topk
         meta["original_language"] = detected_lang
@@ -360,7 +368,9 @@ def rerank_passages(
     # Recortar si se especificó topk
     if rerank_topk is not None:
         reranked = reranked[:rerank_topk]
-        logger.info(f"[RERANK] Reordenados {len(passages)} passages, retornando top {rerank_topk}")
+        logger.info(
+            f"[RERANK] Reordenados {len(passages)} passages, retornando top {rerank_topk}"
+        )
     else:
         logger.info(f"[RERANK] Reordenados {len(passages)} passages, retornando todos")
 
@@ -444,7 +454,9 @@ def debug_retrieval(topic: str, query: str) -> dict:
             files_merged[file_path] = 0
         files_merged[file_path] += 1
 
-    logger.info(f"\nDespués del Merge: {len(merged)} chunks de {len(files_merged)} archivos")
+    logger.info(
+        f"\nDespués del Merge: {len(merged)} chunks de {len(files_merged)} archivos"
+    )
 
     logger.info("=" * 80 + "\n")
 

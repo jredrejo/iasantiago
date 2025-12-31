@@ -110,10 +110,7 @@ class TokenCalculator:
             )
 
         # Usar el mínimo entre lo deseado y lo disponible
-        max_tokens = max(
-            self.min_response_tokens,
-            min(desired, available)
-        )
+        max_tokens = max(self.min_response_tokens, min(desired, available))
 
         is_truncated = max_tokens < desired
 
