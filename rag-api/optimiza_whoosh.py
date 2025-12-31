@@ -8,7 +8,7 @@ docker exec -it rag-api python /app/optimiza_whoosh.py
 
 import os
 from whoosh import index
-from settings import BM25_BASE_DIR, TOPIC_LABELS
+from config.settings import BM25_BASE_DIR, TOPIC_LABELS
 import logging
 
 logging.basicConfig(level=logging.INFO)
