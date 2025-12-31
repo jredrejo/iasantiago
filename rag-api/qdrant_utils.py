@@ -1,7 +1,7 @@
 from qdrant_client import QdrantClient, models
 from typing import List, Dict, Any
 import hashlib
-from settings import QDRANT_URL
+from config.settings import QDRANT_URL
 
 import logging
 

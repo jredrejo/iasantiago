@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 try:
     from qdrant_utils import client, topic_collection, get_collection_stats
     from retrieval import debug_retrieval
-    from settings import TOPIC_LABELS
+    from config.settings import TOPIC_LABELS
 
     logger.info("✅ Imports exitosos")
 except ImportError as e:
