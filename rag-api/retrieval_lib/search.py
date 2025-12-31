@@ -113,7 +113,9 @@ def execute_hybrid_search(
     query_for_embedding = prepare_query_for_retrieval(query, embed_model_name)
 
     # Generar embedding del query
-    q_vec = embedder.encode([query_for_embedding], normalize_embeddings=True)[0].tolist()
+    q_vec = embedder.encode([query_for_embedding], normalize_embeddings=True)[
+        0
+    ].tolist()
 
     # Búsqueda densa
     dense_hits = search_dense_fn(topic, q_vec, dense_k)
@@ -180,7 +182,9 @@ def count_query_tokens(query: str) -> int:
     return len(query.strip().split())
 
 
-def soft_trim_context(chunks: List[Dict], token_limit: int, count_tokens_fn) -> List[Dict]:
+def soft_trim_context(
+    chunks: List[Dict], token_limit: int, count_tokens_fn
+) -> List[Dict]:
     """
     Recorta chunks para no exceder el límite de tokens.
 

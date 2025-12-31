@@ -161,7 +161,9 @@ class ProcessingState:
 
     def reset(self) -> None:
         """Reinicia todo el estado."""
-        logger.warning("[STATE] Reiniciando estado de procesamiento - se reescanearán todos los archivos")
+        logger.warning(
+            "[STATE] Reiniciando estado de procesamiento - se reescanearán todos los archivos"
+        )
         self.state = self._create_empty_state()
         self._save_state()
 

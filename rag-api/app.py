@@ -27,7 +27,11 @@ from config.settings import (
     MIN_RESPONSE_TOKENS,
 )
 from core.vllm_client import get_vllm_client
-from chat.intent import detect_generative_intent, load_system_prompt, get_last_user_message
+from chat.intent import (
+    detect_generative_intent,
+    load_system_prompt,
+    get_last_user_message,
+)
 from chat.token_calculator import TokenCalculator
 from chat.context_builder import ContextBuilder
 from retrieval import (
@@ -206,29 +210,31 @@ async def chat_completions(
     context_builder.log_context_status(context_text, len(retrieved))
 
     # 7. Telemetría
-    telemetry_log({
-        "query": user_msg,
-        "original_language": meta.get("original_language"),
-        "translated_query": (
-            meta.get("original_query")
-            if meta.get("original_language") != "en"
-            else None
-        ),
-        "topic": topic,
-        "mode": meta.get("mode"),
-        "num_messages": len(req.messages),
-        "dense_k": meta.get("dense_k"),
-        "bm25_k": meta.get("bm25_k"),
-        "final_topk": meta.get("final_topk"),
-        "retrieved": [
-            {
-                "file_path": r["file_path"],
-                "page": r["page"],
-                "chunk_id": r["chunk_id"],
-            }
-            for r in retrieved
-        ],
-    })
+    telemetry_log(
+        {
+            "query": user_msg,
+            "original_language": meta.get("original_language"),
+            "translated_query": (
+                meta.get("original_query")
+                if meta.get("original_language") != "en"
+                else None
+            ),
+            "topic": topic,
+            "mode": meta.get("mode"),
+            "num_messages": len(req.messages),
+            "dense_k": meta.get("dense_k"),
+            "bm25_k": meta.get("bm25_k"),
+            "final_topk": meta.get("final_topk"),
+            "retrieved": [
+                {
+                    "file_path": r["file_path"],
+                    "page": r["page"],
+                    "chunk_id": r["chunk_id"],
+                }
+                for r in retrieved
+            ],
+        }
+    )
 
     # 8. Construir mensajes
     enhanced_system = context_builder.build_enhanced_system_prompt(
@@ -270,7 +276,9 @@ async def chat_completions(
     }
 
     payload_size = len(json.dumps(payload))
-    logger.info(f"Tamaño payload: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)")
+    logger.info(
+        f"Tamaño payload: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)"
+    )
 
     # 12. Enviar a vLLM
     if req.stream:
@@ -298,13 +306,15 @@ async def eval_offline(cases: List[EvalCase]):
     for c in cases:
         retrieved, meta = choose_retrieval(c.topic, c.query)
         context_text, cited = attach_citations(retrieved, c.topic)
-        rows.append({
-            "query": c.query,
-            "topic": c.topic,
-            "relevant_files": c.relevant_files,
-            "retrieved": retrieved,
-            "context": context_text,
-        })
+        rows.append(
+            {
+                "query": c.query,
+                "topic": c.topic,
+                "relevant_files": c.relevant_files,
+                "retrieved": retrieved,
+                "context": context_text,
+            }
+        )
 
     agg = aggregate_eval(rows)
     return {

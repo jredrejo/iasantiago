@@ -246,7 +246,9 @@ class ContextAwareChunker:
                 chunk["char_count"] = len(text)
                 validated.append(chunk)
             elif text:
-                logger.debug(f"[CHUNK] Omitiendo fragmento pequeño {i}: {len(text)} caracteres")
+                logger.debug(
+                    f"[CHUNK] Omitiendo fragmento pequeño {i}: {len(text)} caracteres"
+                )
 
         logger.info(f"[CHUNK] Validados {len(validated)}/{len(chunks)} fragmentos")
 

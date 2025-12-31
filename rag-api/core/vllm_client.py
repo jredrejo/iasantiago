@@ -55,7 +55,9 @@ class VLLMClient:
             timeout: Timeout para requests (default: 300s)
             connect_timeout: Timeout para conexión (default: 20s)
         """
-        self.base_url = base_url or os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
+        self.base_url = base_url or os.getenv(
+            "UPSTREAM_OPENAI_URL", "http://vllm:8000/v1"
+        )
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "dummy-key")
         self.timeout = httpx.Timeout(timeout, connect=connect_timeout)
         self.streaming_timeout = httpx.Timeout(600.0, connect=connect_timeout)
@@ -172,7 +174,9 @@ class VLLMClient:
                             continue
 
                         models_data = models_resp.json()
-                        available_models = [m["id"] for m in models_data.get("data", [])]
+                        available_models = [
+                            m["id"] for m in models_data.get("data", [])
+                        ]
 
                         if model_name in available_models:
                             logger.info(
@@ -189,7 +193,9 @@ class VLLMClient:
                             elapsed += check_interval
 
                     except Exception as e:
-                        logger.debug(f"[{attempt}] Error parseando respuesta de modelos: {e}")
+                        logger.debug(
+                            f"[{attempt}] Error parseando respuesta de modelos: {e}"
+                        )
                         await asyncio.sleep(check_interval)
                         elapsed += check_interval
 
@@ -273,7 +279,9 @@ class VLLMClient:
                 operation_name="chat completion vLLM",
             )
         except httpx.HTTPStatusError as e:
-            logger.error(f"Error HTTP de vLLM: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"Error HTTP de vLLM: {e.response.status_code} - {e.response.text}"
+            )
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail=f"Error de vLLM: {e.response.text}",
@@ -326,7 +334,9 @@ class VLLMClient:
                             return
 
                         response.raise_for_status()
-                        logger.info(f"Stream establecido con vLLM (intento {attempt + 1})")
+                        logger.info(
+                            f"Stream establecido con vLLM (intento {attempt + 1})"
+                        )
 
                         async for chunk in response.aiter_bytes():
                             yield chunk
@@ -361,7 +371,9 @@ class VLLMClient:
                 except Exception:
                     error_text = "<no legible>"
 
-                logger.error(f"Error HTTP de vLLM: {e.response.status_code} - {error_text}")
+                logger.error(
+                    f"Error HTTP de vLLM: {e.response.status_code} - {error_text}"
+                )
                 error_data = {
                     "error": {
                         "message": f"Error vLLM: HTTP {e.response.status_code} - {error_text}",

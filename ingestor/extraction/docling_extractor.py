@@ -207,7 +207,9 @@ class DoclingExtractor:
             elements = self._extract_from_document(result.document, pdf_path)
 
             if not elements:
-                logger.warning("[DOCLING] No se extrajeron elementos - usando respaldo PyPDF")
+                logger.warning(
+                    "[DOCLING] No se extrajeron elementos - usando respaldo PyPDF"
+                )
                 return self._extract_pypdf_fallback(pdf_path)
 
             elapsed = time.time() - start_time
@@ -309,7 +311,9 @@ class DoclingExtractor:
 
                 else:
                     # Respaldo: estimar páginas
-                    logger.warning("[DOCLING] Sin conteo de páginas, usando páginas estimadas")
+                    logger.warning(
+                        "[DOCLING] Sin conteo de páginas, usando páginas estimadas"
+                    )
                     markdown = doc.export_to_markdown()
 
                     if markdown.strip() and len(markdown) > 50:
@@ -414,9 +418,15 @@ class DoclingExtractor:
                         height = float(mediabox.height)
 
                         if width <= 0 or height <= 0:
-                            return False, f"Página {page_num} tiene dimensiones inválidas"
+                            return (
+                                False,
+                                f"Página {page_num} tiene dimensiones inválidas",
+                            )
                     except Exception:
-                        return False, f"No se puede determinar tamaño de página {page_num}"
+                        return (
+                            False,
+                            f"No se puede determinar tamaño de página {page_num}",
+                        )
 
                 return True, None
 

@@ -115,7 +115,9 @@ def setup_ssl_context() -> None:
     """Configura contexto SSL para manejar problemas de certificados en descarga de modelos."""
     try:
         ssl._create_default_https_context = ssl._create_unverified_context
-        logger.info("[SSL] Configurado contexto SSL no verificado para descarga de modelos")
+        logger.info(
+            "[SSL] Configurado contexto SSL no verificado para descarga de modelos"
+        )
     except Exception as e:
         logger.warning(f"[SSL] No se pudo configurar contexto SSL: {e}")
 

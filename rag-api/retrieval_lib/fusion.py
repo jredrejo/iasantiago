@@ -116,7 +116,9 @@ def weighted_fusion(
         max_dense = max(r.get("score_dense", 1.0) for r in dense_results)
         for result in dense_results:
             key = (result["file_path"], result["chunk_id"])
-            normalized = result.get("score_dense", 0) / max_dense if max_dense > 0 else 0
+            normalized = (
+                result.get("score_dense", 0) / max_dense if max_dense > 0 else 0
+            )
             scores[key] = scores.get(key, 0) + normalized * dense_weight
             if key not in result_map:
                 result_map[key] = result

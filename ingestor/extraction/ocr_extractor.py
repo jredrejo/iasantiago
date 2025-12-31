@@ -15,7 +15,7 @@ import torch
 
 from core.cache import get_pdf_total_pages
 from core.config import setup_ssl_context
-from core.heartbeat import call_heartbeat
+from core.heartbeat import call_heartbeat, BackgroundHeartbeat
 from extraction.base import Element
 from extraction.unstructured_extractor import UnstructuredExtractor
 
@@ -84,7 +84,9 @@ class EasyOCRProcessor:
             EasyOCRProcessor._initialization_attempted
             and EasyOCRProcessor._reader_cache is None
         ):
-            raise RuntimeError("[EASYOCR] Inicialización anterior falló, no reintentando")
+            raise RuntimeError(
+                "[EASYOCR] Inicialización anterior falló, no reintentando"
+            )
 
         self._initialize_reader()
 
@@ -96,7 +98,9 @@ class EasyOCRProcessor:
         models_exist = self._check_models_exist()
 
         if not models_exist:
-            logger.info("[EASYOCR] Modelos no encontrados, se descargarán en primer uso")
+            logger.info(
+                "[EASYOCR] Modelos no encontrados, se descargarán en primer uso"
+            )
             logger.info(
                 "[EASYOCR] Esto puede tomar 2-5 minutos dependiendo de la velocidad de red"
             )
@@ -135,7 +139,9 @@ class EasyOCRProcessor:
             )
 
             if models_exist:
-                logger.info(f"[EASYOCR] Encontrados modelos existentes en {self.model_dir}")
+                logger.info(
+                    f"[EASYOCR] Encontrados modelos existentes en {self.model_dir}"
+                )
             else:
                 logger.info("[EASYOCR] Modelos no encontrados, se descargarán")
 
@@ -144,18 +150,28 @@ class EasyOCRProcessor:
             logger.warning(f"[EASYOCR] No se pudo verificar modelos existentes: {e}")
             return False
 
-    def extract_text_from_image(self, image_path: str) -> str:
+    def extract_text_from_image(self, image_path: str, page_num: int = 0) -> str:
         """
         Extrae texto de un archivo de imagen.
 
         Args:
             image_path: Ruta al archivo de imagen
+            page_num: Número de página (para contexto en heartbeat)
 
         Returns:
             Texto extraído como cadena
         """
         try:
-            results = self.reader.readtext(image_path)
+            # Usar BackgroundHeartbeat para mantener heartbeat durante OCR largo
+            # Actualiza cada 30 segundos mientras readtext() está ejecutando
+            context = f"easyocr_readtext_page_{page_num}"
+            logger.debug(f"[EASYOCR] Iniciando OCR en página {page_num}")
+
+            with BackgroundHeartbeat(context, interval=30.0):
+                results = self.reader.readtext(image_path)
+
+            # Actualizar heartbeat después del OCR
+            call_heartbeat(f"easyocr_readtext_done_page_{page_num}")
 
             if not results:
                 return ""
@@ -191,8 +207,14 @@ class EasyOCRProcessor:
 
         first_page = min(page_nums)
         last_page = max(page_nums)
+        filename = os.path.basename(pdf_path)
 
-        call_heartbeat(f"ocr_batch_{first_page}-{last_page}")
+        # Actualizar heartbeat antes de la conversión (operación larga)
+        call_heartbeat(f"pdf2image_{filename}_pages_{first_page}-{last_page}")
+        logger.debug(
+            f"[EASYOCR] Convirtiendo páginas {first_page}-{last_page} a imágenes"
+        )
+
         images = convert_from_path(
             pdf_path,
             first_page=first_page,
@@ -200,6 +222,9 @@ class EasyOCRProcessor:
             dpi=300,
             thread_count=4,
         )
+
+        # Actualizar heartbeat después de la conversión
+        call_heartbeat(f"pdf2image_done_{len(images)}_images")
 
         results = {}
         temp_files = []
@@ -216,7 +241,7 @@ class EasyOCRProcessor:
 
             for page_num, tmp_path in temp_files:
                 call_heartbeat(f"ocr_page_{page_num}")
-                text = self.extract_text_from_image(tmp_path)
+                text = self.extract_text_from_image(tmp_path, page_num)
                 results[page_num] = text
 
         finally:
@@ -298,7 +323,9 @@ class OCRExtractor:
 
             num_pages = total_pages or 0
             if num_pages <= 0:
-                logger.warning("[OCR] Total de páginas desconocido; omitiendo lotes EasyOCR")
+                logger.warning(
+                    "[OCR] Total de páginas desconocido; omitiendo lotes EasyOCR"
+                )
                 return []
 
             for batch_start in range(1, num_pages + 1, self.batch_size):

@@ -40,7 +40,9 @@ def validate_page_number(
         page = int(page)
     except (ValueError, TypeError):
         if context:
-            logger.warning(f"[PAGE] {context}: Tipo de página inválido {type(page)}, usando 1")
+            logger.warning(
+                f"[PAGE] {context}: Tipo de página inválido {type(page)}, usando 1"
+            )
         return 1
 
     # Ajustar a rango válido
@@ -51,7 +53,9 @@ def validate_page_number(
 
     if total_pages and page > total_pages:
         if context:
-            logger.warning(f"[PAGE] {context}: Página {page} -> {total_pages} (ajustado)")
+            logger.warning(
+                f"[PAGE] {context}: Página {page} -> {total_pages} (ajustado)"
+            )
         page = total_pages
 
     return page
@@ -94,7 +98,9 @@ def validate_page_numbers(
         validated.append(validated_elem)
 
     if issues:
-        logger.warning(f"[PAGE] Corregidos {len(issues)} problemas de página en {filename}")
+        logger.warning(
+            f"[PAGE] Corregidos {len(issues)} problemas de página en {filename}"
+        )
 
     return validated
 
@@ -143,7 +149,9 @@ class PageSequenceValidator:
 
         # Corregir si se encontraron problemas
         if issues:
-            logger.warning(f"[PAGE] Encontrados {len(issues)} problemas, intentando correcciones...")
+            logger.warning(
+                f"[PAGE] Encontrados {len(issues)} problemas, intentando correcciones..."
+            )
             chunks = PageSequenceValidator._fix_page_numbers(chunks, pages, total_pages)
 
         return chunks, issues
