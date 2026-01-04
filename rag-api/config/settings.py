@@ -137,3 +137,20 @@ MIN_RESPONSE_TOKENS = get_int_env("MIN_RESPONSE_TOKENS", 512)
 # ============================================================
 
 TELEMETRY_PATH = os.getenv("TELEMETRY_PATH", "/app/retrieval.jsonl")
+
+
+# ============================================================
+# SAMPLING PARAMETERS
+# ============================================================
+
+# Response mode (Q&A, explanations)
+RESPONSE_TEMPERATURE = float(os.getenv("RESPONSE_TEMPERATURE", "0.4"))
+RESPONSE_TOP_P = float(os.getenv("RESPONSE_TOP_P", "0.8"))
+RESPONSE_TOP_K = get_int_env("RESPONSE_TOP_K", 20)
+RESPONSE_REPETITION_PENALTY = float(os.getenv("RESPONSE_REPETITION_PENALTY", "1.05"))
+
+# Generative mode (exams, exercises)
+GENERATIVE_TEMPERATURE = float(os.getenv("GENERATIVE_TEMPERATURE", "0.3"))
+GENERATIVE_TOP_P = float(os.getenv("GENERATIVE_TOP_P", "0.75"))
+GENERATIVE_TOP_K = get_int_env("GENERATIVE_TOP_K", 15)
+GENERATIVE_REPETITION_PENALTY = float(os.getenv("GENERATIVE_REPETITION_PENALTY", "1.1"))

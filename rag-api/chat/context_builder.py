@@ -1,8 +1,12 @@
 # Archivo: rag-api/chat/context_builder.py
 # Descripción: Construcción de contexto y mensajes para el LLM
+#
+# Arquitectura: Context-in-User-Message
+# - System prompt: instrucciones estáticas (cacheable por vLLM prefix caching)
+# - User message: contexto RAG dinámico + query del usuario
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from core.cache import ModelCache
 
@@ -13,120 +17,153 @@ class ContextBuilder:
     """
     Construye mensajes y contexto para enviar al LLM.
 
-    Responsabilidades:
-    - Enriquecer system prompt con contexto RAG
-    - Truncar system prompt si es necesario
-    - Construir lista de mensajes final
+    Arquitectura Context-in-User-Message:
+    - System prompt contiene solo instrucciones estáticas (cacheable)
+    - Contexto RAG se inyecta en el último mensaje del usuario
+    - Mejora latencia via vLLM prefix caching
     """
 
     def __init__(
         self,
-        max_system_percent: float = 0.25,
+        max_context_tokens: int = 6000,
         model_max_len: int = 32768,
     ):
         """
         Inicializa el builder.
 
         Args:
-            max_system_percent: Máximo % del modelo para system prompt
+            max_context_tokens: Máximo tokens para contexto RAG
             model_max_len: Longitud máxima del modelo
         """
-        self.max_system_percent = max_system_percent
+        self.max_context_tokens = max_context_tokens
         self.model_max_len = model_max_len
 
     def count_tokens(self, text: str) -> int:
         """Cuenta tokens en un texto"""
         return ModelCache.count_tokens(text)
 
-    def build_enhanced_system_prompt(
+    def get_system_prompt(self, base_prompt: str) -> str:
+        """
+        Retorna el system prompt estático (sin contexto RAG).
+
+        Args:
+            base_prompt: Prompt de sistema base desde template
+
+        Returns:
+            System prompt estático (cacheable por vLLM)
+        """
+        return base_prompt
+
+    def build_user_message_with_context(
         self,
-        base_prompt: str,
+        user_query: str,
         context_text: str,
+        max_context_tokens: int = 0,
         no_context_message: str = "No se encontró información relevante en la base de datos.",
     ) -> str:
         """
-        Construye el system prompt enriquecido con contexto RAG.
+        Construye el mensaje del usuario con contexto RAG inyectado.
 
         Args:
-            base_prompt: Prompt de sistema base
+            user_query: Query original del usuario
             context_text: Contexto RAG a incluir
+            max_context_tokens: Límite de tokens para contexto (0 = usar default)
             no_context_message: Mensaje que indica sin contexto
 
         Returns:
-            System prompt enriquecido (y posiblemente truncado)
+            Mensaje del usuario enriquecido con contexto
         """
-        # Si hay contexto válido, enriquecerlo
-        if context_text and context_text != no_context_message:
-            enhanced = f"""{base_prompt}
+        effective_limit = (
+            max_context_tokens if max_context_tokens > 0 else self.max_context_tokens
+        )
+        has_context = context_text and context_text != no_context_message
 
-[Contexto RAG - Información relevante de la base de datos]
+        if has_context:
+            # Truncar contexto si excede límite
+            context_tokens = self.count_tokens(context_text)
+            if context_tokens > effective_limit:
+                logger.warning(
+                    f"Contexto demasiado largo ({context_tokens} tokens). "
+                    f"Truncando a ~{effective_limit} tokens."
+                )
+                context_text = self._truncate_context(context_text, effective_limit)
+
+            return f"""CONTEXTO RAG (información de documentos para responder):
+
 {context_text}
 
-Usa este contexto para responder las preguntas del usuario. Siempre cita las fuentes usando los enlaces proporcionados."""
+---
+PREGUNTA:
+{user_query}"""
         else:
-            enhanced = base_prompt
+            return user_query
 
-        # Verificar si necesita truncado
-        max_tokens = int(self.model_max_len * self.max_system_percent)
-        current_tokens = self.count_tokens(enhanced)
+    def _truncate_context(self, context_text: str, max_tokens: int) -> str:
+        """
+        Trunca el contexto para ajustarse al límite de tokens.
 
-        if current_tokens > max_tokens:
-            logger.warning(
-                f"System prompt demasiado largo ({current_tokens} tokens). "
-                f"Truncando a {max_tokens} tokens."
-            )
-            enhanced = self._truncate_system_prompt(context_text, max_tokens)
-            new_tokens = self.count_tokens(enhanced)
-            logger.info(
-                f"System prompt truncado: {current_tokens} -> {new_tokens} tokens"
-            )
+        Preserva chunks completos (no corta a mitad de chunk).
+        """
+        chunks = context_text.split("\n---\n")
+        truncated_chunks = []
+        current_tokens = 0
 
-        return enhanced
+        for chunk in chunks:
+            chunk_tokens = self.count_tokens(chunk)
+            if current_tokens + chunk_tokens > max_tokens:
+                break
+            truncated_chunks.append(chunk)
+            current_tokens += chunk_tokens
 
-    def _truncate_system_prompt(
-        self,
-        context_text: Optional[str],
-        max_tokens: int,
-    ) -> str:
-        """Crea una versión truncada del system prompt"""
-        if context_text:
-            # Versión minimalista con contexto
-            return f"""Eres un asistente docente experto. Responde usando el contexto proporcionado.
+        if not truncated_chunks and chunks:
+            # Al menos incluir el primer chunk truncado
+            truncated_chunks = [chunks[0][: max_tokens * 4]]
 
-Contexto RAG:
-{context_text}
-
-Responde usando solo información del contexto. Cita las fuentes con formato: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)"""
-        else:
-            # Versión minimalista sin contexto
-            return """Eres un asistente docente experto. Responde usando el contexto proporcionado y cita las fuentes con formato: [archivo.pdf, p.X](/docs/TOPIC/archivo.pdf#page=X)"""
+        result = "\n---\n".join(truncated_chunks)
+        logger.info(
+            f"Contexto truncado: {len(chunks)} -> {len(truncated_chunks)} chunks"
+        )
+        return result
 
     def build_messages(
         self,
-        enhanced_system_prompt: str,
+        system_prompt: str,
         user_messages: list,
+        context_text: str = "",
+        max_context_tokens: int = 0,
+        no_context_message: str = "No se encontró información relevante en la base de datos.",
     ) -> List[Dict[str, str]]:
         """
         Construye la lista final de mensajes para el LLM.
 
+        Inyecta contexto RAG en el último mensaje del usuario.
+
         Args:
-            enhanced_system_prompt: System prompt ya enriquecido
+            system_prompt: System prompt estático (sin contexto)
             user_messages: Lista de mensajes del usuario (objetos o dicts)
+            context_text: Contexto RAG a inyectar
+            max_context_tokens: Límite de tokens para contexto (0 = usar default)
+            no_context_message: Mensaje que indica sin contexto
 
         Returns:
             Lista de mensajes en formato dict
         """
+        # Usar límite pasado o el default de la instancia
+        effective_limit = (
+            max_context_tokens if max_context_tokens > 0 else self.max_context_tokens
+        )
         messages = []
 
-        # 1. System prompt
+        # 1. System prompt (estático, cacheable)
         messages.append(
             {
                 "role": "system",
-                "content": enhanced_system_prompt,
+                "content": system_prompt,
             }
         )
 
-        # 2. Historial de conversación (sin mensajes system del usuario)
+        # 2. Historial de conversación
+        user_msg_list = []
         for msg in user_messages:
             if hasattr(msg, "role"):
                 role = msg.role
@@ -136,16 +173,32 @@ Responde usando solo información del contexto. Cita las fuentes con formato: [a
                 content = msg.get("content", "")
 
             if role != "system":
-                messages.append(
-                    {
-                        "role": role,
-                        "content": content,
-                    }
+                user_msg_list.append({"role": role, "content": content})
+
+        # 3. Inyectar contexto RAG en el último mensaje del usuario
+        if user_msg_list:
+            last_idx = None
+            for i in range(len(user_msg_list) - 1, -1, -1):
+                if user_msg_list[i]["role"] == "user":
+                    last_idx = i
+                    break
+
+            if last_idx is not None:
+                original_query = user_msg_list[last_idx]["content"]
+                user_msg_list[last_idx]["content"] = (
+                    self.build_user_message_with_context(
+                        user_query=original_query,
+                        context_text=context_text,
+                        max_context_tokens=effective_limit,
+                        no_context_message=no_context_message,
+                    )
                 )
+
+        messages.extend(user_msg_list)
 
         logger.info(
             f"Mensajes construidos: {len(messages)} "
-            f"(system + {len(user_messages)} historial)"
+            f"(1 system + {len(user_msg_list)} conversación)"
         )
 
         return messages

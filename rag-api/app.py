@@ -9,43 +9,52 @@ import logging
 import time
 from typing import List, Optional
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from chat.context_builder import ContextBuilder
+from chat.intent import (
+    detect_generative_intent,
+    get_last_user_message,
+    load_system_prompt,
+)
+from chat.token_calculator import TokenCalculator
 
 # Importaciones de módulos refactorizados
 from config.settings import (
     CTX_TOKENS_GENERATIVE,
     CTX_TOKENS_SOFT_LIMIT,
+    GENERATIVE_MAX_TOKENS_PERCENT,
+    GENERATIVE_REPETITION_PENALTY,
+    GENERATIVE_TEMPERATURE,
+    GENERATIVE_TOP_K,
+    GENERATIVE_TOP_P,
+    MIN_RESPONSE_TOKENS,
     OPENAI_API_KEY,
+    RESPONSE_MAX_TOKENS_PERCENT,
+    RESPONSE_REPETITION_PENALTY,
+    RESPONSE_TEMPERATURE,
+    RESPONSE_TOP_K,
+    RESPONSE_TOP_P,
     TOPIC_LABELS,
     VLLM_MAX_MODEL_LEN,
     VLLM_MAX_TOKENS,
     VLLM_MODEL,
-    GENERATIVE_MAX_TOKENS_PERCENT,
-    RESPONSE_MAX_TOKENS_PERCENT,
-    MIN_RESPONSE_TOKENS,
 )
 from core.vllm_client import get_vllm_client
-from chat.intent import (
-    detect_generative_intent,
-    load_system_prompt,
-    get_last_user_message,
-)
-from chat.token_calculator import TokenCalculator
-from chat.context_builder import ContextBuilder
+from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from retrieval import (
     attach_citations,
     choose_retrieval,
     choose_retrieval_enhanced,
     count_tokens,
+    get_embedder,
+    get_reranker,
     rerank_passages,
     soft_trim_context,
     telemetry_log,
-    get_embedder,
-    get_reranker,
 )
 from token_utils import extract_topic_from_model_name
+
 from eval import aggregate_eval
 
 # Configuración de logging
@@ -98,7 +107,7 @@ token_calculator = TokenCalculator(
     min_response_tokens=MIN_RESPONSE_TOKENS,
 )
 context_builder = ContextBuilder(
-    max_system_percent=0.25,
+    max_context_tokens=CTX_TOKENS_SOFT_LIMIT,
     model_max_len=VLLM_MAX_MODEL_LEN,
 )
 
@@ -192,8 +201,24 @@ async def chat_completions(
         max_context = VLLM_MAX_MODEL_LEN - VLLM_MAX_TOKENS - 1000
         context_token_limit = min(context_token_limit, max_context)
         logger.info(f"Modo GENERATIVO: Límite de contexto {context_token_limit} tokens")
+        effective_temp = (
+            GENERATIVE_TEMPERATURE if req.temperature is None else req.temperature
+        )
+        effective_top_p = GENERATIVE_TOP_P if req.top_p is None else req.top_p
+        effective_top_k = GENERATIVE_TOP_K
+        effective_rep_penalty = GENERATIVE_REPETITION_PENALTY
     else:
         context_token_limit = CTX_TOKENS_SOFT_LIMIT
+        effective_temp = (
+            RESPONSE_TEMPERATURE if req.temperature is None else req.temperature
+        )
+        effective_top_p = RESPONSE_TOP_P if req.top_p is None else req.top_p
+        effective_top_k = RESPONSE_TOP_K
+        effective_rep_penalty = RESPONSE_REPETITION_PENALTY
+
+    logger.info(
+        f"Muestreo: temperature={effective_temp}, top_p={effective_top_p} ({'GENERATIVO' if is_generative else 'RESPUESTA'})"
+    )
 
     # 5. Retrieval
     retrieved, meta = choose_retrieval_enhanced(topic, user_msg, is_generative)
@@ -236,15 +261,15 @@ async def chat_completions(
         }
     )
 
-    # 8. Construir mensajes
-    enhanced_system = context_builder.build_enhanced_system_prompt(
-        sys_prompt, context_text
+    # 8. Construir mensajes (contexto en user message para prefix caching)
+    system_prompt = context_builder.get_system_prompt(sys_prompt)
+    messages = context_builder.build_messages(
+        system_prompt, req.messages, context_text, context_token_limit
     )
-    messages = context_builder.build_messages(enhanced_system, req.messages)
 
     # 9. Calcular tokens
     budget = token_calculator.calculate_budget(
-        enhanced_system, context_text, messages, is_generative
+        system_prompt, context_text, messages, is_generative
     )
 
     # Validar que hay espacio para respuesta
@@ -269,8 +294,10 @@ async def chat_completions(
     payload = {
         "model": VLLM_MODEL,
         "messages": messages,
-        "temperature": req.temperature if req.temperature is not None else 0.7,
-        "top_p": req.top_p if req.top_p is not None else 0.95,
+        "temperature": effective_temp,
+        "top_p": effective_top_p,
+        "top_k": effective_top_k,
+        "repetition_penalty": effective_rep_penalty,
         "stream": req.stream,
         "max_tokens": budget.max_tokens,
     }

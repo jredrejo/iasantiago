@@ -71,47 +71,10 @@ FUENTE:
 
 def _build_citation_instructions() -> str:
     """Construye las instrucciones de citación para el LLM"""
-    return f"""
+    return """
 
-{SEPARATOR}
-INSTRUCCIONES PARA RESPUESTAS CON FUENTES
-{SEPARATOR}
-
-Usa la información de los documentos anteriores para responder:
-
-1. Cada sección del texto incluye su fuente al final en este formato:
-   [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
-
-2. Cuando uses información de un documento, cita la fuente EXACTAMENTE como aparece:
-   Fuente: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
-
-3. IMPORTANTE: Las citas deben ser enlaces clicables en formato markdown.
-   NO escribas las URLs como texto plano.
-
-4. NUNCA menciones "fragmento", "sección", "parte" o referencias internas.
-   Solo habla del contenido y cita el archivo y página.
-
-5. Si usas información del documento Manual.pdf página 42, termina con:
-   Fuente: [Manual.pdf, p.42](/docs/Chemistry/Manual.pdf#page=42)
-
-EJEMPLO DE RESPUESTA:
-"La ley de Ohm establece que V = I x R, donde V es el voltaje, I es la corriente y R es la resistencia.
-Esta relación fundamental permite calcular cualquier parámetro eléctrico si se conocen los otros dos.
-Fuente: [Electrónica_Básica.pdf, p.15](/docs/Electronics/Electrónica_Básica.pdf#page=15)"
-
-FORMATO CORRECTO DE CITAS:
-OK: Fuente: [archivo.pdf, p.25](/docs/TOPIC/archivo.pdf#page=25)  <- Enlace clicable
-MAL: Fuente: [archivo.pdf, p.25]                             <- No es enlace
-MAL: Fuente: archivo.pdf, p.25                             <- No es enlace
-
-REGLAS IMPORTANTES:
-- NO inventes información que no esté en los documentos
-- NO uses referencias internas como "según el documento 3" o "en el fragmento"
-- Sé natural y conversacional, solo citando las fuentes
-- SOLO permite markdown para: bloques de código (```), fórmulas LaTeX ($formula$) y citas [enlaces](/docs/...)
-- NO uses negritas (**), títulos (##) o listas (-)
-
-{SEPARATOR}
+Cita las fuentes copiando el formato exacto que aparece despues de FUENTE:
+Ejemplo: [archivo.pdf, p.N](/docs/TOPIC/archivo.pdf#page=N)
 """
 
 
