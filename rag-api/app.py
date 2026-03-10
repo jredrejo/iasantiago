@@ -300,6 +300,7 @@ async def chat_completions(
         "repetition_penalty": effective_rep_penalty,
         "stream": req.stream,
         "max_tokens": budget.max_tokens,
+        "chat_template_kwargs": {"enable_thinking": False},
     }
 
     payload_size = len(json.dumps(payload))

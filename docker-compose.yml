@@ -13,7 +13,7 @@ services:
       - "6333:6333"
       - "6334:6334"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      test: ["CMD-SHELL", "cat < /dev/tcp/localhost/6333 || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 30
@@ -31,14 +31,14 @@ services:
     shm_size: 16gb
     env_file: .env
     environment:
-      - TORCH_CUDA_ARCH_LIST=89 # RTX5090 es arquitectura 89
+      # - TORCH_CUDA_ARCH_LIST=12.0 # RTX5090 es arquitectura 89
       - VLLM_TORCH_COMPILE_LEVEL=0
       - CUDA_LAUNCH_BLOCKING=0
       # - TORCH_CUDA_MEMORY_FRACTION=0.85 QWEN
       - PYTORCH_ALLOC_CONF=max_split_size_mb:512
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - CUDA_VISIBLE_DEVICES=0
-      - VLLM_LOGGING_LEVEL=INFO
+      - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
       # Para latencia: enable prefill pipelining
       - VLLM_ENABLE_PREFIX_CACHING=1
       # Reduce overhead de comunicación
@@ -47,26 +47,29 @@ services:
       - VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND}
       - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD}
       - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
+      - VLLM_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}
     ports:
       - "8000:8000"
     command: >
-      --model ${VLLM_MODEL}
-      --quantization ${VLLM_QUANTIZATION}
+      ${VLLM_MODEL}
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len ${VLLM_MAX_MODEL_LEN}
       --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}
       --dtype ${VLLM_DTYPE}
+      --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}
       --host 0.0.0.0
       --port 8000
       --max-num-seqs ${VLLM_MAX_NUM_SEQS}
       --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS}
-      --block-size ${VLLM_BLOCK_SIZE}
-      --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}
       --enable-prefix-caching
       --enable-chunked-prefill
-      --disable-log-requests
+      --language-model-only
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+      --override-generation-config '{"enable_thinking": false}'
     volumes:
       - huggingface_cache:/root/.cache/huggingface
+      - ./qwen35_template.jinja:/app/qwen35_template.jinja:ro
     deploy:
       resources:
         reservations:
@@ -114,11 +117,15 @@ services:
       context: ./ingestor
       dockerfile: Dockerfile
     container_name: ingestor
-    restart: on-failure  # Restart on crash (segfault), but not on clean exit
+    restart: on-failure # Restart on crash (segfault), but not on clean exit
     # Healthcheck monitors for stuck containers (visible via docker ps)
     # Signal handler in main.py forces exit on SIGSEGV; if still stuck, use docker-autoheal
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import os, time; f='/tmp/ingestor_heartbeat'; exit(0 if not os.path.exists(f) or time.time() - float(open(f).readline()) < 300 else 1)\""]
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c "import os, time; f=''/tmp/ingestor_heartbeat''; exit(0 if not os.path.exists(f) or time.time() - float(open(f).readline()) < 300 else 1)"',
+        ]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -157,7 +164,7 @@ services:
       - ${BM25_BASE_DIR}:/whoosh
       - ./ingestor:/app
       - /var/run/docker.sock:/var/run/docker.sock
-      - docling_cache:/cache/docling  # Docling extraction cache
+      - docling_cache:/cache/docling # Docling extraction cache
     depends_on:
       - qdrant
     deploy:
