@@ -2,36 +2,47 @@
 
 Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiago Apóstol que permite consultar documentos PDF organizados por temas mediante una interfaz de chat.
 
+> **Plan de mejoras pendientes**: ver [IMPROVEMENTS.md](IMPROVEMENTS.md) (seguridad, bugs conocidos, limpieza y evolución hacia funcionalidades nativas de Open WebUI).
+
 ## Arquitectura
 
 ```
-┌─────────────────┐
-│   Open WebUI    │ ← Interfaz de usuario (puerto 8080)
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  oauth2-proxy   │ ← Autenticación Google Workspace (puerto 4180)
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│    RAG API      │ ← FastAPI - OpenAI compatible (puerto 8001)
-│                 │   • Hybrid Retrieval (Qdrant + BM25/Whoosh)
-│                 │   • Re-ranking (Jina/BGE)
-│                 │   • Streaming + citas con enlaces
-│                 │   • Límites dinámicos de contexto
-└─┬───┬───┬───┬───┘
-  │   │   │   │
-  │   │   │   └─────► vLLM (puerto 8000)
-  │   │   │           Generación de texto (LLM en GPU)
-  │   │   │
-  │   └───┴─────────► Whoosh (BM25)
-  │                   Búsqueda léxica (índices locales)
+Internet / LAN                        Tailnet (Tailscale)
+      │                                     │
+┌─────▼─────────┐                           │
+│  nginx (443)  │ ← TLS Let's Encrypt       │
+└─────┬─────────┘                           │
+      │                                     │
+┌─────▼─────────┐                           │
+│ oauth2-proxy  │ ← Autenticación Google    │
+│    (4180)     │   Workspace (OIDC+PKCE)   │
+└─────┬─────────┘                           │
+      │                                     │
+┌─────▼─────────┐                           │
+│  Open WebUI   │ ← Interfaz de usuario     │
+│    (8080)     │   (cabeceras confiadas    │
+└─────┬─────────┘    X-Forwarded-Email)     │
+      │                                     │
+┌─────▼─────────────────────┐               │
+│    RAG API (8001)         │               │
+│  FastAPI OpenAI-compat    │               │
+│  • Retrieval híbrido      │               │
+│    (Qdrant + BM25/Whoosh) │               │
+│  • Re-ranking (Jina)      │               │
+│  • Streaming + citas      │               │
+└─┬───────┬───────┬─────────┘               │
+  │       │       │                         │
+  │       │       └───► vLLM (8000) ◄───────┘  ← opencode conecta
+  │       │             Qwen3.6-27B-NVFP4         directo por tailnet
+  │       │             64k ctx, MTP, tools
+  │       │
+  │       └───────────► Whoosh (BM25, índices locales)
   │
-  └─────────────────► Qdrant (puertos 6333/6334)
-                      Base de datos vectorial
+  └───────────────────► Qdrant (6333/6334, vectores)
 
 ┌─────────────────┐
-│    Ingestor     │ ← Indexación de PDFs (ejecución única)
+│    Ingestor     │ ← Indexación de PDFs (bajo demanda, EXCLUYENTE
+│                 │   con vLLM: no caben juntos en la GPU)
 │                 │   • Extracción con Docling + Unstructured.io
 │                 │   • Embeddings a Qdrant + BM25
 └─────────────────┘
@@ -41,7 +52,7 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
 
 ### Para Usuarios
 
-- **Selector de temas**: Elige entre Chemistry, Electronics, Programming
+- **Selector de temas**: un "modelo" por tema en el desplegable (AFD, Chemistry, Dibujo, Electricidad, FOL, Latin, Mecanica, Programming, Sostenibilidad — configurable en `TOPIC_LABELS`)
 - **Búsqueda híbrida**: Combina embeddings densos + BM25 léxico
 - **Citas clicables**: Enlaces directos a PDFs con número de página
 - **Streaming**: Respuestas en tiempo real
@@ -49,12 +60,21 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
 
 ### Características Técnicas
 
+- **LLM**: `unsloth/Qwen3.6-27B-NVFP4` en vLLM — 64k de contexto, speculative decoding (MTP), tool calling habilitado (necesario para opencode)
 - **Retrieval inteligente**: Fallback automático a BM25 para consultas cortas (<4 tokens)
 - **Re-ranking**: Jina Reranker multilingüe mejora relevancia
 - **Límites por archivo**: Máximo N fragmentos por documento (evita monopolios)
 - **Límite de contexto dinámico**: Control por tokens (6000 default)
-- **Telemetría**: Logs en `retrieval.jsonl` con rotación automática
+- **Telemetría**: Logs de consultas en JSONL (ver estado y pendientes en IMPROVEMENTS.md §1.6)
 - **Estado persistente**: Tracking de archivos procesados (evita reindexación)
+
+### Acceso desde opencode (uso como LLM de programación)
+
+vLLM es accesible directamente por Tailscale para usarlo desde [opencode](https://opencode.ai) sin pasar por el RAG:
+
+- URL: `http://iasantiago.tailbc4440.ts.net:8000/v1` (ver `opencode.json` de ejemplo en la raíz)
+- Modelo: `unsloth/Qwen3.6-27B-NVFP4`, contexto 65536, salida 4096
+- Requiere que vLLM conserve los flags `--enable-auto-tool-choice --tool-call-parser qwen3_coder` (opencode usa function calling en cada petición; sin ellos vLLM rechaza la petición o no arranca)
 
 ## Requisitos del Sistema
 
@@ -89,8 +109,8 @@ nano .env  # Editar configuración
 Variables esenciales:
 
 ```bash
-# Temas
-TOPIC_LABELS=Chemistry,Electronics,Programming
+# Temas (uno por carpeta en topics/)
+TOPIC_LABELS=AFD,Chemistry,Dibujo,Electricidad,FOL,Latin,Mecanica,Programming,Sostenibilidad
 TOPIC_BASE_DIR=/opt/iasantiago-rag/topics
 
 # Google OAuth
@@ -103,7 +123,7 @@ OAUTH2_COOKIE_SECRET=$(openssl rand -base64 32)
 # Modelos (configurables por tema)
 EMBED_MODEL_DEFAULT=intfloat/multilingual-e5-large-instruct
 RERANK_MODEL=jinaai/jina-reranker-v2-base-multilingual
-VLLM_MODEL=meta-llama/Meta-Llama-3.1-8B-Instruct
+VLLM_MODEL=unsloth/Qwen3.6-27B-NVFP4
 
 # Límites
 CTX_TOKENS_SOFT_LIMIT=6000
@@ -205,15 +225,17 @@ docker compose logs -f rag-api # Logs en tiempo real
 # Gestión de contenedores
 make up                        # Iniciar todo
 make down                      # Detener todo
-make restart                   # Reiniciar
+make rag-restart               # Reiniciar solo rag-api
 
 # Reindexación
 make reset                     # Borra todo y reindexa
 make seed                      # Crea ejemplos
 
-# Modos de operación
+# Modos de operación (vLLM e ingestor son EXCLUYENTES: no caben juntos en la GPU)
 make ingest                    # Modo ingestión: detiene vllm/rag-api/openwebui y lanza ingestor
 make web                       # Modo web: detiene ingestor y lanza oauth2-proxy
+# ⚠️ Tras `make ingest`, volver SIEMPRE con `make web`: si oauth2-proxy queda
+# parado, el sitio entero devuelve 502 (nginx enruta todo a través de él).
 
 # Ver estado del ingestor
 docker compose logs ingestor
@@ -317,26 +339,30 @@ BM25_FALLBACK_TOKEN_THRESHOLD=4
 
 ### Cambiar Modelo LLM
 
+Modelo actual (RTX 5090, 32 GB):
+
 ```bash
-VLLM_MODEL=meta-llama/Meta-Llama-3.1-8B-Instruct
-# o
-VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
-# o
-VLLM_MODEL=mistralai/Mistral-Nemo-Instruct-2407
+VLLM_MODEL=unsloth/Qwen3.6-27B-NVFP4    # 21.1 GiB de pesos en VRAM
+VLLM_MAX_MODEL_LEN=65536                # pool KV medido: ~132k tokens
+VLLM_GPU_MEMORY_UTILIZATION=0.95
+VLLM_MAX_NUM_SEQS=16                    # ~11-13 peticiones de clase simultáneas
 ```
 
-Ajustar memoria GPU:
+Hay perfiles `.env.*` de modelos probados anteriormente en la raíz del repo.
+Al cambiar de modelo, tener en cuenta:
+
+- Poner `HF_HUB_OFFLINE=0` en el servicio vllm de `docker-compose.yml` para
+  permitir la descarga (volver a `1` después: arranque más rápido y sin red).
+- Revisar `--tool-call-parser` en el command de vLLM (para Qwen3.x: `qwen3_coder`).
+  **No quitar** `--enable-auto-tool-choice --tool-call-parser`: los necesita opencode.
+- Actualizar el id del modelo en `opencode.json` (vLLM exige el id exacto).
+- Las líneas del log de arranque `GPU KV cache size: N tokens` y
+  `Maximum concurrency` dicen la concurrencia real que soporta la nueva config.
+
+Reiniciar:
 
 ```bash
-VLLM_MAX_MODEL_LEN=8192
-VLLM_GPU_MEMORY_UTILIZATION=0.85
-VLLM_TENSOR_PARALLEL_SIZE=1
-```
-
-Reconstruir:
-
-```bash
-docker compose up -d --build vllm
+docker compose up -d vllm
 ```
 
 ### Multi-GPU
@@ -428,15 +454,23 @@ cat /opt/iasantiago-rag/eval_summary.csv
 │
 ├── rag-api/                    # FastAPI
 │   ├── app.py                 # Endpoints OpenAI-compatible
-│   ├── retrieval.py           # Lógica de búsqueda
-│   ├── rerank.py              # Re-ranking
-│   ├── settings.py            # Configuración
+│   ├── config/                # settings.py: configuración desde .env
+│   ├── chat/                  # intent, context_builder, token_calculator
+│   ├── core/                  # vllm_client, cache de modelos, retry
+│   ├── retrieval_lib/         # fusión RRF, citas, helpers de búsqueda
+│   ├── retrieval.py           # Orquestación del retrieval híbrido
+│   ├── rerank.py              # Re-ranking (CrossEncoder)
+│   ├── templates/             # System prompts (default/generative)
 │   └── requirements.txt
 │
 ├── ingestor/                   # Indexador de PDFs
-│   ├── main.py                # Loop principal
-│   ├── chunk.py               # Extracción con Unstructured
-│   ├── settings.py
+│   ├── main.py                # Punto de entrada (scan / delete / delete-topic)
+│   ├── extraction/            # Pipeline: docling, unstructured, OCR, texto
+│   ├── chunking/              # Estrategias de chunking
+│   ├── indexing/              # Embeddings, Qdrant, Whoosh
+│   ├── pages/                 # Validación de números de página
+│   ├── state/                 # Estado de procesamiento (.processing_state.json)
+│   ├── core/                  # Config, heartbeat/watchdog, GPU
 │   └── requirements.txt
 │
 ├── openwebui/                  # Frontend
@@ -459,6 +493,17 @@ cat /opt/iasantiago-rag/eval_summary.csv
 ```
 
 ## Resolución de Problemas
+
+### 502 Bad Gateway en el navegador
+
+nginx enruta todo el sitio a través de oauth2-proxy; si ese contenedor está
+parado (p. ej. tras un `make ingest` sin su `make web` posterior), todo devuelve 502.
+
+```bash
+docker ps -a | grep oauth2          # ¿Exited?
+docker compose up -d oauth2-proxy   # Arrancarlo (o `make web`)
+curl http://127.0.0.1:4180/ping     # Debe responder 200
+```
 
 ### Open WebUI no muestra temas
 
@@ -498,11 +543,11 @@ make reset
 # Ver uso actual
 nvidia-smi
 
-# Reducir modelo o memoria
+# Reducir memoria: bajar en este orden
 nano .env
-# VLLM_MODEL=meta-llama/Llama-3.2-3B-Instruct  # Modelo más pequeño
-# VLLM_GPU_MEMORY_UTILIZATION=0.7
-# VLLM_MAX_MODEL_LEN=4096
+# VLLM_GPU_MEMORY_UTILIZATION=0.92   # primero (cada 0.01 ≈ 0.3 GiB)
+# VLLM_MAX_NUM_BATCHED_TOKENS=2048   # segundo (reduce pico de activaciones)
+# VLLM_MAX_MODEL_LEN=32768           # último recurso (limita contexto de opencode)
 
 # Reiniciar
 docker compose up -d --build vllm

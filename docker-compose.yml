@@ -29,33 +29,32 @@ services:
       memlock: -1
       stack: 67108864
     shm_size: 16gb
-    env_file: .env
+    # Sin env_file: las variables VLLM_* de .env son solo para la interpolación ${...}
+    # de compose; inyectarlas al contenedor genera warnings "Unknown vLLM environment
+    # variable" y arriesga colisiones con variables reales de vLLM.
     environment:
-      # - TORCH_CUDA_ARCH_LIST=12.0 # RTX5090 es arquitectura 89
-      - VLLM_TORCH_COMPILE_LEVEL=0
+      - TZ=${TZ}
+      # RTX 5090 = Blackwell sm_120. vLLM lo autodetecta, no hace falta fijarlo aquí;
+      # el servicio ingestor sí fija la arch para compilar ops de torch/docling.
+      # - TORCH_CUDA_ARCH_LIST=120
       - CUDA_LAUNCH_BLOCKING=0
-      # - TORCH_CUDA_MEMORY_FRACTION=0.85 QWEN
-      - PYTORCH_ALLOC_CONF=max_split_size_mb:512
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF}
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - CUDA_VISIBLE_DEVICES=0
       - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
-      # Para latencia: enable prefill pipelining
-      - VLLM_ENABLE_PREFIX_CACHING=1
-      # Reduce overhead de comunicación
-      - VLLM_ALLOW_LONG_MAX_POSITION_EMBEDDINGS=1
-      - HF_MODEL_NAME=${VLLM_MODEL}
-      - VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND}
       - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD}
-      - VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL}
-      - VLLM_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}
+      # Modelo ya cacheado en el volumen huggingface_cache; arrancar sin tocar el Hub.
+      # Poner a 0 (o comentar) cuando se cambie de modelo para permitir la descarga.
+      - HF_HUB_OFFLINE=1
     ports:
       - "8000:8000"
+
     command: >
       ${VLLM_MODEL}
+      --dtype ${VLLM_DTYPE}
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}
       --max-model-len ${VLLM_MAX_MODEL_LEN}
       --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}
-      --dtype ${VLLM_DTYPE}
       --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}
       --host 0.0.0.0
       --port 8000
@@ -67,16 +66,16 @@ services:
       --enable-auto-tool-choice
       --tool-call-parser qwen3_coder
       --override-generation-config '{"enable_thinking": false}'
+      --speculative-config '{"method": "mtp", "num_speculative_tokens": 2}'
     volumes:
       - huggingface_cache:/root/.cache/huggingface
-      - ./qwen35_template.jinja:/app/qwen35_template.jinja:ro
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
       retries: 30
@@ -152,10 +151,10 @@ services:
       - OPENBLAS_NUM_THREADS=10 # Para OpenBLAS
       # Docling GPU settings (now running inside ingestor)
       - DOCLING_GPU_MEMORY_FRACTION=${DOCLING_GPU_MEMORY_FRACTION:-0.30}
-      # CUDA configuration for Docling (matches vLLM settings for RTX 5090)
-      - TORCH_CUDA_ARCH_LIST=89 # RTX5090 arquitectura 89
+      # CUDA configuration for Docling (RTX 5090 = Blackwell sm_120)
+      - TORCH_CUDA_ARCH_LIST=120
       - CUDA_LAUNCH_BLOCKING=0 # Ejecución async (no bloqueante)
-      - PYTORCH_ALLOC_CONF=max_split_size_mb:512 # Reducir fragmentación de memoria
+      # PYTORCH_CUDA_ALLOC_CONF lo aporta el .env vía env_file
       - CUDA_DEVICE_ORDER=PCI_BUS_ID # Ordenamiento consistente de dispositivos
       - CUDA_VISIBLE_DEVICES=0 # Selección explícita de GPU
     volumes:

@@ -1,4 +1,4 @@
-.env
+.env*
 data/
 ingestor/__pycache__/
 ingestor/figures/
@@ -16,3 +16,6 @@ topics/
 .vscode/
 *.pyc
 */__pycache__/*
+*.md
+retrieval.jsonl
+.claude/settings.local.json
