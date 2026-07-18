@@ -162,7 +162,6 @@ services:
       - ${TOPIC_BASE_DIR}:/topics
       - ${BM25_BASE_DIR}:/whoosh
       - ./ingestor:/app
-      - /var/run/docker.sock:/var/run/docker.sock
       - docling_cache:/cache/docling # Docling extraction cache
     depends_on:
       - qdrant
