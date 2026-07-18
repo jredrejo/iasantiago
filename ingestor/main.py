@@ -113,8 +113,13 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
 
         # Apply E5 prefix if needed
         if "e5" in embed_name.lower():
-            texts = [f"Represent this document for retrieval: {t}" for t in texts]
-            logger.info("[E5] Usando prefijo de recuperación de documentos")
+            if "instruct" in embed_name.lower():
+                # E5-instruct: documents have NO prefix (plain text)
+                logger.info("[E5-instruct] Using plain text for documents (no prefix)")
+            else:
+                # E5 base: documents use "passage: " prefix
+                texts = [f"passage: {t}" for t in texts]
+                logger.info("[E5] Using passage: prefix for documents")
 
         # Encode texts
         logger.info(f"Encoding {len(texts)} chunks...")

@@ -71,8 +71,14 @@ def prepare_query_for_retrieval(
         Query preparado (posiblemente con prefijo)
     """
     if "e5" in embed_model_name.lower():
-        query_with_prefix = f"Represent this query for search: {query}"
-        logger.debug("[E5] Usando prefijo 'Represent this query for search:'")
+        if "instruct" in embed_model_name.lower():
+            # E5-instruct variant uses "Instruct: {task}\nQuery: {q}"
+            query_with_prefix = f"Instruct: Retrieve relevant documents\nQuery: {query}"
+            logger.debug("[E5-instruct] Using instruct query prefix")
+        else:
+            # E5 base variant uses "query: "
+            query_with_prefix = f"query: {query}"
+            logger.debug("[E5] Using query: prefix")
         return query_with_prefix
 
     return query
