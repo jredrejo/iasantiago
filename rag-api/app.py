@@ -144,8 +144,8 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     model: str
     messages: List[Message]
-    temperature: Optional[float] = 0.7
-    top_p: Optional[float] = 0.95
+    temperature: Optional[float] = None  # Use .env defaults (RESPONSE_TEMPERATURE or GENERATIVE_TEMPERATURE)
+    top_p: Optional[float] = None  # Use .env defaults (RESPONSE_TOP_P or GENERATIVE_TOP_P)
     stream: Optional[bool] = True
     iasantiago_mode: Optional[str] = "explica"
 

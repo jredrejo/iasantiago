@@ -65,12 +65,12 @@ rag-restart:
 ingest:
 	@echo "Deteniendo vllm, rag-api, openwebui y lanzando ingestor..."
 	docker compose stop vllm rag-api openwebui oauth2-proxy || true
-	docker compose up -d ingestor
+	docker compose --profile ingest up -d ingestor
 
 web:
-	@echo "Deteniendo ingestor y lanzando oauth2-proxy..."
+	@echo "Deteniendo ingestor y lanzando servicios web..."
 	docker compose stop ingestor || true
-	docker compose up -d oauth2-proxy
+	docker compose up -d oauth2-proxy openwebui rag-api vllm qdrant
 
 # ------- Backups -------
 backup: backup-topics backup-qdrant backup-whoosh

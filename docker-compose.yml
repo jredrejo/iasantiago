@@ -112,6 +112,8 @@ services:
             - capabilities: [gpu]
 
   ingestor:
+    profiles:
+      - ingest
     build:
       context: ./ingestor
       dockerfile: Dockerfile
