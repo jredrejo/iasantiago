@@ -1,0 +1,53 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Telemetry and data files
+*.jsonl
+
+# Backup files
+*.bak
+*~
+
+# Test files
+test_*.py
+*_test.py
+
+# Temporary files
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Documentation (not needed in container)
+docs/
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# Docker files (not needed in image)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Example scripts not needed in container
+ejemplo_uso.sh

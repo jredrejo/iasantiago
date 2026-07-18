@@ -99,7 +99,7 @@ services:
       - ${BM25_BASE_DIR}:/whoosh
       - huggingface_cache:/root/.cache/huggingface
       - ./rag-api:/app
-      - ${QDRANT_STORAGE}:/qdrant_storage
+      - ./data/telemetry:/data/telemetry
     ports:
       - "8001:8001"
     depends_on:
