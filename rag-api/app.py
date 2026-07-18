@@ -39,8 +39,9 @@ from config.settings import (
     VLLM_MODEL,
 )
 from core.vllm_client import get_vllm_client
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from retrieval import (
     attach_citations,
@@ -63,6 +64,24 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# AUTENTICACIÓN
+# ============================================================
+
+security = HTTPBearer()
+
+
+async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verifica que el token Bearer coincida con OPENAI_API_KEY"""
+    if credentials.credentials != OPENAI_API_KEY:
+        logger.warning(f"Intento de autenticación fallido desde {credentials.credentials[:10]}...")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key",
+        )
+    return credentials.credentials
 
 
 # ============================================================
@@ -149,7 +168,10 @@ async def healthz():
 
 
 @app.get("/v1/models")
-async def list_models(request: Request):
+async def list_models(
+    request: Request,
+    api_key: str = Depends(verify_api_key),
+):
     """Lista modelos disponibles (compatible con OpenAI API)"""
     models = [
         {
@@ -168,6 +190,7 @@ async def chat_completions(
     req: ChatRequest,
     request: Request,
     x_email: str = Header(None),
+    api_key: str = Depends(verify_api_key),
 ):
     """
     Endpoint principal de chat con RAG.
@@ -328,7 +351,10 @@ async def chat_completions(
 
 
 @app.post("/v1/eval/offline")
-async def eval_offline(cases: List[EvalCase]):
+async def eval_offline(
+    cases: List[EvalCase],
+    api_key: str = Depends(verify_api_key),
+):
     """Evaluación offline del sistema de retrieval"""
     rows = []
     for c in cases:
