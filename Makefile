@@ -128,16 +128,20 @@ watcher-off:
 
 # ------- Publicar PDFs como /docs bajo Nginx -------
 publish-docs:
-	@echo "Publicando /docs/ en Nginx..."
+	@echo "Publicando /docs/ en Nginx con autenticación oauth2-proxy..."
 	@sudo bash -c 'tee /etc/nginx/conf.d/iasantiago-docs.conf >/dev/null <<NGINX\n\
 location /docs/ {\n\
+    auth_request /oauth2/auth;\n\
+    error_page 401 = @oauth2_signin;\n\
     autoindex on;\n\
     alias /opt/iasantiago-rag/topics/;\n\
+    add_header X-Content-Type-Options nosniff;\n\
+    add_header X-Frame-Options DENY;\n\
 }\n\
 NGINX'
 	sudo nginx -t
 	sudo systemctl reload nginx
-	@echo "[OK] /docs/ disponible en https://iasantiago.santiagoapostol.net/docs/"
+	@echo "[OK] /docs/ disponible en https://iasantiago.santiagoapostol.net/docs/ (requiere autenticación)"
 
 unpublish-docs:
 	@echo "Despublicando /docs/..."
