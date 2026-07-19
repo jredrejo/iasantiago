@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Configuración por defecto
 DEFAULT_HEARTBEAT_FILE = "/tmp/ingestor_heartbeat"
-DEFAULT_WATCHDOG_TIMEOUT = 450  # 7.5 minutos
+DEFAULT_WATCHDOG_TIMEOUT = 1200  # 20 minutos
 DEFAULT_CHECK_INTERVAL = 60  # 1 minuto
 
 
