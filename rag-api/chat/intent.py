@@ -7,19 +7,36 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-# Patrones para detectar intención generativa
+# Verbo creativo: imperativo (con clítico opcional: hazME, prepáraNOS),
+# subjuntivo dirigido al asistente (que me hagas) o infinitivo (puedes crear).
+# NO incluye formas neutras como "hace"/"hacer a secas" para no disparar con
+# "¿cómo se hace la prueba?" o "no sé hacer el ejercicio 2".
+_CREATIVE_VERB = (
+    r"(?:crea|elabora|genera|dise[ñn]a|prep[aá]ra|redacta|inventa|"
+    r"prop[oó]n|plantea|formula|escribe|haz|hagas)(?:me|nos|te)?"
+    r"|crear|elaborar|generar|dise[ñn]ar|preparar|redactar|inventar|"
+    r"proponer|plantear|formular|escribir|hacerme|hacernos"
+)
+
+# Objeto generable: lo que tiene sentido pedir que se cree
+_GENERATIVE_OBJECT = (
+    r"(?:examen|ex[aá]menes|test|prueba|evaluaci[oó]n|cuestionario|"
+    r"pregunta|cuesti[oó]n|ejercicio|actividad|problema|"
+    r"esquema|resumen|mapa)(?:e?s)?"
+    r"|lista(?:dos?|s)?"
+)
+
+# Patrones para detectar intención generativa.
+# Requieren verbo creativo + objeto generable (§2.4): mencionar "ejercicio"
+# o "pregunta" a secas ya NO dispara el modo generativo.
 GENERATIVE_PATTERNS: List[str] = [
-    # Creación de exámenes
-    r"\b(crea|elabora|genera|diseña|prepara|haz|hacer)\b.*\b(examen|test|prueba|evaluaci[oó]n)\b",
-    r"\b(preguntas?)\b.*\b(sobre|de|acerca)\b",
-    r"\b\d+\s*(preguntas?|ejercicios?|cuestiones?)\b",  # "10 preguntas"
-    # Creación de ejercicios
-    r"\b(ejercicios?|actividades?|pr[aá]cticas?)\b",
-    # Creación de contenido educativo
-    r"\b(resume|sintetiza|organiza)\b.*\b(en|como)\b.*\b(esquema|mapa|lista)\b",
-    r"\blistado\b.*\b(de|con)\b",
-    # Comandos explícitos al inicio
-    r"^(crea|elabora|genera|diseña|prepara|haz)\b",
+    # Verbo creativo seguido a corta distancia de un objeto generable:
+    # "crea un examen...", "hazme 5 ejercicios...", "¿puedes generar preguntas...?"
+    rf"\b(?:{_CREATIVE_VERB})\b.{{0,80}}?\b(?:{_GENERATIVE_OBJECT})\b",
+    # Cantidad explícita de ítems a producir: "10 preguntas", "5 ejercicios"
+    r"\b\d+\s*(?:preguntas?|ejercicios?|cuestiones?|actividades?|problemas?)\b",
+    # Reorganización de contenido en un formato: "resume el tema 4 en un esquema"
+    r"\b(?:resume|res[uú]me\w*|sintetiza|organiza)\b.{0,60}?\b(?:esquema|mapa|listas?|listados?|tabla)\b",
 ]
 
 
