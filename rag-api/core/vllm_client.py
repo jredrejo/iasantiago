@@ -12,7 +12,6 @@ import httpx
 from fastapi import HTTPException
 
 from core.retry import RetryConfig, with_retry
-from core.cache import VLLMState
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +29,11 @@ class VLLMClient:
 
     Centraliza toda la lógica de:
     - Health checks
-    - Espera de modelo listo
     - Llamadas con reintentos
     - Streaming SSE
 
     Uso:
         client = VLLMClient(base_url="http://vllm:8000/v1")
-        await client.wait_for_model_ready("Qwen/Qwen2.5-7B-Instruct")
         response = await client.chat_completion(payload, stream=False)
     """
 
@@ -137,129 +134,6 @@ class VLLMClient:
         except Exception as e:
             logger.error(f"vLLM no responde después de {max_retries} intentos: {e}")
             return False
-
-    async def wait_for_model_ready(
-        self,
-        model_name: str,
-        max_wait_seconds: int = 300,
-        check_interval: float = 2.0,
-    ) -> bool:
-        """
-        Espera a que un modelo esté listo en vLLM.
-
-        Args:
-            model_name: Nombre del modelo (ej: "Qwen/Qwen2.5-7B-Instruct")
-            max_wait_seconds: Tiempo máximo de espera
-            check_interval: Intervalo entre verificaciones
-
-        Returns:
-            True si el modelo está listo, False si timeout
-        """
-        timeout = httpx.Timeout(10.0, connect=5.0)
-        elapsed = 0
-        attempt = 0
-
-        logger.info(
-            f"Esperando a que el modelo '{model_name}' esté listo "
-            f"(máximo {max_wait_seconds}s)..."
-        )
-
-        while elapsed < max_wait_seconds:
-            attempt += 1
-            try:
-                async with self._client(timeout) as client:
-                    # Verificar health
-                    try:
-                        health_resp = await client.get(self.health_url, timeout=timeout)
-                        if health_resp.status_code != 200:
-                            logger.debug(
-                                f"[{attempt}] Health check falló (status {health_resp.status_code})"
-                            )
-                            await asyncio.sleep(check_interval)
-                            elapsed += check_interval
-                            continue
-                    except Exception as e:
-                        logger.debug(f"[{attempt}] Error en health check: {e}")
-                        await asyncio.sleep(check_interval)
-                        elapsed += check_interval
-                        continue
-
-                    # Verificar lista de modelos
-                    try:
-                        models_resp = await client.get(self.models_url, timeout=timeout)
-                        if models_resp.status_code != 200:
-                            logger.debug(
-                                f"[{attempt}] No se pudo obtener lista de modelos "
-                                f"(status {models_resp.status_code})"
-                            )
-                            await asyncio.sleep(check_interval)
-                            elapsed += check_interval
-                            continue
-
-                        models_data = models_resp.json()
-                        available_models = [
-                            m["id"] for m in models_data.get("data", [])
-                        ]
-
-                        if model_name in available_models:
-                            logger.info(
-                                f"Modelo '{model_name}' LISTO (tardó {elapsed:.0f}s)"
-                            )
-                            return True
-                        else:
-                            logger.debug(
-                                f"[{attempt}] Modelo '{model_name}' no disponible aún. "
-                                f"Disponibles: {available_models}. "
-                                f"Esperando... ({elapsed:.0f}s/{max_wait_seconds}s)"
-                            )
-                            await asyncio.sleep(check_interval)
-                            elapsed += check_interval
-
-                    except Exception as e:
-                        logger.debug(
-                            f"[{attempt}] Error parseando respuesta de modelos: {e}"
-                        )
-                        await asyncio.sleep(check_interval)
-                        elapsed += check_interval
-
-            except Exception as e:
-                logger.debug(f"[{attempt}] Error inesperado verificando modelo: {e}")
-                await asyncio.sleep(check_interval)
-                elapsed += check_interval
-
-        logger.error(
-            f"Modelo '{model_name}' no estuvo listo después de {max_wait_seconds}s"
-        )
-        return False
-
-    async def ensure_model_ready(self, model_name: str) -> None:
-        """
-        Asegura que el modelo esté listo, esperando si hay cambio de modelo.
-
-        Args:
-            model_name: Modelo requerido
-
-        Raises:
-            HTTPException: Si el modelo no está listo después del timeout
-        """
-        # Verificar si hay cambio de modelo
-        model_changed = await VLLMState.check_model_change(model_name)
-
-        if model_changed:
-            logger.info("Esperando a que el nuevo modelo esté listo...")
-            model_ready = await self.wait_for_model_ready(model_name)
-
-            if not model_ready:
-                current = await VLLMState.get_current_model()
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"El modelo '{model_name}' no está listo. "
-                    f"Actualmente cargando (cambiando desde '{current}'). "
-                    f"Por favor intente de nuevo en un momento.",
-                )
-
-            await VLLMState.set_current_model(model_name)
-            logger.info(f"Cambiado a modelo: {model_name}")
 
     async def chat_completion(
         self,

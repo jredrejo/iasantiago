@@ -258,28 +258,24 @@ async def chat_completions(
     Endpoint principal de chat con RAG.
 
     Flujo:
-    1. Detectar modelo y esperar si hay cambio
-    2. Detectar intención (generativa vs respuesta)
-    3. Ejecutar retrieval híbrido
-    4. Construir contexto y mensajes
-    5. Calcular tokens
-    6. Enviar a vLLM (streaming o no)
+    1. Detectar intención (generativa vs respuesta)
+    2. Ejecutar retrieval híbrido
+    3. Construir contexto y mensajes
+    4. Calcular tokens
+    5. Verificar salud de vLLM y enviar (streaming o no)
     """
     logger.info(f"Usuario: {x_email}")
     logger.info(f"Mensajes recibidos: {len(req.messages)}")
 
-    # 1. Asegurar que el modelo esté listo
-    await get_vllm_client_instance().ensure_model_ready(VLLM_MODEL)
-
-    # 2. Extraer topic y mensaje del usuario
+    # 1. Extraer topic y mensaje del usuario
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
     user_msg = get_last_user_message(req.messages)
 
-    # 3. Detectar intención y cargar prompt
+    # 2. Detectar intención y cargar prompt
     is_generative = detect_generative_intent(user_msg)
     sys_prompt = load_system_prompt(is_generative)
 
-    # 4. Ajustar límites de contexto según modo
+    # 3. Ajustar límites de contexto según modo
     if is_generative:
         context_token_limit = CTX_TOKENS_GENERATIVE
         # Reducir contexto para dejar espacio a respuesta
@@ -305,7 +301,7 @@ async def chat_completions(
         f"Muestreo: temperature={effective_temp}, top_p={effective_top_p} ({'GENERATIVO' if is_generative else 'RESPUESTA'})"
     )
 
-    # 5. Retrieval
+    # 4. Retrieval
     retrieved, meta = choose_retrieval_enhanced(topic, user_msg, is_generative)
     logger.info(f"Recuperados {len(retrieved)} chunks para '{topic}'")
 
@@ -315,11 +311,11 @@ async def chat_completions(
         # Trim por tokens después del reranking
         retrieved = soft_trim_context(retrieved, context_token_limit)
 
-    # 6. Construir contexto con citaciones
+    # 5. Construir contexto con citaciones
     context_text, cited = attach_citations(retrieved, topic)
     context_builder.log_context_status(context_text, len(retrieved))
 
-    # 7. Telemetría
+    # 6. Telemetría
     telemetry_log(
         {
             "query": user_msg,
@@ -346,13 +342,13 @@ async def chat_completions(
         }
     )
 
-    # 8. Construir mensajes (contexto en user message para prefix caching)
+    # 7. Construir mensajes (contexto en user message para prefix caching)
     system_prompt = context_builder.get_system_prompt(sys_prompt)
     messages = context_builder.build_messages(
         system_prompt, req.messages, context_text, context_token_limit
     )
 
-    # 9. Calcular tokens
+    # 8. Calcular tokens
     budget = token_calculator.calculate_budget(
         system_prompt, context_text, messages, is_generative
     )
@@ -366,14 +362,14 @@ async def chat_completions(
             f"Por favor, reduce el historial de conversación.",
         )
 
-    # 10. Verificar salud de vLLM
+    # 9. Verificar salud de vLLM
     if not await get_vllm_client_instance().check_health():
         raise HTTPException(
             status_code=503,
             detail="vLLM no responde. Por favor intente de nuevo.",
         )
 
-    # 11. Preparar payload
+    # 10. Preparar payload
     logger.info(f"Enviando a vLLM: {len(messages)} mensajes")
 
     payload = {
@@ -393,7 +389,7 @@ async def chat_completions(
         f"Tamaño payload: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)"
     )
 
-    # 12. Enviar a vLLM
+    # 11. Enviar a vLLM
     if req.stream:
         return StreamingResponse(
             get_vllm_client_instance().stream_chat_completion(payload),
