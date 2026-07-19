@@ -6,7 +6,9 @@ import logging
 import os
 from typing import Dict, Optional, Tuple, Any
 
-import tiktoken
+from transformers import AutoTokenizer
+
+from config.settings import VLLM_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ class ModelCache:
     - Embedders (SentenceTransformer) por tema
     - Reranker (CrossEncoder)
     - Traductores (MarianMT)
-    - Tokenizador (tiktoken)
+    - Tokenizador (transformers - correcto para el modelo)
 
     Uso:
         embedder = ModelCache.get_embedder("Chemistry")
@@ -30,7 +32,7 @@ class ModelCache:
     _embedders: Dict[str, Any] = {}
     _reranker: Optional[Any] = None
     _translators: Dict[str, Tuple[Any, Any, str]] = {}
-    _tokenizer: Optional[tiktoken.Encoding] = None
+    _tokenizer: Optional[Any] = None  # transformers tokenizer
     _lock = asyncio.Lock()
 
     @classmethod
@@ -39,16 +41,16 @@ class ModelCache:
         return "cuda" if os.getenv("CUDA_VISIBLE_DEVICES", "") != "" else "cpu"
 
     @classmethod
-    def get_tokenizer(cls) -> tiktoken.Encoding:
-        """Obtiene el tokenizador tiktoken (singleton)"""
+    def get_tokenizer(cls) -> Any:
+        """Obtiene el tokenizador correcto para el modelo (singleton)"""
         if cls._tokenizer is None:
-            cls._tokenizer = tiktoken.get_encoding("cl100k_base")
-            logger.debug("Tokenizador tiktoken inicializado")
+            cls._tokenizer = AutoTokenizer.from_pretrained(VLLM_MODEL)
+            logger.debug(f"Tokenizador {VLLM_MODEL} inicializado")
         return cls._tokenizer
 
     @classmethod
     def count_tokens(cls, text: str) -> int:
-        """Cuenta tokens en un texto usando tiktoken"""
+        """Cuenta tokens usando el tokenizador correcto del modelo"""
         tokenizer = cls.get_tokenizer()
         return len(tokenizer.encode(text))
 
