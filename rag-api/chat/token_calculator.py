@@ -137,15 +137,11 @@ class TokenCalculator:
         )
 
     def _calculate_generative_tokens(self) -> int:
-        """Calcula tokens para modo generativo"""
-        desired = min(
+        """Calcula tokens para modo generativo (respeta VLLM_MAX_TOKENS)"""
+        return min(
             self.max_tokens_limit,
             int(self.model_max_len * (self.generative_percent / 100.0)),
         )
-
-        # Mínimo garantizado para generación (45% del modelo)
-        min_for_generation = int(self.model_max_len * 0.45)
-        return max(desired, min_for_generation)
 
     def _calculate_response_tokens(self) -> int:
         """Calcula tokens para modo respuesta"""
@@ -178,10 +174,10 @@ class TokenCalculator:
         logger.info(f"   - FINAL max_tokens: {max_tokens} tokens")
 
         # Warnings
-        if is_generative and max_tokens < 10000:
-            logger.error(
-                f"MODO GENERATIVO: Solo {max_tokens} tokens disponibles "
-                f"(se necesitan ~15k para 40 preguntas). "
+        if is_generative and max_tokens < desired:
+            logger.warning(
+                f"MODO GENERATIVO: max_tokens recortado a {max_tokens} "
+                f"(objetivo {desired}) por falta de espacio en el contexto. "
                 f"Considerar reducir CTX_TOKENS_GENERATIVE"
             )
 
