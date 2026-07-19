@@ -4,10 +4,13 @@
 # Este archivo contiene los endpoints HTTP. La lógica de negocio
 # está delegada a los módulos core/, chat/, y retrieval_lib/.
 
+import contextlib
 import json
 import logging
 import time
 from typing import List, Optional
+
+import httpx
 
 from chat.context_builder import ContextBuilder
 from chat.intent import (
@@ -38,7 +41,7 @@ from config.settings import (
     VLLM_MAX_TOKENS,
     VLLM_MODEL,
 )
-from core.vllm_client import get_vllm_client
+from core.vllm_client import VLLMClient
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -85,6 +88,67 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
 
 
 # ============================================================
+# LIFESPAN Y CLIENTE HTTPX COMPARTIDO
+# ============================================================
+
+# Cliente httpx compartido para todas las peticiones
+_shared_httpx_client: Optional[httpx.AsyncClient] = None
+# Cliente vLLM global instanciado durante lifespan
+_vllm_client_instance = None
+
+
+def get_httpx_client() -> httpx.AsyncClient:
+    """Obtiene el cliente httpx compartido"""
+    global _shared_httpx_client
+    if _shared_httpx_client is None:
+        raise RuntimeError("httpx client not initialized - lifespan not started")
+    return _shared_httpx_client
+
+
+def get_vllm_client_instance():
+    """Obtiene la instancia global del cliente vLLM"""
+    global _vllm_client_instance
+    if _vllm_client_instance is None:
+        raise RuntimeError("vllm client not initialized - lifespan not started")
+    return _vllm_client_instance
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan de FastAPI: precarga modelos al inicio, limpia al cierre"""
+    global _shared_httpx_client, _vllm_client_instance
+
+    # Startup
+    logger.info("FastAPI startup: precargando modelos...")
+    try:
+        ensure_models_loaded()
+        logger.info("Modelos precargados correctamente")
+
+        # Crear cliente httpx compartido
+        _shared_httpx_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+        )
+        logger.info("Cliente httpx compartido creado")
+
+        # Instanciar vllm_client con el cliente compartido
+        _vllm_client_instance = VLLMClient(httpx_client=_shared_httpx_client)
+        logger.info("Cliente vLLM instanciado con httpx compartido")
+
+    except Exception as e:
+        logger.error(f"Error en startup: {e}", exc_info=True)
+        raise
+
+    yield
+
+    # Shutdown
+    logger.info("FastAPI shutdown: limpiando recursos...")
+    if _shared_httpx_client:
+        await _shared_httpx_client.aclose()
+        logger.info("Cliente httpx cerrado")
+
+
+# ============================================================
 # INICIALIZACIÓN
 # ============================================================
 
@@ -112,12 +176,10 @@ def ensure_models_loaded():
         raise
 
 
-# Crear aplicación FastAPI
-app = FastAPI(title="IASantiago RAG API")
-ensure_models_loaded()
+# Crear aplicación FastAPI con lifespan
+app = FastAPI(title="IASantiago RAG API", lifespan=lifespan)
 
-# Instanciar componentes
-vllm_client = get_vllm_client()
+# Instanciar componentes (que no dependen de lifespan)
 token_calculator = TokenCalculator(
     model_max_len=VLLM_MAX_MODEL_LEN,
     max_tokens_limit=VLLM_MAX_TOKENS,
@@ -207,7 +269,7 @@ async def chat_completions(
     logger.info(f"Mensajes recibidos: {len(req.messages)}")
 
     # 1. Asegurar que el modelo esté listo
-    await vllm_client.ensure_model_ready(VLLM_MODEL)
+    await get_vllm_client_instance().ensure_model_ready(VLLM_MODEL)
 
     # 2. Extraer topic y mensaje del usuario
     topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
@@ -305,7 +367,7 @@ async def chat_completions(
         )
 
     # 10. Verificar salud de vLLM
-    if not await vllm_client.check_health():
+    if not await get_vllm_client_instance().check_health():
         raise HTTPException(
             status_code=503,
             detail="vLLM no responde. Por favor intente de nuevo.",
@@ -334,7 +396,7 @@ async def chat_completions(
     # 12. Enviar a vLLM
     if req.stream:
         return StreamingResponse(
-            vllm_client.stream_chat_completion(payload),
+            get_vllm_client_instance().stream_chat_completion(payload),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -343,7 +405,7 @@ async def chat_completions(
             },
         )
     else:
-        resp = await vllm_client.chat_completion(payload)
+        resp = await get_vllm_client_instance().chat_completion(payload)
         return Response(
             content=resp.content,
             media_type=resp.headers.get("Content-Type", "application/json"),

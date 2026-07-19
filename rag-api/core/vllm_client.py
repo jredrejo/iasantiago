@@ -2,6 +2,7 @@
 # Descripción: Cliente unificado para comunicación con vLLM
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -45,6 +46,7 @@ class VLLMClient:
         api_key: str = None,
         timeout: float = 300.0,
         connect_timeout: float = 20.0,
+        httpx_client=None,
     ):
         """
         Inicializa el cliente vLLM.
@@ -54,6 +56,7 @@ class VLLMClient:
             api_key: API key para autenticación
             timeout: Timeout para requests (default: 300s)
             connect_timeout: Timeout para conexión (default: 20s)
+            httpx_client: Cliente httpx compartido (opcional, para testing)
         """
         self.base_url = base_url or os.getenv(
             "UPSTREAM_OPENAI_URL", "http://vllm:8000/v1"
@@ -61,6 +64,7 @@ class VLLMClient:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "dummy-key")
         self.timeout = httpx.Timeout(timeout, connect=connect_timeout)
         self.streaming_timeout = httpx.Timeout(600.0, connect=connect_timeout)
+        self.httpx_client = httpx_client  # Cliente compartido (opcional)
 
     @property
     def health_url(self) -> str:
@@ -82,6 +86,24 @@ class VLLMClient:
         """Headers para requests"""
         return {"Authorization": f"Bearer {self.api_key}"}
 
+    @contextlib.asynccontextmanager
+    async def _client(self, timeout: Optional[httpx.Timeout] = None):
+        """
+        Proporciona el cliente httpx apropiado: el compartido si existe,
+        o uno temporal que se cierra al salir del contexto.
+
+        Nota: el timeout del cliente compartido se ignora; cada request
+        debe pasar su propio timeout explícito.
+
+        Args:
+            timeout: Timeout para el cliente temporal (opcional)
+        """
+        if self.httpx_client is not None:
+            yield self.httpx_client
+        else:
+            async with httpx.AsyncClient(timeout=timeout or self.timeout) as client:
+                yield client
+
     async def check_health(self, max_retries: int = 3) -> bool:
         """
         Verifica si vLLM está disponible.
@@ -99,8 +121,9 @@ class VLLMClient:
         )
 
         async def _check():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                resp = await client.get(self.health_url)
+            timeout = httpx.Timeout(10.0)
+            async with self._client(timeout) as client:
+                resp = await client.get(self.health_url, timeout=timeout)
                 if resp.status_code == 200:
                     return True
                 raise Exception(f"Health check devolvió status {resp.status_code}")
@@ -144,10 +167,10 @@ class VLLMClient:
         while elapsed < max_wait_seconds:
             attempt += 1
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with self._client(timeout) as client:
                     # Verificar health
                     try:
-                        health_resp = await client.get(self.health_url)
+                        health_resp = await client.get(self.health_url, timeout=timeout)
                         if health_resp.status_code != 200:
                             logger.debug(
                                 f"[{attempt}] Health check falló (status {health_resp.status_code})"
@@ -163,7 +186,7 @@ class VLLMClient:
 
                     # Verificar lista de modelos
                     try:
-                        models_resp = await client.get(self.models_url)
+                        models_resp = await client.get(self.models_url, timeout=timeout)
                         if models_resp.status_code != 200:
                             logger.debug(
                                 f"[{attempt}] No se pudo obtener lista de modelos "
@@ -263,11 +286,12 @@ class VLLMClient:
         )
 
         async def _call():
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._client() as client:
                 resp = await client.post(
                     self.completions_url,
                     headers=self.headers,
                     json=payload,
+                    timeout=self.timeout,
                 )
                 resp.raise_for_status()
                 return resp
@@ -309,12 +333,13 @@ class VLLMClient:
         """
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=self.streaming_timeout) as client:
+                async with self._client(self.streaming_timeout) as client:
                     async with client.stream(
                         "POST",
                         self.completions_url,
                         headers=self.headers,
                         json=payload,
+                        timeout=self.streaming_timeout,
                     ) as response:
                         # Manejar error 404 (modelo no encontrado)
                         if response.status_code == 404:
@@ -400,11 +425,16 @@ class VLLMClient:
 _vllm_client: Optional[VLLMClient] = None
 
 
-def get_vllm_client() -> VLLMClient:
-    """Obtiene la instancia global del cliente vLLM"""
+def get_vllm_client(httpx_client=None) -> VLLMClient:
+    """
+    Obtiene la instancia global del cliente vLLM.
+
+    Args:
+        httpx_client: Cliente httpx compartido (opcional, desde lifespan)
+    """
     global _vllm_client
     if _vllm_client is None:
-        _vllm_client = VLLMClient()
+        _vllm_client = VLLMClient(httpx_client=httpx_client)
     return _vllm_client
 
 
