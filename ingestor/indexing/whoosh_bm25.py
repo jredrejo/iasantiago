@@ -18,8 +18,12 @@ from core.config import BM25_BASE_DIR
 logger = logging.getLogger(__name__)
 
 
-# Esquema predeterminado para indexación de documentos
+# Esquema predeterminado para indexación de documentos.
+#
+# `doc_key` es el único campo `unique`: sin él, `writer.update_document()` se
+# comporta como `add_document()` y cada re-ingesta duplica todos los chunks.
 DEFAULT_SCHEMA = Schema(
+    doc_key=ID(unique=True, stored=True),
     file_path=ID(stored=True),
     page=NUMERIC(stored=True),
     chunk_id=NUMERIC(stored=True),
@@ -27,6 +31,11 @@ DEFAULT_SCHEMA = Schema(
     chunk_type=TEXT(stored=True),
     source=TEXT(stored=True),
 )
+
+
+def build_doc_key(file_path: str, chunk_id: Any) -> str:
+    """Construye la clave única de un chunk dentro del índice."""
+    return f"{file_path}:{chunk_id}"
 
 
 class WhooshService:
@@ -62,8 +71,34 @@ class WhooshService:
             index.create_in(path, DEFAULT_SCHEMA)
         else:
             logger.info(f"[WHOOSH] Index at {path} already exists")
+            self._migrate_schema(path)
 
         return path
+
+    def _migrate_schema(self, path: str) -> None:
+        """
+        Añade a un índice existente los campos que le falten del esquema actual.
+
+        Los índices creados por versiones anteriores (o por el esquema más
+        estrecho de rag-api) carecen de `doc_key`/`chunk_type`/`source`;
+        escribir esos campos fallaría. Los documentos ya indexados quedan sin
+        valor en los campos nuevos, algo que la re-indexación completa resuelve.
+        """
+        try:
+            idx = index.open_dir(path)
+            missing = [
+                name for name in DEFAULT_SCHEMA.names() if name not in idx.schema.names()
+            ]
+            if not missing:
+                return
+
+            logger.info(f"[WHOOSH] Añadiendo campos ausentes en {path}: {missing}")
+            writer = idx.writer()
+            for name in missing:
+                writer.add_field(name, DEFAULT_SCHEMA[name])
+            writer.commit()
+        except Exception as e:
+            logger.warning(f"[WHOOSH] No se pudo migrar el esquema de {path}: {e}")
 
     def get_index(self, topic: str) -> index.Index:
         """
@@ -103,10 +138,13 @@ class WhooshService:
 
         count = 0
         for doc in documents:
+            file_path = doc.get("file_path", "")
+            chunk_id = doc.get("chunk_id", 0)
             writer.update_document(
-                file_path=doc.get("file_path", ""),
+                doc_key=build_doc_key(file_path, chunk_id),
+                file_path=file_path,
                 page=doc.get("page", 1),
-                chunk_id=doc.get("chunk_id", 0),
+                chunk_id=chunk_id,
                 text=doc.get("text", ""),
                 chunk_type=doc.get("chunk_type", "text"),
                 source=doc.get("source", "unknown"),

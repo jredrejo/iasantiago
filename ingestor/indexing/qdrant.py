@@ -6,6 +6,7 @@ para búsqueda semántica.
 """
 
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 from qdrant_client import QdrantClient, models
@@ -14,10 +15,27 @@ from core.config import QDRANT_URL
 
 logger = logging.getLogger(__name__)
 
+# Namespace fijo para IDs de puntos deterministas.
+# NO cambiar: alterarlo reasigna los IDs de todo el corpus y obliga a re-indexar.
+POINT_ID_NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
+
 
 def topic_collection(topic: str) -> str:
     """Obtiene nombre de colección Qdrant para un tema."""
     return f"rag_{topic.lower()}"
+
+
+def build_point_id(file_path: str, chunk_id: Any) -> str:
+    """
+    Construye un ID de punto determinista para un chunk.
+
+    Usa uuid5 sobre "<file_path>:<chunk_id>" para que el mismo chunk obtenga
+    siempre el mismo ID entre ejecuciones y contenedores. `hash()` de Python
+    está salteado por proceso (PYTHONHASHSEED), por lo que producía IDs nuevos
+    en cada reinicio y los re-ingestas insertaban duplicados en vez de
+    actualizar los puntos existentes.
+    """
+    return str(uuid.uuid5(POINT_ID_NAMESPACE, f"{file_path}:{chunk_id}"))
 
 
 class QdrantService:
@@ -99,7 +117,30 @@ class QdrantService:
                 logger.error(f"[QDRANT] Error verificando colección '{coll}': {e}")
                 raise
 
+        self._ensure_file_path_index(coll)
+
         return coll
+
+    def _ensure_file_path_index(self, coll: str) -> None:
+        """
+        Asegura el índice de payload sobre `file_path`.
+
+        Necesario para que `delete_by_file` pueda borrar con un filtro
+        del lado del servidor en vez de paginar la colección entera.
+        Es idempotente: Qdrant ignora la creación si el índice ya existe.
+        """
+        try:
+            self.client.create_payload_index(
+                collection_name=coll,
+                field_name="file_path",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            logger.info(f"[QDRANT] Índice de payload 'file_path' listo en '{coll}'")
+        except Exception as e:
+            logger.warning(
+                f"[QDRANT] No se pudo crear índice de payload 'file_path' en "
+                f"'{coll}': {e}"
+            )
 
     def upsert_vectors(
         self,
@@ -130,14 +171,14 @@ class QdrantService:
         for batch_start in range(0, total, batch_size):
             batch_end = min(batch_start + batch_size, total)
 
-            # Generar IDs basados en file_path e índice
+            # IDs deterministas: mismo chunk -> mismo ID en cada ejecución
             batch_ids = []
             for i, payload in enumerate(
                 payloads[batch_start:batch_end], start=batch_start
             ):
                 file_path = payload.get("file_path", str(i))
-                point_id = abs(hash(f"{file_path}:{i}")) % (2**31)
-                batch_ids.append(point_id)
+                chunk_id = payload.get("chunk_id", i)
+                batch_ids.append(build_point_id(file_path, chunk_id))
 
             batch_vecs = vectors[batch_start:batch_end]
             batch_payloads = payloads[batch_start:batch_end]
@@ -173,34 +214,50 @@ class QdrantService:
             file_path: Ruta del archivo a eliminar
 
         Returns:
-            Número de puntos eliminados
+            Número de puntos que había para ese archivo antes de borrar
         """
         coll = topic_collection(topic)
 
+        if not self.client.collection_exists(collection_name=coll):
+            return 0
+
         logger.info(f"[QDRANT] Eliminando puntos para archivo: {file_path}")
 
-        # Encontrar todos los puntos con este file_path
-        points_result = self.client.scroll(
-            collection_name=coll,
-            limit=10000,
-            with_payload=True,
+        file_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="file_path",
+                    match=models.MatchValue(value=file_path),
+                )
+            ]
         )
 
-        points = points_result[0]
-        point_ids = [
-            point.id for point in points if point.payload.get("file_path") == file_path
-        ]
-
-        if point_ids:
-            self.client.delete(
+        # Contar antes de borrar: el borrado filtrado no devuelve el número
+        # de puntos afectados.
+        try:
+            count = self.client.count(
                 collection_name=coll,
-                points_selector=point_ids,
-            )
-            logger.info(f"[QDRANT] Eliminados {len(point_ids)} puntos")
-            return len(point_ids)
-        else:
-            logger.warning(f"[QDRANT] No se encontraron puntos para {file_path}")
+                count_filter=file_filter,
+                exact=True,
+            ).count
+        except Exception as e:
+            logger.warning(f"[QDRANT] No se pudo contar puntos de {file_path}: {e}")
+            count = -1
+
+        if count == 0:
+            logger.info(f"[QDRANT] No hay puntos previos para {file_path}")
             return 0
+
+        # Borrado filtrado del lado del servidor: alcanza toda la colección,
+        # no sólo los primeros 10 000 puntos.
+        self.client.delete(
+            collection_name=coll,
+            points_selector=models.FilterSelector(filter=file_filter),
+            wait=True,
+        )
+
+        logger.info(f"[QDRANT] Eliminados {count} puntos de {file_path}")
+        return max(count, 0)
 
     def delete_collection(self, topic: str) -> bool:
         """

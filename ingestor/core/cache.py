@@ -187,12 +187,25 @@ class ExtractionCache:
             self._cache = {}
 
     def _save(self) -> None:
-        """Guarda caché en disco."""
+        """
+        Guarda caché en disco de forma atómica.
+
+        Un fallo nativo a mitad de escritura dejaría el JSON truncado y
+        perdería toda la caché de extracciones del corpus.
+        """
+        tmp_file = self._cache_file.with_suffix(self._cache_file.suffix + ".tmp")
         try:
-            with open(self._cache_file, "w") as f:
+            with open(tmp_file, "w") as f:
                 json.dump(self._cache, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, self._cache_file)
         except Exception as e:
             logger.warning(f"[CACHE] Error al guardar caché: {e}")
+            try:
+                os.unlink(tmp_file)
+            except OSError:
+                pass
 
     def get(self, file_hash: str) -> Optional[List[Dict[str, Any]]]:
         """

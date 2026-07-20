@@ -9,6 +9,7 @@ import logging
 import multiprocessing
 import os
 import ssl
+from contextlib import contextmanager
 from typing import Callable, Optional
 
 import nltk
@@ -65,6 +66,17 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
 QDRANT_BATCH_SIZE = int(os.getenv("QDRANT_BATCH_SIZE", "100"))
 
 # ============================================================
+# HEARTBEAT Y WATCHDOG
+# ============================================================
+
+# Única fuente de verdad del timeout. El watchdog mata el proceso al superarlo;
+# el healthcheck de compose deriva su umbral de la misma variable para que
+# ambos no discrepen (antes: 1200 s watchdog vs 300 s healthcheck vs 450 s README).
+WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "1200"))
+WATCHDOG_CHECK_INTERVAL = int(os.getenv("WATCHDOG_CHECK_INTERVAL", "60"))
+HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE", "/tmp/ingestor_heartbeat")
+
+# ============================================================
 # DISPOSITIVO Y TIPO DE EMBEDDING
 # ============================================================
 
@@ -111,15 +123,27 @@ else:
 # ============================================================
 
 
-def setup_ssl_context() -> None:
-    """Configura contexto SSL para manejar problemas de certificados en descarga de modelos."""
+@contextmanager
+def unverified_ssl_context():
+    """
+    Desactiva temporalmente la verificación TLS y la restaura al salir.
+
+    Sólo debe envolver la descarga de modelos de EasyOCR, que usa un CDN con
+    certificados problemáticos. La versión anterior desactivaba la verificación
+    globalmente y de forma permanente para todo el proceso, afectando también a
+    las descargas de HuggingFace y a cualquier conexión https a Qdrant.
+    """
+    original = ssl._create_default_https_context
     try:
         ssl._create_default_https_context = ssl._create_unverified_context
-        logger.info(
-            "[SSL] Configurado contexto SSL no verificado para descarga de modelos"
-        )
+        logger.info("[SSL] Verificación TLS desactivada temporalmente")
+        yield
     except Exception as e:
         logger.warning(f"[SSL] No se pudo configurar contexto SSL: {e}")
+        yield
+    finally:
+        ssl._create_default_https_context = original
+        logger.info("[SSL] Verificación TLS restaurada")
 
 
 # ============================================================

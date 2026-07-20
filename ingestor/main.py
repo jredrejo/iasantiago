@@ -5,7 +5,6 @@ Orquesta la extracción de PDF, chunking, embedding e indexación.
 """
 
 import faulthandler
-import glob
 import logging
 import os
 import signal
@@ -43,7 +42,11 @@ from core.config import (
     TOPIC_BASE_DIR,
     TOPIC_LABELS,
 )
-from core.heartbeat import get_heartbeat_manager, update_heartbeat
+from core.heartbeat import (
+    get_heartbeat_manager,
+    set_heartbeat_callback,
+    update_heartbeat,
+)
 from extraction.pipeline import ExtractionPipeline
 from indexing.embeddings import get_embedding_service, validate_and_fix_vectors
 from indexing.qdrant import ensure_qdrant, get_qdrant_service
@@ -63,7 +66,19 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
+
+# Silenciar bibliotecas ruidosas: httpx emitía 2 líneas INFO por cada lote de
+# Qdrant (1 478 de 9 400 líneas en una ejecución real) y pdfminer/unstructured
+# repiten avisos por página.
+for _noisy in ("httpx", "httpcore", "pdfminer", "unstructured", "PIL"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
+
+# Los extractores señalan actividad con call_heartbeat(); sin este registro el
+# callback es None y todas esas llamadas son silenciosas, dejando que el
+# watchdog mate extracciones sanas (p. ej. OCR de un libro de 348 páginas).
+set_heartbeat_callback(update_heartbeat)
 
 # Inicializar servicios
 state = get_processing_state()
@@ -152,6 +167,13 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
                 }
             )
 
+        # Borrar los chunks previos de este archivo antes de reescribirlo.
+        # Sin esto, un documento que encoge deja chunks huérfanos en la cola
+        # que se siguen recuperando en las búsquedas.
+        logger.info("Limpiando índices previos de este archivo...")
+        qdrant_service.delete_by_file(topic, pdf_path)
+        whoosh_service.delete_by_file(topic, pdf_path)
+
         # Upload to Qdrant
         logger.info("Subiendo a Qdrant...")
         qdrant_service.upsert_vectors(topic, vecs, payloads)
@@ -168,6 +190,20 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
         logger.error(f"[ERROR] Falló al indexar {filename}: {e}", exc_info=True)
         state.mark_as_failed(pdf_path, str(e))
         return False
+
+
+def find_pdfs(topic_dir: str) -> List[str]:
+    """
+    Encuentra los PDFs de un tema, recursivamente y sin distinguir mayúsculas.
+
+    El glob anterior (`*.pdf`, no recursivo) ignoraba tanto los `.PDF` como
+    cualquier PDF en subcarpetas.
+    """
+    return sorted(
+        str(p)
+        for p in Path(topic_dir).rglob("*")
+        if p.is_file() and p.suffix.lower() == ".pdf"
+    )
 
 
 def initial_scan() -> None:
@@ -191,7 +227,7 @@ def initial_scan() -> None:
         topic_dir = os.path.join(TOPIC_BASE_DIR, topic)
         os.makedirs(topic_dir, exist_ok=True)
 
-        pdfs = glob.glob(os.path.join(topic_dir, "*.pdf"))
+        pdfs = find_pdfs(topic_dir)
         logger.info(f"\nEncontrados {len(pdfs)} PDFs en {topic}")
 
         for pdf in pdfs:
@@ -219,6 +255,16 @@ def initial_scan() -> None:
     logger.info(
         f"Procesados: {pdf_count} | Omitidos: {skipped_count} | Errores: {error_count}"
     )
+
+    quarantined = state.get_quarantined()
+    if quarantined:
+        logger.warning(
+            f"{len(quarantined)} archivos en cuarentena (reintentos agotados); "
+            f"usa 'python main.py retry-failed' para reactivarlos:"
+        )
+        for path, info in quarantined.items():
+            logger.warning(f"  - {Path(path).name}: {info.get('error', 'sin detalle')}")
+
     logger.info("=" * 60)
 
 
@@ -277,11 +323,17 @@ def main() -> None:
             topic = sys.argv[2]
             sys.exit(0 if delete_topic(topic) else 1)
 
+        elif command == "retry-failed":
+            count = state.reset_failed()
+            print(f"Reactivados {count} archivos fallidos")
+            sys.exit(0)
+
         else:
             print("Uso:")
             print("  python main.py                      - Escanear e indexar todo")
             print("  python main.py delete <topic> <pdf> - Eliminar un PDF")
             print("  python main.py delete-topic <topic> - Eliminar todo de un tema")
+            print("  python main.py retry-failed         - Reactivar archivos en cuarentena")
             sys.exit(1)
     else:
         initial_scan()

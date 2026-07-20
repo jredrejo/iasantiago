@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 import torch
 
 from core.cache import get_pdf_total_pages
-from core.config import setup_ssl_context
+from core.config import unverified_ssl_context
 from core.heartbeat import call_heartbeat, BackgroundHeartbeat
 from extraction.base import Element
 from extraction.unstructured_extractor import UnstructuredExtractor
@@ -94,7 +94,6 @@ class EasyOCRProcessor:
         """Inicializa el reader de EasyOCR."""
         EasyOCRProcessor._initialization_attempted = True
 
-        setup_ssl_context()
         models_exist = self._check_models_exist()
 
         if not models_exist:
@@ -111,15 +110,17 @@ class EasyOCRProcessor:
         logger.info("[EASYOCR] Inicializando reader...")
         call_heartbeat("easyocr_init")
 
-        self.reader = easyocr.Reader(
-            ["es", "en"],
-            gpu=self.use_gpu,
-            model_storage_directory=str(self.model_dir),
-            download_enabled=True,
-            detector=True,
-            recognizer=True,
-            verbose=False,
-        )
+        # La verificación TLS sólo se relaja durante la descarga de modelos.
+        with unverified_ssl_context():
+            self.reader = easyocr.Reader(
+                ["es", "en"],
+                gpu=self.use_gpu,
+                model_storage_directory=str(self.model_dir),
+                download_enabled=True,
+                detector=True,
+                recognizer=True,
+                verbose=False,
+            )
 
         call_heartbeat("easyocr_init_done")
         EasyOCRProcessor._reader_cache = self.reader

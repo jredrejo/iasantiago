@@ -8,6 +8,7 @@ automático a CPU y procesamiento de mega-lotes para documentos grandes.
 import gc
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Any, Callable, List, Optional, Union
 
@@ -303,7 +304,7 @@ class EmbeddingService:
             texts,
             normalize_embeddings=True,
             batch_size=batch_size,
-            show_progress_bar=True,
+            show_progress_bar=sys.stderr.isatty(),
             convert_to_tensor=True,
         )
 
@@ -343,7 +344,7 @@ class EmbeddingService:
                 batch_texts,
                 normalize_embeddings=True,
                 batch_size=batch_size,
-                show_progress_bar=True,
+                show_progress_bar=sys.stderr.isatty(),
                 convert_to_tensor=True,
             )
 
@@ -399,7 +400,7 @@ class EmbeddingService:
                         batch_texts,
                         normalize_embeddings=True,
                         batch_size=batch_size,
-                        show_progress_bar=True,
+                        show_progress_bar=sys.stderr.isatty(),
                         convert_to_tensor=True,
                     )
 
@@ -416,7 +417,7 @@ class EmbeddingService:
                     texts,
                     normalize_embeddings=True,
                     batch_size=batch_size,
-                    show_progress_bar=True,
+                    show_progress_bar=sys.stderr.isatty(),
                     convert_to_tensor=True,
                 )
 

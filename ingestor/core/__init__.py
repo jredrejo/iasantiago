@@ -15,7 +15,7 @@ from core.config import (
     TOPIC_LABELS,
     ensure_nltk_data,
     get_sent_tokenizer,
-    setup_ssl_context,
+    unverified_ssl_context,
 )
 from core.gpu import GPUManager
 from core.heartbeat import HeartbeatManager, call_heartbeat, set_heartbeat_callback
@@ -31,7 +31,7 @@ __all__ = [
     "QDRANT_URL",
     "QDRANT_BATCH_SIZE",
     "MODEL_CACHE_DIR",
-    "setup_ssl_context",
+    "unverified_ssl_context",
     "ensure_nltk_data",
     "get_sent_tokenizer",
     # GPU

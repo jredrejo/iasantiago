@@ -5,7 +5,6 @@ Rastrea qué archivos han sido procesados, su estado,
 y proporciona detección de cambios vía hashing MD5.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -13,9 +12,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.cache import get_file_hash_md5
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_STATE_FILE = "/whoosh/.processing_state.json"
+
+# Número de intentos antes de poner un archivo en cuarentena.
+# Superado el límite deja de reintentarse en cada arranque; `main.py retry-failed`
+# lo reactiva manualmente.
+MAX_RETRIES = int(os.getenv("INGESTOR_MAX_RETRIES", "3"))
 
 
 class ProcessingState:
@@ -34,21 +40,26 @@ class ProcessingState:
         self.state = self._load_state()
 
     def _load_state(self) -> Dict[str, Any]:
-        """Carga estado desde archivo o crea nuevo."""
-        if os.path.exists(self.state_file):
+        """Carga estado desde archivo (con respaldo `.bak`) o crea nuevo."""
+        for candidate, label in (
+            (self.state_file, "estado"),
+            (f"{self.state_file}.bak", "respaldo"),
+        ):
+            if not os.path.exists(candidate):
+                continue
             try:
-                with open(self.state_file, "r") as f:
+                with open(candidate, "r") as f:
                     state = json.load(f)
                 logger.info(
-                    f"[STATE] Estado cargado con {len(state.get('processed', {}))} archivos procesados"
+                    f"[STATE] Cargado {label} con "
+                    f"{len(state.get('processed', {}))} archivos procesados"
                 )
                 return state
             except Exception as e:
-                logger.warning(f"[STATE] Error al cargar estado: {e}, creando nuevo")
-                return self._create_empty_state()
-        else:
-            logger.info("[STATE] No se encontró estado previo, creando nuevo")
-            return self._create_empty_state()
+                logger.warning(f"[STATE] Error al cargar {label} desde {candidate}: {e}")
+
+        logger.info("[STATE] No se encontró estado previo utilizable, creando nuevo")
+        return self._create_empty_state()
 
     def _create_empty_state(self) -> Dict[str, Any]:
         """Crea estructura de estado vacía."""
@@ -61,22 +72,40 @@ class ProcessingState:
         }
 
     def _save_state(self) -> None:
-        """Guarda estado en archivo."""
+        """
+        Guarda estado de forma atómica.
+
+        Escribe a un temporal y hace `os.replace()` (atómico en POSIX) para que
+        un segfault a mitad de escritura no deje el JSON truncado: un estado
+        corrupto se carga como vacío y provoca una re-indexación completa.
+        Se conserva una generación `.bak` como red de seguridad adicional.
+        """
+        tmp_file = f"{self.state_file}.tmp"
         try:
             os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
-            with open(self.state_file, "w") as f:
+
+            with open(tmp_file, "w") as f:
                 json.dump(self.state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            if os.path.exists(self.state_file):
+                try:
+                    os.replace(self.state_file, f"{self.state_file}.bak")
+                except OSError:
+                    pass
+
+            os.replace(tmp_file, self.state_file)
         except Exception as e:
             logger.error(f"[STATE] Error al guardar estado: {e}")
+            try:
+                os.unlink(tmp_file)
+            except OSError:
+                pass
 
     def get_file_hash(self, file_path: str) -> Optional[str]:
-        """Calcula hash MD5 del archivo."""
-        try:
-            with open(file_path, "rb") as f:
-                return hashlib.md5(f.read()).hexdigest()
-        except Exception as e:
-            logger.error(f"[STATE] Error al calcular hash para {file_path}: {e}")
-            return None
+        """Calcula hash MD5 del archivo (por streaming, no carga el PDF en RAM)."""
+        return get_file_hash_md5(file_path)
 
     def is_already_processed(self, file_path: str) -> bool:
         """
@@ -94,10 +123,19 @@ class ProcessingState:
 
         file_info = self.state["processed"][file_path]
 
-        # Reintentar archivos fallidos
+        # Reintentar archivos fallidos, hasta agotar el límite de intentos
         if file_info.get("status") == "failed":
+            retry_count = file_info.get("retry_count", 0)
+            if retry_count >= MAX_RETRIES:
+                logger.warning(
+                    f"[STATE] En cuarentena tras {retry_count} intentos "
+                    f"(usa 'retry-failed' para reactivarlo): {Path(file_path).name}"
+                )
+                return True
+
             logger.info(
-                f"[STATE] Reintentando archivo que falló previamente: {Path(file_path).name}"
+                f"[STATE] Reintentando archivo que falló previamente "
+                f"(intento {retry_count + 1}/{MAX_RETRIES}): {Path(file_path).name}"
             )
             return False
 
@@ -127,19 +165,64 @@ class ProcessingState:
         logger.info(f"[STATE] Marcado como procesado: {Path(file_path).name}")
 
     def mark_as_failed(self, file_path: str, error: str) -> None:
-        """Marca archivo como fallido."""
+        """Marca archivo como fallido e incrementa su contador de intentos."""
         file_path = str(file_path)
+        previous = self.state["processed"].get(file_path, {})
+        retry_count = previous.get("retry_count", 0) + 1
+
         self.state["processed"][file_path] = {
             "timestamp": datetime.now().isoformat(),
             "status": "failed",
             "error": str(error)[:200],
+            "retry_count": retry_count,
         }
         self.state["failed"][file_path] = {
             "error": str(error)[:500],
             "timestamp": datetime.now().isoformat(),
+            "retry_count": retry_count,
         }
         self._save_state()
-        logger.warning(f"[STATE] Marcado como fallido: {Path(file_path).name}")
+
+        if retry_count >= MAX_RETRIES:
+            logger.warning(
+                f"[STATE] En cuarentena tras {retry_count} intentos: "
+                f"{Path(file_path).name}"
+            )
+        else:
+            logger.warning(
+                f"[STATE] Marcado como fallido "
+                f"(intento {retry_count}/{MAX_RETRIES}): {Path(file_path).name}"
+            )
+
+    def reset_failed(self) -> int:
+        """
+        Reactiva los archivos en cuarentena poniendo su contador a cero.
+
+        Returns:
+            Número de archivos reactivados
+        """
+        reset_count = 0
+
+        for file_path, info in self.state["processed"].items():
+            if info.get("status") == "failed" and info.get("retry_count", 0) > 0:
+                info["retry_count"] = 0
+                reset_count += 1
+                self.state["failed"].get(file_path, {})["retry_count"] = 0
+
+        if reset_count:
+            self._save_state()
+
+        logger.info(f"[STATE] Reactivados {reset_count} archivos fallidos")
+        return reset_count
+
+    def get_quarantined(self) -> Dict[str, Dict[str, Any]]:
+        """Obtiene los archivos que agotaron sus reintentos."""
+        return {
+            path: info
+            for path, info in self.state.get("processed", {}).items()
+            if info.get("status") == "failed"
+            and info.get("retry_count", 0) >= MAX_RETRIES
+        }
 
     def update_scan_time(self) -> None:
         """Actualiza marca de tiempo del último escaneo."""

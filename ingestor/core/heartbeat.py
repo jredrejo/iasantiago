@@ -12,12 +12,18 @@ import threading
 import time
 from typing import Callable, Optional
 
+from core.config import (
+    HEARTBEAT_FILE,
+    WATCHDOG_CHECK_INTERVAL,
+    WATCHDOG_TIMEOUT,
+)
+
 logger = logging.getLogger(__name__)
 
-# Configuración por defecto
-DEFAULT_HEARTBEAT_FILE = "/tmp/ingestor_heartbeat"
-DEFAULT_WATCHDOG_TIMEOUT = 1200  # 20 minutos
-DEFAULT_CHECK_INTERVAL = 60  # 1 minuto
+# Configuración derivada de core.config (única fuente de verdad, vía env)
+DEFAULT_HEARTBEAT_FILE = HEARTBEAT_FILE
+DEFAULT_WATCHDOG_TIMEOUT = WATCHDOG_TIMEOUT
+DEFAULT_CHECK_INTERVAL = WATCHDOG_CHECK_INTERVAL
 
 
 class HeartbeatManager:
