@@ -10,8 +10,8 @@ services:
     volumes:
       - ${QDRANT_STORAGE}:/qdrant/storage
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      # Solo localhost: qdrant se usa desde otros contenedores por red docker.
+      - "127.0.0.1:6333:6333"
     healthcheck:
       test: ["CMD-SHELL", "cat < /dev/tcp/localhost/6333 || exit 1"]
       interval: 10s
@@ -104,7 +104,8 @@ services:
       - ./rag-api:/app
       - ./data/telemetry:/data/telemetry
     ports:
-      - "8001:8001"
+      # Solo localhost: nginx (en el host) llega por 127.0.0.1:8001.
+      - "127.0.0.1:8001:8001"
     depends_on:
       - vllm
       - qdrant
@@ -124,11 +125,14 @@ services:
     restart: on-failure # Restart on crash (segfault), but not on clean exit
     # Healthcheck monitors for stuck containers (visible via docker ps)
     # Signal handler in main.py forces exit on SIGSEGV; if still stuck, use docker-autoheal
+    # El umbral se deriva de WATCHDOG_TIMEOUT (por defecto 1200s) para que
+    # healthcheck y watchdog no discrepen: antes el contenedor se marcaba
+    # unhealthy a los 300s durante extracciones largas perfectamente sanas.
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          'python3 -c "import os, time; f=''/tmp/ingestor_heartbeat''; exit(0 if not os.path.exists(f) or time.time() - float(open(f).readline()) < 300 else 1)"',
+          'python3 -c "import os, time; f=os.getenv(''HEARTBEAT_FILE'', ''/tmp/ingestor_heartbeat''); t=int(os.getenv(''WATCHDOG_TIMEOUT'', ''1200'')); exit(0 if not os.path.exists(f) or time.time() - float(open(f).readline()) < t else 1)"',
         ]
       interval: 60s
       timeout: 10s
@@ -146,6 +150,10 @@ services:
       - TRANSFORMERS_CACHE=/models_cache/transformers
       - TOPIC_BASE_DIR=/topics
       - BM25_BASE_DIR=/whoosh
+      # Fuente única de verdad del watchdog: la usan main.py y el healthcheck
+      - WATCHDOG_TIMEOUT=1200
+      - HEARTBEAT_FILE=/tmp/ingestor_heartbeat
+      - INGESTOR_MAX_RETRIES=3
       - MIN_IMAGE_WIDTH=100
       - MIN_IMAGE_HEIGHT=100
       - LLM_ANALYSIS_TEMPERATURE=0.3
@@ -212,7 +220,10 @@ services:
       - WEBUI_SESSION_COOKIE_SECURE=true
       - WEBUI_AUTH_COOKIE_SECURE=true
     ports:
-      - "8080:8080"
+      # Solo localhost. Exponerlo a la LAN permite suplantar a cualquier usuario
+      # (incluido admin) enviando X-Forwarded-Email: Open WebUI confía en esa
+      # cabecera sin comprobar el origen. El acceso legítimo es nginx -> oauth2-proxy.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./openwebui/data:/app/backend/data
       - ./openwebui/custom/apple-touch-icon.png:/app/backend/open_webui/static/apple-touch-icon.png:ro
@@ -230,7 +241,8 @@ services:
     container_name: oauth2-proxy
     restart: unless-stopped
     ports:
-      - "4180:4180"
+      # Solo localhost: nginx (en el host) llega por 127.0.0.1:4180.
+      - "127.0.0.1:4180:4180"
     volumes:
       - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
       - ./oauth2-proxy/templates:/etc/oauth2-proxy/templates:ro
