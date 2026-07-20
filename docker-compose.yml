@@ -164,6 +164,9 @@ services:
       - BM25_BASE_DIR=/whoosh
       # Fuente única de verdad del watchdog: la usan main.py y el healthcheck
       - WATCHDOG_TIMEOUT=1200
+      # Presupuesto de tokens por fragmento. 256 sale de un barrido medido
+      # (ver core/config.py); cambiarlo obliga a re-indexar y a repetirlo.
+      - CHUNK_MAX_TOKENS=256
       - HEARTBEAT_FILE=/tmp/ingestor_heartbeat
       - INGESTOR_MAX_RETRIES=3
       - MIN_IMAGE_WIDTH=100

@@ -93,10 +93,24 @@ ENCODING_MEGA_BATCH_SIZE = int(os.getenv("ENCODING_MEGA_BATCH_SIZE", "5000"))
 # FRAGMENTACIÓN
 # ============================================================
 
-# Presupuesto de tokens por fragmento. Los tres modelos de embedding en uso
-# (e5-large-instruct, gte-large, instructor-large) truncan a 512, así que
-# subirlo sólo volvería a provocar truncado silencioso.
-CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "512"))
+# Presupuesto de tokens por fragmento.
+#
+# 512 es el techo duro: los tres modelos de embedding en uso
+# (e5-large-instruct, gte-large, instructor-large) truncan ahí, así que subirlo
+# sólo devolvería el truncado silencioso que la Fase 1 vino a eliminar.
+#
+# El valor por defecto es 256 por medición, no por intuición. Barrido sobre el
+# tema Programming (13 consultas con verdad de referencia por página):
+#
+#     métrica        sin fragmentar    512 tokens    256 tokens
+#     PageRecall@1          0.6154        0.6154        0.8462
+#     PageRecall@3          0.7692        0.6923        0.9231
+#     PageMRR               0.6987        0.6841        0.8846
+#
+# A 512 el fragmento es tan grande que el embedding se diluye: empata en @1 y
+# EMPEORA en @3/@5 respecto a no fragmentar. A 256 gana o empata en las 13
+# consultas. Antes de tocar esto, repetir el barrido.
+CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "256"))
 
 # ============================================================
 # CONFIGURACIÓN DE TESSERACT OCR
