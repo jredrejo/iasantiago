@@ -1,0 +1,67 @@
+[
+  {
+    "query": "cómo se define una tabla en HTML con las etiquetas tr, td y th",
+    "topic": "Programming",
+    "relevant_pages": ["3.1 HTML.pdf#13"]
+  },
+  {
+    "query": "propiedades de un contenedor flexbox como justify-content y align-items",
+    "topic": "Programming",
+    "relevant_pages": ["3.2 CSS.pdf#16"]
+  },
+  {
+    "query": "inconvenientes de usar sistemas de archivos para almacenar datos: redundancia e inconsistencia",
+    "topic": "Programming",
+    "relevant_pages": ["BBDD-T0.pdf#7"]
+  },
+  {
+    "query": "elección del modelo de datos y diseño lógico de una base de datos",
+    "topic": "Programming",
+    "relevant_pages": ["BBDD-T0.pdf#15"]
+  },
+  {
+    "query": "evitar errores de sintaxis con cadenas en Python y el método removeprefix",
+    "topic": "Programming",
+    "relevant_pages": ["CURSO INTENSIVO DE PYTHON 3.pdf#61"]
+  },
+  {
+    "query": "usar una sentencia if para calcular el precio de la entrada según la edad del visitante",
+    "topic": "Programming",
+    "relevant_pages": ["CURSO INTENSIVO DE PYTHON 3.pdf#141"]
+  },
+  {
+    "query": "función con número arbitrario de argumentos que recoge los ingredientes en una tupla",
+    "topic": "Programming",
+    "relevant_pages": ["CURSO INTENSIVO DE PYTHON 3.pdf#241"]
+  },
+  {
+    "query": "estructuras de control if else y bloques de sentencias en JavaScript",
+    "topic": "Programming",
+    "relevant_pages": ["Lenguaje Javascript.pdf#21"]
+  },
+  {
+    "query": "expresiones regulares en JavaScript con replace y cuantificadores como bc+ o bc{1,4}",
+    "topic": "Programming",
+    "relevant_pages": ["Lenguaje Javascript.pdf#56"]
+  },
+  {
+    "query": "función shiftOut de Arduino para desplazar un byte bit a bit",
+    "topic": "Programming",
+    "relevant_pages": ["ARDUINO CC DOCUMENTACION OFICIAL.pdf#31"]
+  },
+  {
+    "query": "biblioteca Wire de Arduino donde read y write sustituyen a send y receive",
+    "topic": "Programming",
+    "relevant_pages": ["ARDUINO CC DOCUMENTACION OFICIAL.pdf#91"]
+  },
+  {
+    "query": "operadores de asignación aritmética en Python: += -= *= /=",
+    "topic": "Programming",
+    "relevant_pages": ["bgpython_a4_c_2.pdf#26"]
+  },
+  {
+    "query": "secuencia de Fibonacci donde cada número es la suma de los dos anteriores",
+    "topic": "Programming",
+    "relevant_pages": ["bgpython_a4_c_2.pdf#71"]
+  }
+]

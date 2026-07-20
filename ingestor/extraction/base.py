@@ -59,6 +59,30 @@ class Element:
         )
 
 
+@dataclass
+class ExtractionResult:
+    """
+    Resultado de una extracción, con el documento estructurado si lo hay.
+
+    Los extractores de respaldo sólo saben producir `Element` por párrafo. Docling
+    además construye un `DoclingDocument` con la jerarquía de secciones, las tablas
+    y la procedencia de página; conservarlo permite fragmentar con `HybridChunker`
+    en vez de aplanar a texto y perder esa estructura.
+
+    `docling_document` es `None` cuando la extracción vino de un extractor de
+    respaldo; en ese caso hay que fragmentar los `elements` por tokens.
+    """
+
+    elements: List["Element"]
+    docling_document: Any = None
+    extractor: str = "unknown"
+
+    @property
+    def has_structure(self) -> bool:
+        """Indica si se dispone de un DoclingDocument para fragmentar."""
+        return self.docling_document is not None
+
+
 class ExtractorProtocol(Protocol):
     """
     Interfaz para todas las implementaciones de extracción de PDF.

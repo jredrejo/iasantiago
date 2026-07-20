@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.cache import get_pdf_total_pages
-from extraction.base import Element, ExtractionError, check_pdf_has_text
+from extraction.base import (
+    Element,
+    ExtractionError,
+    ExtractionResult,
+    check_pdf_has_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,25 @@ class ExtractionPipeline:
         Raises:
             ExtractionError: Si todos los extractores fallan
         """
+        return self.extract_document(pdf_path).elements
+
+    def extract_document(self, pdf_path: Path) -> ExtractionResult:
+        """
+        Extrae del PDF conservando el documento estructurado si lo hay.
+
+        Igual que `extract()`, pero devuelve además el `DoclingDocument` cuando
+        el extractor que tuvo éxito fue Docling, para poder fragmentar con
+        `HybridChunker` respetando secciones y presupuesto de tokens.
+
+        Args:
+            pdf_path: Ruta al archivo PDF
+
+        Returns:
+            ExtractionResult con los elementos y, si existe, el DoclingDocument
+
+        Raises:
+            ExtractionError: Si todos los extractores fallan
+        """
         pdf_path = Path(pdf_path)
         total_pages = get_pdf_total_pages(str(pdf_path))
 
@@ -133,11 +157,19 @@ class ExtractionPipeline:
 
                 if self._is_sufficient(elements, total_pages, is_last_resort=is_last):
                     elements = self._validate_pages(elements, total_pages)
+                    # Sólo Docling expone un documento estructurado; el resto
+                    # de extractores dejan `last_document` a None.
+                    dl_doc = getattr(extractor, "last_document", None)
                     logger.info(
                         f"[PIPELINE] {extractor.name} exitoso con "
-                        f"{len(elements)} elementos"
+                        f"{len(elements)} elementos "
+                        f"(estructura: {'sí' if dl_doc is not None else 'no'})"
                     )
-                    return elements
+                    return ExtractionResult(
+                        elements=elements,
+                        docling_document=dl_doc,
+                        extractor=extractor.name,
+                    )
 
                 logger.info(
                     f"[PIPELINE] {extractor.name} retornó resultados insuficientes, "

@@ -35,13 +35,16 @@ for sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGABRT):
         pass
 
 # Ahora importar módulos del proyecto
+from chunking.token_chunker import build_chunks
 from core.cache import get_pdf_total_pages
 from core.config import (
+    CHUNK_MAX_TOKENS,
     EMBED_DEFAULT,
     EMBED_PER_TOPIC,
     TOPIC_BASE_DIR,
     TOPIC_LABELS,
 )
+from extraction.base import ExtractionError
 from core.heartbeat import (
     get_heartbeat_manager,
     set_heartbeat_callback,
@@ -111,8 +114,8 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
     try:
         # Extract elements from PDF
         logger.info("Extracting content...")
-        elements = extraction_pipeline.extract(Path(pdf_path))
-        logger.info(f"Extracted {len(elements)} elements")
+        result = extraction_pipeline.extract_document(Path(pdf_path))
+        logger.info(f"Extracted {len(result.elements)} elements")
 
         # Get embedding model
         embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
@@ -123,8 +126,17 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
         ensure_qdrant(topic, dims)
         ensure_whoosh(topic)
 
+        # Fragmentar respetando el presupuesto de tokens del modelo de ESTE tema.
+        # Antes se embebían los elementos en crudo, así que todo lo que pasara de
+        # 512 tokens se truncaba en silencio.
+        chunks = build_chunks(result, embed_name, max_tokens=CHUNK_MAX_TOKENS)
+        logger.info(f"Fragmentado en {len(chunks)} chunks")
+
+        if not chunks:
+            raise ExtractionError(f"No se produjo ningún chunk para {filename}")
+
         # Prepare texts for encoding
-        texts = [elem.text for elem in elements]
+        texts = [c.text for c in chunks]
 
         # Apply E5 prefix if needed
         if "e5" in embed_name.lower():
@@ -154,16 +166,19 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
 
         # Build payloads with validated page numbers
         payloads = []
-        for idx, elem in enumerate(elements):
-            page = validate_page_number(elem.page, total_pages)
+        for idx, chunk in enumerate(chunks):
+            page = validate_page_number(chunk.page, total_pages)
             payloads.append(
                 {
                     "file_path": pdf_path,
                     "page": page,
                     "chunk_id": idx,
-                    "text": elem.text,
-                    "chunk_type": elem.type,
-                    "source": elem.source,
+                    "text": chunk.text,
+                    "chunk_type": chunk.type,
+                    "source": chunk.source,
+                    # Ruta de encabezados: mejora las citas en rag-api y permite
+                    # filtrar/depurar por sección.
+                    "heading_path": chunk.heading_path,
                 }
             )
 
@@ -328,12 +343,20 @@ def main() -> None:
             print(f"Reactivados {count} archivos fallidos")
             sys.exit(0)
 
+        elif command == "reset-docling-crashes":
+            from extraction.docling_extractor import _get_crash_state
+
+            count = _get_crash_state().reset()
+            print(f"Rehabilitado docling para {count} archivos")
+            sys.exit(0)
+
         else:
             print("Uso:")
             print("  python main.py                      - Escanear e indexar todo")
             print("  python main.py delete <topic> <pdf> - Eliminar un PDF")
             print("  python main.py delete-topic <topic> - Eliminar todo de un tema")
             print("  python main.py retry-failed         - Reactivar archivos en cuarentena")
+            print("  python main.py reset-docling-crashes - Rehabilitar docling en archivos vetados")
             sys.exit(1)
     else:
         initial_scan()

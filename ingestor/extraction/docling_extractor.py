@@ -7,8 +7,11 @@ con seguimiento de fallos y respaldo automático.
 
 import copy
 import gc
+import hashlib
 import logging
+import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +19,7 @@ import pypdf
 import torch
 from docling.backend.docling_parse_v4_backend import DoclingParseV4DocumentBackend
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from core.cache import ExtractionCache, get_file_hash_sha256
@@ -37,60 +40,224 @@ class DoclingCrashLimitExceeded(Exception):
     pass
 
 
-class CrashStateManager:
-    """Rastrea archivos que causan fallos para comportamiento de omitir-después-de-N-fallos."""
+# Número de fallos antes de renunciar a Docling para un archivo.
+# Era 1: un único fallo transitorio (OOM de CUDA por presión de VRAM, o un
+# corte del watchdog a mitad de una extracción sana) desterraba el archivo a la
+# cadena de extractores débil para siempre, incluso desaparecida la causa.
+DOCLING_MAX_CRASHES = int(os.getenv("DOCLING_MAX_CRASHES", "3"))
 
-    def __init__(self, cache_dir: Path, max_crashes: int = 1):
+
+class CrashStateManager:
+    """
+    Rastrea archivos que hacen caer a Docling, para omitirlo tras N fallos.
+
+    El contador se incrementa *antes* de procesar y se limpia al terminar con
+    éxito: es la única forma de detectar caídas duras (segfault de una
+    biblioteca nativa) que no dejan excepción que capturar. La contrapartida es
+    que cualquier muerte del proceso cuenta como fallo, de ahí que el umbral no
+    pueda ser 1.
+
+    `crash_state.json` conserva a propósito el formato antiguo `{archivo: int}`.
+    Vive en un volumen persistente compartido entre versiones: si aquí se
+    escribiera un formato nuevo, una versión anterior del ingestor (o una
+    reversión de este commit) reventaría al comparar `dict >= int`. Los datos
+    añadidos (motivo y fecha del último fallo) van en un fichero aparte, que el
+    código antiguo simplemente ignora.
+    """
+
+    def __init__(self, cache_dir: Path, max_crashes: int = DOCLING_MAX_CRASHES):
         self.state_file = cache_dir / "crash_state.json"
+        self.reasons_file = cache_dir / "crash_reasons.json"
         self.max_crashes = max_crashes
         self._state: Dict[str, int] = {}
+        self._reasons: Dict[str, Dict[str, Any]] = {}
         self._load()
 
     def _load(self):
-        """Carga estado de fallos desde disco."""
+        """Carga estado de fallos (y motivos) desde disco."""
         import json
 
         try:
             if self.state_file.exists():
                 with open(self.state_file, "r") as f:
-                    self._state = json.load(f)
+                    raw = json.load(f)
+                # Tolerante con el formato enriquecido que escribió brevemente
+                # una versión intermedia de este código.
+                self._state = {
+                    k: int(v["count"]) if isinstance(v, dict) else int(v)
+                    for k, v in raw.items()
+                }
+                banned = sum(1 for c in self._state.values() if c >= self.max_crashes)
                 logger.info(
-                    f"[DOCLING] Estado de fallos cargado: {len(self._state)} archivos rastreados"
+                    f"[DOCLING] Estado de fallos cargado: {len(self._state)} archivos "
+                    f"rastreados, {banned} por encima del umbral ({self.max_crashes})"
                 )
         except Exception as e:
             logger.warning(f"[DOCLING] Error al cargar estado de fallos: {e}")
             self._state = {}
 
-    def _save(self):
-        """Guarda estado de fallos en disco."""
+        try:
+            if self.reasons_file.exists():
+                with open(self.reasons_file, "r") as f:
+                    self._reasons = json.load(f)
+        except Exception:
+            self._reasons = {}
+
+    @staticmethod
+    def _write_atomic(path: Path, payload: Any):
         import json
 
+        tmp = path.with_suffix(path.suffix + ".tmp")
         try:
-            with open(self.state_file, "w") as f:
-                json.dump(self._state, f)
+            with open(tmp, "w") as f:
+                json.dump(payload, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
         except Exception as e:
-            logger.warning(f"[DOCLING] Error al guardar estado de fallos: {e}")
+            logger.warning(f"[DOCLING] Error al guardar {path.name}: {e}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+    def _save(self):
+        """Guarda estado y motivos de forma atómica."""
+        self._write_atomic(self.state_file, self._state)
+        self._write_atomic(self.reasons_file, self._reasons)
 
     def should_skip(self, filename: str) -> bool:
         """Verifica si un archivo ha fallado demasiadas veces."""
         count = self._state.get(filename, 0)
         if count >= self.max_crashes:
+            reason = self._reasons.get(filename, {}).get("reason", "desconocido")
             logger.warning(
-                f"[DOCLING] Archivo {filename} ha fallado {count} veces - omitiendo docling"
+                f"[DOCLING] {filename} ha fallado {count}/{self.max_crashes} "
+                f"veces (último motivo: {reason}) - omitiendo docling"
             )
             return True
         return False
 
-    def mark_processing(self, filename: str):
-        """Marca un archivo como actualmente en proceso (incrementa contador de fallos)."""
+    def mark_processing(self, filename: str, reason: str = "en proceso"):
+        """Marca un archivo como en proceso (incrementa el contador de fallos)."""
         self._state[filename] = self._state.get(filename, 0) + 1
+        self._reasons[filename] = {
+            "reason": reason,
+            "last": datetime.now().isoformat(),
+        }
         self._save()
 
     def mark_success(self, filename: str):
-        """Marca un archivo como procesado exitosamente (limpia contador de fallos)."""
-        if filename in self._state:
-            del self._state[filename]
+        """Marca un archivo como procesado con éxito (limpia el contador)."""
+        if filename in self._state or filename in self._reasons:
+            self._state.pop(filename, None)
+            self._reasons.pop(filename, None)
             self._save()
+
+    def record_reason(self, filename: str, reason: str):
+        """Anota el motivo del último fallo sin volver a incrementar el contador."""
+        if filename in self._state:
+            self._reasons[filename] = {
+                "reason": reason,
+                "last": datetime.now().isoformat(),
+            }
+            self._save()
+
+    def reset(self, only_over_threshold: bool = False) -> int:
+        """
+        Limpia el estado de fallos.
+
+        Args:
+            only_over_threshold: Si True, sólo borra los que superan el umbral.
+
+        Returns:
+            Número de entradas eliminadas
+        """
+        if only_over_threshold:
+            targets = [k for k, c in self._state.items() if c >= self.max_crashes]
+        else:
+            targets = list(self._state)
+
+        for k in targets:
+            self._state.pop(k, None)
+            self._reasons.pop(k, None)
+
+        if targets:
+            self._save()
+        logger.info(f"[DOCLING] Estado de fallos reiniciado: {len(targets)} entradas")
+        return len(targets)
+
+
+class DoclingDocumentCache:
+    """
+    Caché de `DoclingDocument` serializados, un fichero por hash de archivo.
+
+    Separada de `ExtractionCache` a propósito: aquélla guarda todas las
+    extracciones del corpus en un único JSON que se reescribe entero en cada
+    `put` (§3.2). Un `DoclingDocument` es mucho más pesado que una lista de
+    párrafos, así que meterlo ahí agravaría el problema. Un fichero por
+    documento permite además escritura atómica e invalidación individual.
+
+    Sin esta caché, un acierto de la caché de extracción devolvería sólo los
+    `Element` aplanados y la fragmentación tendría que degradar a la vía por
+    tokens, perdiendo la estructura de secciones.
+    """
+
+    def __init__(self, cache_dir: Path):
+        self._dir = cache_dir / "documents"
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"[DOCLING] No se pudo crear caché de documentos: {e}")
+
+    def _path(self, file_hash: str) -> Path:
+        return self._dir / f"{file_hash}.json"
+
+    def get(self, file_hash: str) -> Optional[Any]:
+        """Carga un DoclingDocument cacheado, o None si no está o no es válido."""
+        path = self._path(file_hash)
+        if not path.exists():
+            return None
+        try:
+            from docling_core.types.doc.document import DoclingDocument
+
+            with open(path, "r") as f:
+                return DoclingDocument.model_validate_json(f.read())
+        except Exception as e:
+            logger.warning(f"[DOCLING] Caché de documento inservible {file_hash[:8]}: {e}")
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return None
+
+    def put(self, file_hash: str, doc: Any) -> None:
+        """Guarda un DoclingDocument de forma atómica."""
+        path = self._path(file_hash)
+        tmp = path.with_suffix(".json.tmp")
+        try:
+            with open(tmp, "w") as f:
+                f.write(doc.model_dump_json())
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except Exception as e:
+            logger.warning(f"[DOCLING] No se pudo cachear el documento: {e}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+_document_cache: Optional[DoclingDocumentCache] = None
+
+
+def _get_document_cache() -> DoclingDocumentCache:
+    """Obtiene o crea la caché de DoclingDocument."""
+    global _document_cache
+    if _document_cache is None:
+        _document_cache = DoclingDocumentCache(_get_extraction_cache().cache_dir)
+    return _document_cache
 
 
 def _get_extraction_cache() -> ExtractionCache:
@@ -118,12 +285,15 @@ class DoclingExtractor:
     - Respaldo automático a PyPDF en caso de fallo
     """
 
-    def __init__(self, enable_tables: bool = False, enable_ocr: bool = False):
+    def __init__(self, enable_tables: bool = True, enable_ocr: bool = False):
         """
         Inicializa el extractor.
 
         Args:
-            enable_tables: Habilitar detección de estructura de tablas (más lento)
+            enable_tables: Habilitar detección de estructura de tablas.
+                Por defecto activo (§1-B5): estaba desactivado, de modo que las
+                tablas nunca se extraían por la vía principal pese a que el
+                README las anunciaba. Se usa TableFormerMode.FAST.
             enable_ocr: Habilitar OCR para páginas escaneadas (más lento)
         """
         self.enable_tables = enable_tables and not _tables_disabled_after_crash
@@ -131,6 +301,28 @@ class DoclingExtractor:
         self._gpu_manager = get_gpu_manager()
         self._cache = _get_extraction_cache()
         self._crash_state = _get_crash_state()
+        # Último DoclingDocument convertido, para que el pipeline pueda
+        # fragmentarlo con HybridChunker en vez de usar los Element aplanados.
+        self._last_document: Optional[Any] = None
+
+    @property
+    def last_document(self) -> Optional[Any]:
+        """DoclingDocument de la última conversión, o None si no lo hubo."""
+        return self._last_document
+
+    def _cache_key(self, file_hash: str) -> str:
+        """
+        Clave de caché que incorpora las opciones del pipeline.
+
+        La caché se indexaba sólo por el hash del archivo, así que un cambio de
+        opciones no la invalidaba: al activar la extracción de tablas, los PDFs
+        ya procesados habrían seguido devolviendo para siempre el resultado
+        antiguo sin tablas. Incluir las opciones en la clave hace que cada
+        configuración tenga su propia entrada.
+        """
+        opts = f"tables={int(bool(self.enable_tables))},ocr={int(bool(self.enable_ocr))}"
+        digest = hashlib.sha1(opts.encode("utf-8")).hexdigest()[:8]
+        return f"{file_hash}-{digest}"
 
     @property
     def name(self) -> str:
@@ -157,6 +349,7 @@ class DoclingExtractor:
         """
         pdf_path = Path(pdf_path)
         filename = pdf_path.name
+        self._last_document = None
 
         # Verificar límite de fallos
         if self._crash_state.should_skip(filename):
@@ -164,16 +357,23 @@ class DoclingExtractor:
                 f"Archivo {filename} ha fallado demasiadas veces - usar extracción alternativa"
             )
 
-        # Verificar caché
+        # Verificar caché (la clave incluye las opciones del pipeline)
         file_hash = get_file_hash_sha256(str(pdf_path))
         if file_hash:
+            file_hash = self._cache_key(file_hash)
             cached = self._cache.get(file_hash)
             if cached:
-                logger.info(f"[DOCLING] Acierto de caché para {filename}")
+                # Recuperar también el documento estructurado: sin él la
+                # fragmentación degradaría a la vía por tokens.
+                self._last_document = _get_document_cache().get(file_hash)
+                logger.info(
+                    f"[DOCLING] Acierto de caché para {filename} "
+                    f"(estructura: {'sí' if self._last_document is not None else 'no'})"
+                )
                 return [Element.from_dict(d) for d in cached]
 
-        # Marcar como en proceso (para detección de fallos)
-        self._crash_state.mark_processing(filename)
+        # Marcar como en proceso (para detección de caídas duras sin excepción)
+        self._crash_state.mark_processing(filename, reason="conversión interrumpida")
 
         # Registrar info del archivo
         file_size_mb = pdf_path.stat().st_size / 1e6
@@ -204,6 +404,7 @@ class DoclingExtractor:
             if not hasattr(result, "document"):
                 raise ValueError("Resultado de Docling inválido - falta document")
 
+            self._last_document = result.document
             elements = self._extract_from_document(result.document, pdf_path)
 
             if not elements:
@@ -217,9 +418,10 @@ class DoclingExtractor:
                 f"[DOCLING] Extraídos {len(elements)} elementos en {elapsed:.2f}s"
             )
 
-            # Cachear el resultado
+            # Cachear el resultado (elementos + documento estructurado)
             if file_hash:
                 self._cache.put(file_hash, [e.to_dict() for e in elements])
+                _get_document_cache().put(file_hash, result.document)
 
             # Marcar éxito
             self._crash_state.mark_success(filename)
@@ -228,6 +430,9 @@ class DoclingExtractor:
 
         except Exception as e:
             logger.error(f"[DOCLING] Extracción fallida: {e}", exc_info=True)
+            # Registrar el motivo real: distinguir un OOM transitorio de un PDF
+            # realmente malo es lo que permite decidir si merece reintentarse.
+            self._crash_state.record_reason(filename, type(e).__name__ + f": {e}"[:120])
             return self._extract_pypdf_fallback(pdf_path)
 
         finally:
@@ -245,6 +450,12 @@ class DoclingExtractor:
         pipeline_options.do_table_structure = self.enable_tables
         pipeline_options.generate_page_images = False
         pipeline_options.generate_picture_images = False
+
+        if self.enable_tables:
+            # FAST frente a ACCURATE: bastante más rápido y suficiente para las
+            # tablas de estos manuales. Ver §1-B5 si hiciera falta subir a
+            # ACCURATE en corpus con fichas técnicas densas.
+            pipeline_options.table_structure_options.mode = TableFormerMode.FAST
 
         logger.info("[DOCLING] Opciones del pipeline:")
         logger.info(f"  - do_ocr: {pipeline_options.do_ocr}")
@@ -437,6 +648,8 @@ class DoclingExtractor:
     def _extract_pypdf_fallback(self, pdf_path: Path) -> List[Element]:
         """Extracción de respaldo usando PyPDF."""
         logger.warning("[DOCLING] Usando extracción de respaldo PyPDF")
+        # PyPDF no produce estructura: la fragmentación deberá ir por tokens.
+        self._last_document = None
         elements: List[Element] = []
 
         try:

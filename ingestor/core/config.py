@@ -90,6 +90,15 @@ LARGE_PDF_BATCH_SIZE = int(os.getenv("LARGE_PDF_BATCH_SIZE", "1000"))
 ENCODING_MEGA_BATCH_SIZE = int(os.getenv("ENCODING_MEGA_BATCH_SIZE", "5000"))
 
 # ============================================================
+# FRAGMENTACIÓN
+# ============================================================
+
+# Presupuesto de tokens por fragmento. Los tres modelos de embedding en uso
+# (e5-large-instruct, gte-large, instructor-large) truncan a 512, así que
+# subirlo sólo volvería a provocar truncado silencioso.
+CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "512"))
+
+# ============================================================
 # CONFIGURACIÓN DE TESSERACT OCR
 # ============================================================
 
