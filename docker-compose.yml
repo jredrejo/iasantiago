@@ -58,6 +58,7 @@ services:
       --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}
       --host 0.0.0.0
       --port 8000
+      --chat-template /etc/vllm/chat_template.jinja
       --max-num-seqs ${VLLM_MAX_NUM_SEQS}
       --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS}
       --enable-prefix-caching
@@ -65,10 +66,12 @@ services:
       --language-model-only
       --enable-auto-tool-choice
       --tool-call-parser qwen3_coder
-      --override-generation-config '{"enable_thinking": false}'
       --speculative-config '{"method": "mtp", "num_speculative_tokens": 2}'
     volumes:
       - huggingface_cache:/root/.cache/huggingface
+      # Plantilla de chat vendorizada: identica a la del modelo salvo que el modo
+      # thinking pasa a estar desactivado por defecto (ver cabecera del fichero).
+      - ./vllm/chat_template.jinja:/etc/vllm/chat_template.jinja:ro
     deploy:
       resources:
         reservations:

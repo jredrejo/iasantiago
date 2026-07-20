@@ -101,52 +101,27 @@ def sanitize_query_for_bm25(query: str, max_length: int = 200) -> str:
     Limpia queries que son demasiado largas o complejas para BM25
 
     Casos problemáticos:
-    - Queries de sistema reales (no preguntas de usuario)
     - Queries muy largas (>200 chars)
     - Exceso de symbols especiales
     """
 
     original = query
 
-    # 1. Detectar solo queries de sistema REALMENTE problemáticos
-    # Patrones más específicos para evitar falsos positivos
-    system_patterns = [
-        r"^#+\s*(Task|Generate|Create|System).*(?:title|summarize|concise|emoji)",
-        r"^(?:You are|Act as|Generate|Create).*(?:title|summary|response|emoji)",
-        r"^System\s*:",
-        r"^Assistant\s*:",
-        # OpenWebUI specific pattern para generar títulos
-        r"^#+\s*Task:\s*Generate.*title.*emoji.*summarizing",
-    ]
-
-    for pattern in system_patterns:
-        if re.match(pattern, query, re.IGNORECASE):
-            logger.warning(
-                f"⚠️  Sistema query detectado, ignorando BM25: {query[:80]}..."
-            )
-            return ""  # Retornar vacío = skip BM25
-
-    # 2. Solo bloquear patrones CLARAMENTE de código/prompt, no preguntas con markdown
-    # Bloquear solo si empieza con múltiples símbolos de código seguidos
-    if re.match(r"^(?:```\s*$|>>>|---+$)", query.strip()):
-        logger.warning(f"⚠️  Código/prompt detectado, ignorando BM25")
-        return ""
-
-    # 3. Limpiar símbolos problemáticos para Whoosh
+    # 1. Limpiar símbolos problemáticos para Whoosh
     # Reemplazar caracteres especiales que confunden al parser
     query = re.sub(r"[#@$%&*(){}\[\]<>|\\]+", " ", query)
 
-    # 4. Remover líneas vacías y normalizar espacios
+    # 2. Remover líneas vacías y normalizar espacios
     query = " ".join(query.split())
 
-    # 5. Limitar longitud
+    # 3. Limitar longitud
     if len(query) > max_length:
         logger.warning(
             f"⚠️  Query muy larga ({len(query)} chars), truncando a {max_length}"
         )
         query = query[:max_length]
 
-    # 6. Si quedó muy corto o vacío, skip BM25
+    # 4. Si quedó muy corto o vacío, skip BM25
     if len(query.strip()) < 3:
         logger.info("Query demasiado corta tras limpieza, ignorando BM25")
         return ""
