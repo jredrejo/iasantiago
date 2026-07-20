@@ -110,8 +110,8 @@ services:
       - BM25_BASE_DIR=/whoosh
       - TOPIC_BASE_DIR=/topics
     volumes:
-      - ${TOPIC_BASE_DIR}:/topics:ro
-      - ${BM25_BASE_DIR}:/whoosh
+      - ${TOPICS_HOST_DIR}:/topics:ro
+      - ${WHOOSH_HOST_DIR}:/whoosh
       - huggingface_cache:/root/.cache/huggingface
       - ./rag-api:/app
       - ./data/telemetry:/data/telemetry
@@ -184,8 +184,8 @@ services:
       - CUDA_VISIBLE_DEVICES=0 # Selección explícita de GPU
     volumes:
       - models_cache:/models_cache
-      - ${TOPIC_BASE_DIR}:/topics
-      - ${BM25_BASE_DIR}:/whoosh
+      - ${TOPICS_HOST_DIR}:/topics
+      - ${WHOOSH_HOST_DIR}:/whoosh
       - ./ingestor:/app
       - docling_cache:/cache/docling # Docling extraction cache
     depends_on:
