@@ -8,7 +8,7 @@ import contextlib
 import json
 import logging
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -24,6 +24,8 @@ from chat.token_calculator import TokenCalculator
 from config.settings import (
     CTX_TOKENS_GENERATIVE,
     CTX_TOKENS_SOFT_LIMIT,
+    EMBED_DEFAULT,
+    FINAL_TOPK,
     GENERATIVE_MAX_TOKENS_PERCENT,
     GENERATIVE_REPETITION_PENALTY,
     GENERATIVE_TEMPERATURE,
@@ -48,7 +50,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from retrieval import (
     attach_citations,
-    choose_retrieval,
     choose_retrieval_enhanced,
     count_tokens,
     get_embedder,
@@ -59,7 +60,13 @@ from retrieval import (
 )
 from token_utils import extract_topic_from_model_name
 
-from eval import aggregate_eval
+from eval import (
+    aggregate_eval,
+    dedupe_files,
+    dedupe_pages,
+    normalize_file,
+    normalize_page,
+)
 
 # Configuración de logging
 logging.basicConfig(
@@ -215,6 +222,12 @@ class ChatRequest(BaseModel):
 class EvalCase(BaseModel):
     query: str
     topic: str
+    # Ground truth PRIMARIO: "fichero.pdf#12" (la ruta puede ir completa o no,
+    # se compara por nombre base). La página es invariante frente a cambios de
+    # chunking, así que es lo que debe decidir si un chunker nuevo mejora.
+    relevant_pages: List[str] = Field(default_factory=list)
+    # Ground truth secundario y grueso. Si se omite, se deriva de relevant_pages
+    # para no tener que escribir dos veces lo mismo.
     relevant_files: List[str] = Field(default_factory=list)
 
 
@@ -408,21 +421,93 @@ async def chat_completions(
         )
 
 
+def _eval_warnings(rows: List[Dict]) -> List[str]:
+    """
+    Denuncia ground truth que no puede puntuar.
+
+    Existe por lo ocurrido con `eval/cases.sample.json`: apuntaba a un
+    `sample1.pdf` inexistente y con rutas de host, así que Recall y MRR daban
+    0.0 de forma permanente y el fichero pasó meses aparentando medir algo.
+    Un 0.0 por ground truth roto y un 0.0 por retrieval malo son
+    indistinguibles en el número; aquí se separan.
+    """
+    warnings = []
+
+    # Todos los archivos vistos en toda la tanda: si una referencia no aparece
+    # en ninguna, lo más probable es que esté mal escrita o en otro tema.
+    seen_files = {f for r in rows for f in dedupe_files(r["retrieved"])}
+
+    for r in rows:
+        q = r["query"][:60]
+
+        if not r["relevant_pages"] and not r["relevant_files"]:
+            warnings.append(f"'{q}': sin ground truth; excluido de las métricas")
+            continue
+
+        for p in r["relevant_pages"]:
+            if "#" not in p:
+                warnings.append(
+                    f"'{q}': '{p}' no lleva '#pagina'; no puede casar con ninguna página"
+                )
+
+        for f in {normalize_file(x) for x in r["relevant_pages"] + r["relevant_files"]}:
+            if f not in seen_files:
+                warnings.append(
+                    f"'{q}': '{f}' no aparece en ningún resultado de la tanda; "
+                    f"revisa el nombre y el tema"
+                )
+
+    return warnings
+
+
 @app.post("/v1/eval/offline")
 async def eval_offline(
     cases: List[EvalCase],
+    rerank: bool = True,
+    final_topk: Optional[int] = None,
     api_key: str = Depends(verify_api_key),
 ):
-    """Evaluación offline del sistema de retrieval"""
+    """
+    Evaluación offline del sistema de retrieval.
+
+    Recorre la MISMA cadena que `/v1/chat/completions` en modo RESPUESTA
+    (retrieval → reranking → recorte por tokens). Antes usaba una familia de
+    funciones paralela que no reordenaba y recuperaba la mitad de candidatos,
+    así que medía un orden que ningún alumno llegaba a ver.
+
+    `?rerank=false` mide la salida previa al reranker: separa un fallo de
+    recuperación (no aparece) de uno de ordenación (aparece mal colocado). Es
+    además mucho más rápido, porque el reranker jina corre en CPU.
+
+    `?final_topk=N` recupera más hondo que la profundidad de servicio, para
+    distinguir "nunca se recuperó" de "se recuperó por debajo del corte de 18".
+    Con override se omite el recorte por tokens, que existe para caber en el
+    contexto y sólo volvería a cortar lo que se quería ver. NO cambia nada de
+    la ruta de chat: es un parámetro de esta petición.
+    """
     rows = []
     for c in cases:
-        retrieved, meta = choose_retrieval(c.topic, c.query)
+        retrieved, meta = choose_retrieval_enhanced(
+            c.topic, c.query, is_generative=False, final_topk_override=final_topk
+        )
+        if retrieved:
+            if rerank:
+                retrieved = rerank_passages(c.query, retrieved, rerank_topk=None)
+            if final_topk is None:
+                retrieved = soft_trim_context(retrieved, CTX_TOKENS_SOFT_LIMIT)
         context_text, cited = attach_citations(retrieved, c.topic)
+
+        # Si sólo se dio ground truth de páginas, derivar el de archivos.
+        relevant_files = c.relevant_files or list(
+            dict.fromkeys(normalize_file(p) for p in c.relevant_pages)
+        )
+
         rows.append(
             {
                 "query": c.query,
                 "topic": c.topic,
-                "relevant_files": c.relevant_files,
+                "relevant_files": relevant_files,
+                "relevant_pages": c.relevant_pages,
                 "retrieved": retrieved,
                 "context": context_text,
             }
@@ -431,14 +516,24 @@ async def eval_offline(
     agg = aggregate_eval(rows)
     return {
         "aggregate": agg,
+        "config": {
+            "rerank": rerank,
+            "final_topk": final_topk if final_topk is not None else FINAL_TOPK,
+            "final_topk_overridden": final_topk is not None,
+            "context_token_limit": (
+                None if final_topk is not None else CTX_TOKENS_SOFT_LIMIT
+            ),
+            "embed_model": EMBED_DEFAULT,
+        },
+        "warnings": _eval_warnings(rows),
         "details": [
             {
                 "query": r["query"],
                 "topic": r["topic"],
-                "pred_files": list(
-                    dict.fromkeys([x["file_path"] for x in r["retrieved"]])
-                ),
-                "relevant_files": r["relevant_files"],
+                "pred_pages": dedupe_pages(r["retrieved"]),
+                "relevant_pages": [normalize_page(p) for p in r["relevant_pages"]],
+                "pred_files": dedupe_files(r["retrieved"]),
+                "relevant_files": [normalize_file(f) for f in r["relevant_files"]],
             }
             for r in rows
         ],

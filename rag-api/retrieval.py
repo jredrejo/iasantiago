@@ -130,37 +130,6 @@ def _execute_search(
     return dense, bm25
 
 
-def hybrid_retrieve(
-    topic: str, query: str, original_language: str = None
-) -> Tuple[List[Dict], Dict]:
-    """
-    Versión básica con valores por defecto de .env.
-
-    Args:
-        topic: Tema de búsqueda
-        query: Query del usuario
-        original_language: Idioma original (no usado, por compatibilidad)
-
-    Returns:
-        Tupla (chunks_filtrados, metadata)
-    """
-    # Ejecutar búsqueda híbrida
-    dense, bm25 = _execute_search(topic, query, HYBRID_DENSE_K, HYBRID_BM25_K)
-
-    # Fusión RRF y deduplicación
-    merged = reciprocal_rank_fusion(dense, bm25, k=60)
-    merged = deduplicate_chunks(merged)
-
-    # Filtrar por archivo y topk
-    filtered = apply_per_file_limit(merged, MAX_CHUNKS_PER_FILE, FINAL_TOPK)
-
-    return filtered, {
-        "dense_k": HYBRID_DENSE_K,
-        "bm25_k": HYBRID_BM25_K,
-        "final_topk": FINAL_TOPK,
-    }
-
-
 def hybrid_retrieve_enhanced(
     topic: str, query: str, final_topk: int, is_generative: bool = False
 ) -> Tuple[List[Dict], Dict]:
@@ -214,12 +183,6 @@ def hybrid_retrieve_enhanced(
 # ============================================================
 
 
-def bm25_only(topic: str, query: str) -> List[Dict]:
-    """Versión básica con valores por defecto de .env"""
-    hits = bm25_search_safe(BM25_BASE_DIR, topic, query, FINAL_TOPK * 3)
-    return apply_per_file_limit(hits, MAX_CHUNKS_PER_FILE, FINAL_TOPK)
-
-
 def bm25_only_enhanced(
     topic: str, query: str, final_topk: int, is_generative: bool = False
 ) -> List[Dict]:
@@ -264,45 +227,32 @@ def _prepare_query(query: str) -> Tuple[str, str, str]:
     return query, detected_lang, original_query
 
 
-def choose_retrieval(topic: str, query: str) -> Tuple[List[Dict], Dict]:
-    """
-    Versión básica para compatibilidad con traducción automática.
-
-    Elige entre BM25-only (queries cortas) o híbrido (queries normales).
-    """
-    query, detected_lang, original_query = _prepare_query(query)
-
-    q_tokens = len(query.strip().split())
-    if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
-        results = bm25_only(topic, query)
-        return results, {
-            "mode": "bm25",
-            "original_language": detected_lang,
-            "original_query": original_query,
-        }
-    else:
-        results, meta = hybrid_retrieve(topic, query, original_language=detected_lang)
-        meta["mode"] = "hybrid"
-        meta["original_language"] = detected_lang
-        meta["original_query"] = original_query
-        return results, meta
-
-
 def choose_retrieval_enhanced(
-    topic: str, query: str, is_generative: bool = False
+    topic: str,
+    query: str,
+    is_generative: bool = False,
+    final_topk_override: int = None,
 ) -> Tuple[List[Dict], Dict]:
     """
     Versión mejorada que ajusta parámetros según el modo.
 
     Usa variables de entorno para configuración (sin hardcodeo).
     Incluye traducción automática de queries no-inglesas.
+
+    `final_topk_override` sólo lo usa `/v1/eval/offline`: permite recuperar más
+    hondo que la profundidad de servicio para distinguir "nunca se recuperó" de
+    "se recuperó por debajo del corte". Omitido (None) el comportamiento es
+    idéntico al de siempre, que es lo que usa la ruta de chat.
     """
     query, detected_lang, original_query = _prepare_query(query)
 
     q_tokens = len(query.strip().split())
 
     # Ajustar TOPK usando multiplicador
-    if is_generative:
+    if final_topk_override is not None:
+        final_topk = final_topk_override
+        logger.info(f"TOPK forzado a {final_topk} (override de evaluación)")
+    elif is_generative:
         final_topk = FINAL_TOPK * GENERATIVE_TOPK_MULTIPLIER
         logger.info(
             f"Modo GENERATIVO: recuperando {final_topk} chunks "
@@ -445,7 +395,7 @@ def debug_retrieval(topic: str, query: str) -> dict:
     logger.info(f"Búsqueda BM25: {len(bm25)} resultados")
 
     # 4. Después del merge
-    merged, meta = hybrid_retrieve(topic, query)
+    merged, meta = hybrid_retrieve_enhanced(topic, query, FINAL_TOPK)
 
     files_merged = {}
     for c in merged:
