@@ -106,14 +106,32 @@ fi
 # ---------------------------------------------------------------- copia de seguridad
 
 log "--- Copia de seguridad de Qdrant (única marcha atrás real) ---"
-BACKUP="$ROOT/backups/qdrant-$(date +%F_%H%M%S).tar.zst"
+# El tar va DENTRO de un contenedor, como root. Qdrant corre como root y deja
+# ficheros que el usuario que lanza el script no puede leer: en la primera
+# ejecución (2026-07-21) se saltó 12 ficheros de payload_index y, peor, el
+# fallo se tragó el código de salida y se registró como copia correcta. Una
+# copia de seguridad que miente es peor que no tenerla.
+BACKUP_NAME="qdrant-$(date +%F_%H%M%S).tar.gz"
+BACKUP="$ROOT/backups/$BACKUP_NAME"
 mkdir -p "$ROOT/backups"
 docker compose stop qdrant >/dev/null 2>&1   # parado: evita un tar inconsistente
-tar --use-compress-program='zstd -T0 -3' -cf "$BACKUP" -C "$ROOT/data" storage 2>/dev/null \
-  || tar -czf "${BACKUP%.zst}.gz" -C "$ROOT/data" storage
+docker run --rm \
+  -v "$ROOT/data:/data:ro" -v "$ROOT/backups:/backups" \
+  alpine tar -czf "/backups/$BACKUP_NAME" -C /data storage \
+  || die "la copia de seguridad falló; no se toca nada"
 docker compose start qdrant >/dev/null 2>&1
 for _ in $(seq 1 40); do curl -sf "$QDRANT/readyz" >/dev/null 2>&1 && break; sleep 3; done
-log "Copia: $(ls -la "$ROOT/backups" | tail -1 | awk '{print $9, $5" bytes"}')"
+
+# Verificar que el archivo se puede leer y trae lo que debe, no sólo que existe.
+FILES_IN_TAR=$(docker run --rm -v "$ROOT/backups:/backups:ro" alpine \
+                 tar -tzf "/backups/$BACKUP_NAME" 2>/dev/null | wc -l)
+FILES_ON_DISK=$(docker run --rm -v "$ROOT/data:/data:ro" alpine \
+                 find /data/storage -type f 2>/dev/null | wc -l)
+log "Copia: $BACKUP_NAME ($(du -h "$BACKUP" | cut -f1))"
+log "  ficheros en el tar: $FILES_IN_TAR / en disco: $FILES_ON_DISK"
+[[ "$FILES_IN_TAR" -lt "$FILES_ON_DISK" ]] && \
+  die "la copia está incompleta ($FILES_IN_TAR < $FILES_ON_DISK); no se toca nada"
+log "  copia verificada"
 
 # ---------------------------------------------------------------- GPU
 
@@ -149,6 +167,10 @@ print(f'  estado: {b} -> {len(d[\"processed\"])}')
     docker run --rm -v "$ROOT/data/whoosh:/w" alpine rm -rf "/w/$t" >/dev/null 2>&1
 
   log "  ingestando..."
+  # Marca temporal para acotar los logs a ESTE tema: sin --since se cuenta todo
+  # el historial del contenedor y el contador sale acumulado (bug de la primera
+  # ejecución: 8, 11, 12, 13, 19 "lotes" eran el total corrido, no el del tema).
+  since=$(date -u +%Y-%m-%dT%H:%M:%S)
   docker compose --profile ingest up -d ingestor >/dev/null 2>&1
   start=$SECONDS
   while [[ "$(docker compose ps ingestor --format '{{.State}}' 2>/dev/null)" == "running" ]]; do
@@ -157,8 +179,11 @@ print(f'  estado: {b} -> {len(d[\"processed\"])}')
   mins=$(( (SECONDS-start)/60 ))
 
   after=$(points_in "$c")
-  repaired=$(docker compose logs ingestor 2>&1 | grep -c 'REPAIR].*reparados' || true)
-  log "  hecho en ${mins}m: $before -> $after puntos ($repaired lotes reparados)"
+  repaired=$(docker compose logs ingestor --since "$since" 2>&1 \
+             | grep -oP '\[REPAIR\] \K\d+(?= fragmentos)' | paste -sd+ | bc 2>/dev/null || echo 0)
+  errs=$(docker compose logs ingestor --since "$since" 2>&1 | grep -c ' - ERROR - ' || true)
+  log "  hecho en ${mins}m: $before -> $after puntos (${repaired:-0} fragmentos reparados, $errs errores)"
+  [[ "$errs" -gt 0 ]] && log "  (revisar: docker compose logs ingestor --since $since | grep ERROR)"
 
   if [[ "$after" == "0" || "$after" == "None" ]]; then
     FAILED="$t"
