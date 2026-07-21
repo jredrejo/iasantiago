@@ -27,6 +27,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from chunking.text_repair import repair_chunks
 from extraction.base import Element
 
 logger = logging.getLogger(__name__)
@@ -459,7 +460,7 @@ def build_chunks(
                     f"[CHUNK] HybridChunker produjo {len(chunks)} fragmentos "
                     f"desde {len(result.elements)} elementos"
                 )
-                return dedupe_chunks(chunks)
+                return dedupe_chunks(repair_chunks(chunks))
             logger.warning(
                 "[CHUNK] HybridChunker no produjo fragmentos; se usa la vía por tokens"
             )
@@ -476,4 +477,4 @@ def build_chunks(
         f"[CHUNK] Fragmentación por tokens: {len(chunks)} fragmentos "
         f"desde {len(result.elements)} elementos"
     )
-    return dedupe_chunks(chunks)
+    return dedupe_chunks(repair_chunks(chunks))
