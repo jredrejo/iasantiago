@@ -24,7 +24,8 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from core.cache import ExtractionCache, get_file_hash_sha256
 from core.gpu import get_gpu_manager
-from core.heartbeat import call_heartbeat
+from core.config import DOCLING_CONVERT_MAX_SECONDS
+from core.heartbeat import BackgroundHeartbeat, call_heartbeat
 from extraction.base import Element, ExtractionError
 
 logger = logging.getLogger(__name__)
@@ -398,8 +399,21 @@ class DoclingExtractor:
             converter = self._get_converter()
             logger.info("[DOCLING] Iniciando conversión...")
 
-            call_heartbeat(f"docling_convert_{filename}")
-            result = converter.convert(str(pdf_path))
+            # convert() es UNA llamada bloqueante que en PDFs grandes/complejos
+            # con extracción de tablas tarda >20 min. No tick-eaba el heartbeat
+            # mientras corría, así que el watchdog (WATCHDOG_TIMEOUT=1200s) mataba
+            # el contenedor a mitad de una conversión SANA y le cargaba un crash;
+            # 3 de esos -> cuarentena. El 2026-07-22 esto puso en cuarentena ~180
+            # ficheros sanos de Electricidad (manuales ABB de cientos de páginas).
+            # BackgroundHeartbeat tick-ea cada 30s durante la conversión; el
+            # max_duration deja que el watchdog siga matando un cuelgue REAL
+            # (como el PDF de 22k páginas que se colgó en abort()).
+            with BackgroundHeartbeat(
+                f"docling_convert_{filename}",
+                interval=30.0,
+                max_duration=DOCLING_CONVERT_MAX_SECONDS,
+            ):
+                result = converter.convert(str(pdf_path))
 
             if not hasattr(result, "document"):
                 raise ValueError("Resultado de Docling inválido - falta document")

@@ -76,6 +76,13 @@ WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "1200"))
 WATCHDOG_CHECK_INTERVAL = int(os.getenv("WATCHDOG_CHECK_INTERVAL", "60"))
 HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE", "/tmp/ingestor_heartbeat")
 
+# Presupuesto de reloj para UNA conversión de Docling. Mientras dura, un
+# BackgroundHeartbeat mantiene vivo el proceso (una conversión sana de un
+# manual de cientos de páginas tarda legítimamente más que WATCHDOG_TIMEOUT).
+# Pasado este tope el heartbeat se detiene y el watchdog mata un cuelgue real.
+# 5400s = 90 min: holgado para PDFs sanos grandes, finito para los patológicos.
+DOCLING_CONVERT_MAX_SECONDS = int(os.getenv("DOCLING_CONVERT_MAX_SECONDS", "5400"))
+
 # ============================================================
 # DISPOSITIVO Y TIPO DE EMBEDDING
 # ============================================================

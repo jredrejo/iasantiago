@@ -227,20 +227,42 @@ class BackgroundHeartbeat:
             resultado = operacion_muy_larga()
     """
 
-    def __init__(self, context: str, interval: float = 30.0):
+    def __init__(
+        self,
+        context: str,
+        interval: float = 30.0,
+        max_duration: Optional[float] = None,
+    ):
         """
         Args:
             context: Contexto para el heartbeat
             interval: Intervalo en segundos entre actualizaciones
+            max_duration: Si se indica, deja de tick-ear pasados estos segundos,
+                para que una operación GENUINAMENTE colgada acabe dejando el
+                heartbeat obsoleto y el watchdog la mate. Sin esto, envolver una
+                llamada bloqueante que se cuelga (p.ej. `docling convert` sobre
+                un PDF patológico) mantendría vivo el heartbeat para siempre y
+                el watchdog nunca dispararía. `None` = tick-ear indefinidamente.
         """
         self._context = context
         self._interval = interval
+        self._max_duration = max_duration
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     def _heartbeat_loop(self) -> None:
         """Hilo que actualiza heartbeat periódicamente."""
+        start = time.time()
         while not self._stop_event.wait(self._interval):
+            if (
+                self._max_duration is not None
+                and time.time() - start > self._max_duration
+            ):
+                logger.warning(
+                    f"[HEARTBEAT] '{self._context}' supera {self._max_duration:.0f}s: "
+                    f"dejo de tick-ear para que el watchdog lo mate si sigue colgado"
+                )
+                return
             update_heartbeat(self._context)
             call_heartbeat(self._context)
 
