@@ -3,6 +3,15 @@ services:
     image: qdrant/qdrant:v1.15.5-gpu-nvidia
     container_name: qdrant
     restart: unless-stopped
+    # Qdrant mmap-ea cada fichero de segmento y los mantiene abiertos. Con 9
+    # colecciones (~2600 ficheros) el límite por defecto del contenedor (1024)
+    # se agota y qdrant aborta al arrancar con "Too many open files" (EMFILE,
+    # exit 134) -> crash loop que tira TODO el sitio. Pasó el 2026-07-22 tras
+    # una ingesta con reinicios forzados por watchdog. El host permite 1048576.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
       - QDRANT__GPU__INDEXING=1
