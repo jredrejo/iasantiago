@@ -1,0 +1,72 @@
+[
+  {
+    "query": "en qué se basa el mecanizado por ultrasonidos y qué es el sonotrodo",
+    "topic": "Mecanica",
+    "relevant_pages": ["ejecucion-de-procesos-de-mecanizado-conformado-y-montaje.pdf#112"]
+  },
+  {
+    "query": "dónde debe colocarse el mango en un troquel cortador y por qué",
+    "topic": "Mecanica",
+    "relevant_pages": ["ejecucion-de-procesos-de-mecanizado-conformado-y-montaje.pdf#430"]
+  },
+  {
+    "query": "qué es la aptitud al rectificado y cómo influyen los carburos de vanadio",
+    "topic": "Mecanica",
+    "relevant_pages": ["ejecucion-de-procesos-de-mecanizado-conformado-y-montaje.pdf#287"]
+  },
+  {
+    "query": "por qué al crear un ensamblaje se empieza por el componente que no se mueve",
+    "topic": "Mecanica",
+    "relevant_pages": ["Introducción a SolidWorks.pdf#59"]
+  },
+  {
+    "query": "qué anotaciones de fabricación se pueden añadir además de las cotas en SolidWorks",
+    "topic": "Mecanica",
+    "relevant_pages": ["Introducción a SolidWorks.pdf#81"]
+  },
+  {
+    "query": "por qué se admite un cierto campo de imprecisión para que las piezas sean intercambiables",
+    "topic": "Mecanica",
+    "relevant_pages": ["Tolerancias dimensionales. Ajustes.pdf#1"]
+  },
+  {
+    "query": "qué ventajas tiene el sistema de eje único frente al de agujero único en los ajustes",
+    "topic": "Mecanica",
+    "relevant_pages": ["Tolerancias dimensionales. Ajustes.pdf#21"]
+  },
+  {
+    "query": "qué es la condición de máximo material MMC y la de mínimo material LMC",
+    "topic": "Mecanica",
+    "relevant_pages": ["Tolerancias Geométricas.pdf#20"]
+  },
+  {
+    "query": "en qué consiste la tolerancia proyectada y cómo influye la longitud del elemento",
+    "topic": "Mecanica",
+    "relevant_pages": ["Tolerancias Geométricas.pdf#33"]
+  },
+  {
+    "query": "qué hay que tener en cuenta para trabajar con velocidad de corte constante CSS en el CNC",
+    "topic": "Mecanica",
+    "relevant_pages": ["Manual de Autoaprendizaje 8055.pdf#14"]
+  },
+  {
+    "query": "qué es el punto de cambio de herramienta y cómo se define respecto al cero máquina",
+    "topic": "Mecanica",
+    "relevant_pages": ["Manual de Autoaprendizaje 8055.pdf#46"]
+  },
+  {
+    "query": "qué es el triscado de la hoja de sierra y para qué sirve",
+    "topic": "Mecanica",
+    "relevant_pages": ["Procesos de mecanizado. Mecanizado básico.pdf#6"]
+  },
+  {
+    "query": "cómo funciona el corte por plasma y qué es el arco piloto",
+    "topic": "Mecanica",
+    "relevant_pages": ["Procesos de mecanizado. Mecanizado básico.pdf#12"]
+  },
+  {
+    "query": "en qué consiste la operación de trazado de una pieza",
+    "topic": "Mecanica",
+    "relevant_pages": ["Procesos de mecanizado. Mecanizado básico.pdf#3"]
+  }
+]

@@ -14,6 +14,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import unicodedata  # noqa: E402
+
 from eval import (  # noqa: E402
     _split_page_ref,
     aggregate_eval,
@@ -21,6 +23,8 @@ from eval import (  # noqa: E402
     make_file_matcher,
     make_page_matcher,
     mrr,
+    normalize_file,
+    normalize_page,
     recall_at_k,
 )
 
@@ -42,6 +46,34 @@ def test_split_page_ref():
     assert _split_page_ref("fichero.pdf") == ("fichero.pdf", None)
     # Centinela de ground truth malformado (normalize_page pone '#?').
     assert _split_page_ref("fichero.pdf#?") == ("fichero.pdf", None)
+
+
+# ------------------------------------------------------------------
+# Normalización Unicode NFC (el corpus vive en un FS NFD: el payload trae la
+# 'ó' descompuesta y un golden escrito a mano la trae precompuesta; son el mismo
+# fichero pero distintos byte a byte). Sin esto daba fallo fantasma + aviso
+# "no aparece en ningún resultado".
+# ------------------------------------------------------------------
+
+
+def test_normalize_file_folds_nfd_and_nfc():
+    nfd = unicodedata.normalize("NFD", "/topics/AFD/nutrición.pdf")  # ó descompuesta
+    nfc = unicodedata.normalize("NFC", "nutrición.pdf")  # ó precompuesta
+    assert nfd != nfc  # distintos byte a byte de partida
+    assert normalize_file(nfd) == nfc  # pero normalizan a lo mismo
+
+
+def test_normalize_page_folds_nfd_and_nfc():
+    nfd = unicodedata.normalize("NFD", "/topics/AFD/nutrición.pdf#142")
+    assert normalize_page(nfd) == unicodedata.normalize("NFC", "nutrición.pdf#142")
+
+
+def test_matcher_folds_nfd_ground_truth_against_nfc_retrieval():
+    """El caso real de AFD: golden en una forma, retrieval en la otra."""
+    match = make_page_matcher(tolerance=1)
+    pred = normalize_page(unicodedata.normalize("NFD", "La-guía-completa.pdf#54"))
+    truth = normalize_page(unicodedata.normalize("NFC", "La-guía-completa.pdf#54"))
+    assert match(pred, truth)
 
 
 # ------------------------------------------------------------------

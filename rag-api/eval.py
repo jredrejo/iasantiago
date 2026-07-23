@@ -1,5 +1,6 @@
 import hashlib
 import os
+import unicodedata
 from typing import Callable, Dict, List, Optional, Tuple
 
 # ============================================================
@@ -13,9 +14,22 @@ from typing import Callable, Dict, List, Optional, Tuple
 # Comparar por nombre base hace la evaluación independiente del formato.
 
 
+def _basename_nfc(path: str) -> str:
+    """Nombre base normalizado a Unicode NFC.
+
+    El corpus vive en un sistema de ficheros NFD (descompuesto): el payload
+    guarda `nutrición.pdf` (n + acento combinante) mientras que un golden
+    escrito a mano lleva `nutrición.pdf` (ó precompuesta). Son el MISMO fichero
+    pero distintos byte a byte, así que sin normalizar la casación daba un fallo
+    fantasma y el aviso "no aparece en ningún resultado". NFC en ambos lados lo
+    resuelve pase el golden en la forma que pase.
+    """
+    return unicodedata.normalize("NFC", os.path.basename(path.strip()))
+
+
 def normalize_file(ref: str) -> str:
     """'/opt/.../tema/fichero.pdf#12' -> 'fichero.pdf'"""
-    return os.path.basename(ref.split("#", 1)[0].strip())
+    return _basename_nfc(ref.split("#", 1)[0])
 
 
 def normalize_page(ref: str) -> str:
@@ -25,8 +39,8 @@ def normalize_page(ref: str) -> str:
         # Sin '#' no es una referencia de página. Se devuelve una clave que no
         # puede casar con ninguna página real, y el endpoint lo denuncia como
         # ground truth malformado en vez de puntuar 0.0 en silencio.
-        return f"{os.path.basename(path.strip())}#?"
-    return f"{os.path.basename(path.strip())}#{page.strip()}"
+        return f"{_basename_nfc(path)}#?"
+    return f"{_basename_nfc(path)}#{page.strip()}"
 
 
 def dedupe_files(chunks: List[Dict]) -> List[str]:

@@ -1,0 +1,47 @@
+[
+  {
+    "query": "qué es el Fondo de Garantía Salarial y qué indemnizaciones cubre",
+    "topic": "FOL",
+    "relevant_pages": ["ESTATUTO DE LOS TRABAJADORES.pdf#58"]
+  },
+  {
+    "query": "dónde y en qué horario debe celebrarse la asamblea de trabajadores",
+    "topic": "FOL",
+    "relevant_pages": ["ESTATUTO DE LOS TRABAJADORES.pdf#153"]
+  },
+  {
+    "query": "qué directivas europeas sobre maternidad y jóvenes recoge la ley de prevención de riesgos laborales",
+    "topic": "FOL",
+    "relevant_pages": ["Ley de prevención de riesgo laborales.pdf#5"]
+  },
+  {
+    "query": "qué formación deben recibir los trabajadores temporales y de empresas de trabajo temporal",
+    "topic": "FOL",
+    "relevant_pages": ["Ley de prevención de riesgo laborales.pdf#23"]
+  },
+  {
+    "query": "qué obligaciones tienen los fabricantes e importadores de maquinaria en prevención de riesgos",
+    "topic": "FOL",
+    "relevant_pages": ["Ley de prevención de riesgo laborales.pdf#32"]
+  },
+  {
+    "query": "en qué consiste el concierto de la actividad preventiva con un servicio de prevención ajeno",
+    "topic": "FOL",
+    "relevant_pages": ["REGLAMENTO DE LOS SERVICIOS DE PREVENCIÓN.pdf#14"]
+  },
+  {
+    "query": "cuánto dura la incapacidad temporal y cuál es su prórroga máxima",
+    "topic": "FOL",
+    "relevant_pages": ["UNIDAD 7  - LA SEGURIDAD SOCIAL. PRESTACIONES.pdf#13"]
+  },
+  {
+    "query": "qué es la prestación por riesgo durante la lactancia y hasta qué edad del hijo se concede",
+    "topic": "FOL",
+    "relevant_pages": ["UNIDAD 7  - LA SEGURIDAD SOCIAL. PRESTACIONES.pdf#20"]
+  },
+  {
+    "query": "qué coeficientes reductores se aplican en la jubilación anticipada voluntaria según los años cotizados",
+    "topic": "FOL",
+    "relevant_pages": ["UNIDAD 7  - LA SEGURIDAD SOCIAL. PRESTACIONES.pdf#27"]
+  }
+]
