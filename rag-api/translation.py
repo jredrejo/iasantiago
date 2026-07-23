@@ -66,8 +66,9 @@ def get_translator(source_lang: str, target_lang: str = "en"):
         tokenizer = MarianTokenizer.from_pretrained(model_name)
         model = MarianMTModel.from_pretrained(model_name)
 
-        # Determine device
-        device = "cuda" if os.getenv("CUDA_VISIBLE_DEVICES", "") != "" else "cpu"
+        # Dispositivo unificado con los embedders (EMBEDDING_DEVICE); el traductor
+        # comparte su misma restricción de VRAM frente a vLLM. Por defecto 'cpu'.
+        device = os.getenv("EMBEDDING_DEVICE", "cpu")
         model = model.to(device)
 
         _translator_cache[cache_key] = (tokenizer, model, device)

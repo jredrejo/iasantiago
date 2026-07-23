@@ -36,8 +36,14 @@ class ModelCache:
 
     @classmethod
     def _get_device(cls) -> str:
-        """Determina el dispositivo disponible (CUDA o CPU)"""
-        return "cuda" if os.getenv("CUDA_VISIBLE_DEVICES", "") != "" else "cpu"
+        """Dispositivo de los embedders, unificado con RERANK_DEVICE (rerank.py).
+
+        Se lee de EMBEDDING_DEVICE ('cuda' o 'cpu'). Por defecto 'cpu': rag-api
+        comparte la GPU con vLLM (gpu_mem_util 0.95) y no queda VRAM, el mismo
+        motivo por el que RERANK_DEVICE=cpu. Ponerlo a 'cuda' sólo si vLLM está
+        parado o hay VRAM libre confirmada.
+        """
+        return os.getenv("EMBEDDING_DEVICE", "cpu")
 
     @classmethod
     def get_tokenizer(cls) -> Any:
