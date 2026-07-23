@@ -13,8 +13,6 @@ from core.config import (
     QDRANT_URL,
     TOPIC_BASE_DIR,
     TOPIC_LABELS,
-    ensure_nltk_data,
-    get_sent_tokenizer,
     unverified_ssl_context,
 )
 from core.gpu import GPUManager
@@ -32,8 +30,6 @@ __all__ = [
     "QDRANT_BATCH_SIZE",
     "MODEL_CACHE_DIR",
     "unverified_ssl_context",
-    "ensure_nltk_data",
-    "get_sent_tokenizer",
     # GPU
     "GPUManager",
     # Heartbeat

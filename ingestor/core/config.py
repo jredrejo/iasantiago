@@ -1,7 +1,7 @@
 """
 Configuración unificada para el módulo ingestor.
 
-Consolida configuraciones de settings.py, configuración SSL, inicialización NLTK,
+Consolida configuraciones de settings.py, configuración SSL,
 y configuración basada en variables de entorno.
 """
 
@@ -10,9 +10,6 @@ import multiprocessing
 import os
 import ssl
 from contextlib import contextmanager
-from typing import Callable, Optional
-
-import nltk
 
 logger = logging.getLogger(__name__)
 
@@ -174,73 +171,3 @@ def unverified_ssl_context():
     finally:
         ssl._create_default_https_context = original
         logger.info("[SSL] Verificación TLS restaurada")
-
-
-# ============================================================
-# INICIALIZACIÓN DE NLTK
-# ============================================================
-
-_nltk_available: bool = False
-_cached_sent_tokenizer: Optional[Callable] = None
-
-
-def ensure_nltk_data() -> bool:
-    """Asegura que los datos de NLTK estén disponibles con opciones de respaldo."""
-    global _nltk_available
-    try:
-        nltk.data.find("tokenizers/punkt")
-        logger.info("[NLTK] Datos de punkt ya disponibles")
-        _nltk_available = True
-    except LookupError:
-        try:
-            logger.info("[NLTK] Descargando datos de punkt...")
-            nltk.download("punkt", quiet=True)
-            logger.info("[NLTK] Datos de punkt descargados exitosamente")
-            _nltk_available = True
-        except Exception as e:
-            logger.error(f"[NLTK] Error al descargar punkt: {e}")
-            logger.warning("[NLTK] Se usará tokenización de frases de respaldo")
-            _nltk_available = False
-    return _nltk_available
-
-
-def _fallback_sentence_split(text: str) -> list:
-    """Divisor de frases de respaldo cuando NLTK no está disponible."""
-    import re
-
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    return [s.strip() for s in sentences if s.strip()]
-
-
-def get_sent_tokenizer() -> Callable:
-    """Obtiene tokenizador de frases en caché (español primero con respaldo en inglés)."""
-    global _cached_sent_tokenizer
-
-    if _cached_sent_tokenizer is not None:
-        return _cached_sent_tokenizer
-
-    try:
-        from nltk.tokenize import sent_tokenize
-
-        try:
-            nltk.data.find("tokenizers/punkt")
-        except LookupError:
-            nltk.download("punkt", quiet=True)
-
-        def spanish_tokenize(text: str) -> list:
-            try:
-                return sent_tokenize(text, language="spanish")
-            except Exception:
-                return sent_tokenize(text, language="english")
-
-        _cached_sent_tokenizer = spanish_tokenize
-        logger.info("[NLTK] Tokenizador de frases en español cargado")
-    except Exception as e:
-        logger.warning(f"[NLTK] Error al cargar, usando respaldo: {e}")
-        _cached_sent_tokenizer = _fallback_sentence_split
-
-    return _cached_sent_tokenizer
-
-
-# Inicializar NLTK al importar el módulo
-ensure_nltk_data()
