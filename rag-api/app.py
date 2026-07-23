@@ -364,7 +364,7 @@ async def chat_completions(
 
     # 8. Calcular tokens
     budget = token_calculator.calculate_budget(
-        system_prompt, context_text, messages, is_generative
+        sys_prompt, context_text, messages, is_generative
     )
 
     # Validar que hay espacio para respuesta
