@@ -11,11 +11,9 @@ pdf2image==1.17.0
 pdfplumber==0.11.7
 pypdf[crypto]==6.3.0
 
-# Microsoft Office support
-python-docx>=1.2.0
-python-pptx>=1.0.2
-openpyxl>=3.1.5
-
+# Nota: la ingesta escanea sólo *.pdf (main.py), así que no se fijan
+# python-docx/python-pptx/openpyxl. Si algún día se ingieren ficheros Office,
+# Docling los soporta de forma nativa y ya arrastra esas librerías.
 
 # Búsqueda y caché
 qdrant-client==1.15.1
