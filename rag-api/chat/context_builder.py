@@ -42,18 +42,6 @@ class ContextBuilder:
         """Cuenta tokens en un texto"""
         return ModelCache.count_tokens(text)
 
-    def get_system_prompt(self, base_prompt: str) -> str:
-        """
-        Retorna el system prompt estático (sin contexto RAG).
-
-        Args:
-            base_prompt: Prompt de sistema base desde template
-
-        Returns:
-            System prompt estático (cacheable por vLLM)
-        """
-        return base_prompt
-
     def build_user_message_with_context(
         self,
         user_query: str,

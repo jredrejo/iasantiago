@@ -4,7 +4,7 @@
 import asyncio
 import logging
 import os
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Any
 
 from transformers import AutoTokenizer
 
@@ -31,7 +31,6 @@ class ModelCache:
 
     _embedders: Dict[str, Any] = {}
     _reranker: Optional[Any] = None
-    _translators: Dict[str, Tuple[Any, Any, str]] = {}
     _tokenizer: Optional[Any] = None  # transformers tokenizer
     _lock = asyncio.Lock()
 
@@ -115,52 +114,12 @@ class ModelCache:
         return cls._reranker
 
     @classmethod
-    def get_translator(
-        cls, source_lang: str, target_lang: str = "en"
-    ) -> Optional[Tuple[Any, Any, str]]:
-        """
-        Obtiene o carga un modelo de traducción.
-
-        Args:
-            source_lang: Código de idioma origen (ej: 'es')
-            target_lang: Código de idioma destino (default: 'en')
-
-        Returns:
-            Tupla (tokenizer, model, device) o None si falla
-        """
-        from transformers import MarianMTModel, MarianTokenizer
-
-        cache_key = f"{source_lang}-{target_lang}"
-
-        if cache_key in cls._translators:
-            return cls._translators[cache_key]
-
-        try:
-            model_name = f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"
-            logger.info(f"Cargando traductor: {model_name}")
-
-            tokenizer = MarianTokenizer.from_pretrained(model_name)
-            model = MarianMTModel.from_pretrained(model_name)
-
-            device = cls._get_device()
-            model = model.to(device)
-
-            cls._translators[cache_key] = (tokenizer, model, device)
-            logger.info(f"Traductor {model_name} cargado en {device}")
-
-            return tokenizer, model, device
-
-        except Exception as e:
-            logger.error(f"Error al cargar traductor {source_lang}->{target_lang}: {e}")
-            return None
-
-    @classmethod
     def clear_cache(cls, cache_type: Optional[str] = None):
         """
         Limpia la caché de modelos.
 
         Args:
-            cache_type: Tipo de caché a limpiar ('embedders', 'reranker', 'translators', 'all')
+            cache_type: Tipo de caché a limpiar ('embedders', 'reranker', 'all')
                        Si es None o 'all', limpia todo.
         """
         if cache_type in (None, "all", "embedders"):
@@ -171,15 +130,10 @@ class ModelCache:
             cls._reranker = None
             logger.info("Caché de reranker limpiada")
 
-        if cache_type in (None, "all", "translators"):
-            cls._translators.clear()
-            logger.info("Caché de traductores limpiada")
-
     @classmethod
     def get_cache_stats(cls) -> Dict[str, int]:
         """Retorna estadísticas de uso de la caché"""
         return {
             "embedders_cargados": len(cls._embedders),
             "reranker_cargado": 1 if cls._reranker else 0,
-            "traductores_cargados": len(cls._translators),
         }

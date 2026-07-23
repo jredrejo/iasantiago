@@ -187,22 +187,3 @@ class TokenCalculator:
                 f"Input muy largo ({total_input} tokens, {input_percent:.1f}% del límite)"
             )
 
-    def validate_input_size(self, total_input: int) -> None:
-        """
-        Valida que el input no sea demasiado grande.
-
-        Args:
-            total_input: Tokens totales de input
-
-        Raises:
-            ValueError: Si el input excede el límite
-        """
-        available = self.model_max_len - total_input - self.safety_margin
-
-        if available < self.min_response_tokens:
-            raise ValueError(
-                f"El contexto de entrada es demasiado largo ({total_input} tokens). "
-                f"El modelo solo soporta {self.model_max_len} tokens totales. "
-                f"Solo quedan {available} tokens para respuesta "
-                f"(mínimo requerido: {self.min_response_tokens})."
-            )

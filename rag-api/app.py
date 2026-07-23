@@ -219,7 +219,6 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None  # Use .env defaults (RESPONSE_TEMPERATURE or GENERATIVE_TEMPERATURE)
     top_p: Optional[float] = None  # Use .env defaults (RESPONSE_TOP_P or GENERATIVE_TOP_P)
     stream: Optional[bool] = True
-    iasantiago_mode: Optional[str] = "explica"
 
 
 class EvalCase(BaseModel):
@@ -359,9 +358,8 @@ async def chat_completions(
     )
 
     # 7. Construir mensajes (contexto en user message para prefix caching)
-    system_prompt = context_builder.get_system_prompt(sys_prompt)
     messages = context_builder.build_messages(
-        system_prompt, req.messages, context_text, context_token_limit
+        sys_prompt, req.messages, context_text, context_token_limit
     )
 
     # 8. Calcular tokens
