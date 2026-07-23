@@ -5,12 +5,16 @@ verify_retrieval.py
 Script para verificar que el retrieval funciona correctamente.
 Ejecutar DENTRO del contenedor rag-api:
 
-    docker exec rag-api python /app/verify_retrieval.py
+    docker exec rag-api python /app/tools/verify_retrieval.py
 """
 
+import os
 import sys
 import logging
 from collections import defaultdict
+
+# Permite ejecutar el script desde tools/ resolviendo los imports del paquete rag-api.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configuración de logging
 logging.basicConfig(

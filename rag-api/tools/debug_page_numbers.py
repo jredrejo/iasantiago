@@ -6,12 +6,17 @@ Script para verificar que los números de página se extraen correctamente
 del PDF y se almacenan correctamente en Qdrant.
 
 Uso:
-    docker exec rag-api python /app/debug_page_numbers.py Programming
+    docker exec rag-api python /app/tools/debug_page_numbers.py Programming
 """
 
+import os
 import sys
 import logging
 from collections import defaultdict
+
+# Permite ejecutar el script desde tools/ resolviendo los imports del paquete rag-api.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from qdrant_utils import client, topic_collection
 
 logging.basicConfig(

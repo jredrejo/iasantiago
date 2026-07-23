@@ -1,13 +1,19 @@
-# rag-api/test_citation_chain.py
 #!/usr/bin/env python3
+# rag-api/tools/check_citation_chain.py
 """
-Test complete citation chain: Qdrant → Retrieval → Citations
-Verifies that page numbers are correct end-to-end
+Check the complete citation chain: Qdrant → Retrieval → Citations
+Verifies that page numbers are correct end-to-end.
+
+Manual diagnostic script (not a pytest test). Run inside the container:
+    docker exec rag-api python /app/tools/check_citation_chain.py
 """
 
 import logging
 import sys
 from pathlib import Path
+
+# Permite ejecutar el script desde tools/ resolviendo los imports del paquete rag-api.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from qdrant_utils import client, topic_collection
 from retrieval import attach_citations, choose_retrieval_enhanced
