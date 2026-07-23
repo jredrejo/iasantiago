@@ -52,7 +52,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from retrieval import (
     attach_citations,
-    choose_retrieval_enhanced,
+    choose_retrieval,
     count_tokens,
     get_embedder,
     get_reranker,
@@ -317,7 +317,7 @@ async def chat_completions(
     )
 
     # 4. Retrieval
-    retrieved, meta = choose_retrieval_enhanced(topic, user_msg, is_generative)
+    retrieved, meta = choose_retrieval(topic, user_msg, is_generative)
     logger.info(f"Recuperados {len(retrieved)} chunks para '{topic}'")
 
     if retrieved:
@@ -520,7 +520,7 @@ async def eval_offline(
     """
     rows = []
     for c in cases:
-        retrieved, meta = choose_retrieval_enhanced(
+        retrieved, meta = choose_retrieval(
             c.topic, c.query, is_generative=False, final_topk_override=final_topk
         )
         if retrieved:

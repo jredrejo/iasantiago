@@ -130,11 +130,11 @@ def _execute_search(
     return dense, bm25
 
 
-def hybrid_retrieve_enhanced(
+def hybrid_retrieve(
     topic: str, query: str, final_topk: int, is_generative: bool = False
 ) -> Tuple[List[Dict], Dict]:
     """
-    Versión con topk configurable.
+    Búsqueda híbrida (densa + BM25) con RRF, dedup y límite por archivo.
 
     Args:
         topic: Tema de búsqueda
@@ -183,10 +183,10 @@ def hybrid_retrieve_enhanced(
 # ============================================================
 
 
-def bm25_only_enhanced(
+def bm25_only(
     topic: str, query: str, final_topk: int, is_generative: bool = False
 ) -> List[Dict]:
-    """Versión con topk configurable"""
+    """Búsqueda BM25 sola, con límite por archivo y topk configurable."""
     # Buscar 3x más de lo necesario para tener margen
     hits = bm25_search_safe(BM25_BASE_DIR, topic, query, final_topk * 3)
 
@@ -227,14 +227,14 @@ def _prepare_query(query: str) -> Tuple[str, str, str]:
     return query, detected_lang, original_query
 
 
-def choose_retrieval_enhanced(
+def choose_retrieval(
     topic: str,
     query: str,
     is_generative: bool = False,
     final_topk_override: int = None,
 ) -> Tuple[List[Dict], Dict]:
     """
-    Versión mejorada que ajusta parámetros según el modo.
+    Selecciona la estrategia de retrieval (BM25-solo vs híbrido) según el modo.
 
     Usa variables de entorno para configuración (sin hardcodeo).
     Incluye traducción automática de queries no-inglesas.
@@ -265,7 +265,7 @@ def choose_retrieval_enhanced(
     # Decidir estrategia
     if q_tokens < BM25_FALLBACK_TOKEN_THRESHOLD:
         logger.info(f"Query corta ({q_tokens} tokens) - usando BM25 solo")
-        results = bm25_only_enhanced(topic, query, final_topk, is_generative)
+        results = bm25_only(topic, query, final_topk, is_generative)
         return results, {
             "mode": "bm25",
             "topk": final_topk,
@@ -274,7 +274,7 @@ def choose_retrieval_enhanced(
         }
     else:
         logger.info(f"Query normal ({q_tokens} tokens) - usando Hybrid")
-        results, meta = hybrid_retrieve_enhanced(
+        results, meta = hybrid_retrieve(
             topic, query, final_topk, is_generative
         )
         meta["mode"] = "hybrid"
@@ -395,7 +395,7 @@ def debug_retrieval(topic: str, query: str) -> dict:
     logger.info(f"Búsqueda BM25: {len(bm25)} resultados")
 
     # 4. Después del merge
-    merged, meta = hybrid_retrieve_enhanced(topic, query, FINAL_TOPK)
+    merged, meta = hybrid_retrieve(topic, query, FINAL_TOPK)
 
     files_merged = {}
     for c in merged:

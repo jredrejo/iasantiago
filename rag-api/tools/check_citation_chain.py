@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from qdrant_utils import client, topic_collection
-from retrieval import attach_citations, choose_retrieval_enhanced
+from retrieval import attach_citations, choose_retrieval
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def test_citation_integrity(topic: str, query: str):
 
     # Step 1: Retrieve chunks
     logger.info("Step 1: Retrieving chunks...")
-    retrieved, meta = choose_retrieval_enhanced(topic, query, is_generative=False)
+    retrieved, meta = choose_retrieval(topic, query, is_generative=False)
 
     if not retrieved:
         logger.error("❌ No chunks retrieved")
