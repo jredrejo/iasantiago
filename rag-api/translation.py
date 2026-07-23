@@ -134,17 +134,3 @@ def translate_query(
     except Exception as e:
         logger.error(f"Traducción falló: {e}, usando query original")
         return query, source_lang
-
-
-def should_translate(query: str) -> bool:
-    """
-    Verifica si el query debe traducirse.
-    Retorna True si el query no está en inglés.
-    """
-    try:
-        from langdetect import detect
-
-        lang = detect(query)
-        return lang != "en"
-    except Exception:
-        return False

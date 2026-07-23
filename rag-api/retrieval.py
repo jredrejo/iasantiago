@@ -27,11 +27,11 @@ from config.settings import (
 from core.cache import ModelCache
 from retrieval_lib.fusion import deduplicate_chunks, reciprocal_rank_fusion
 from retrieval_lib.search import apply_per_file_limit, prepare_query_for_retrieval
-from retrieval_lib.citations import build_context_with_citations, validate_context_usage
+from retrieval_lib.citations import build_context_with_citations
 
 # Importaciones de módulos existentes
 from qdrant_utils import search_dense
-from bm25_utils import bm25_search, bm25_search_safe
+from bm25_utils import bm25_search_safe
 from rerank import CrossEncoderReranker
 from translation import translate_query, detect_language
 
