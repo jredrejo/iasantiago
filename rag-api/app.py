@@ -7,6 +7,7 @@
 import contextlib
 import json
 import logging
+import os
 import time
 from typing import Dict, List, Optional
 
@@ -38,6 +39,7 @@ from config.settings import (
     RESPONSE_TEMPERATURE,
     RESPONSE_TOP_K,
     RESPONSE_TOP_P,
+    TOPIC_BASE_DIR,
     TOPIC_LABELS,
     VLLM_MAX_MODEL_LEN,
     VLLM_MAX_TOKENS,
@@ -62,6 +64,7 @@ from token_utils import extract_topic_from_model_name
 
 from eval import (
     aggregate_eval,
+    build_content_alias_map,
     dedupe_files,
     dedupe_pages,
     normalize_file,
@@ -421,7 +424,9 @@ async def chat_completions(
         )
 
 
-def _eval_warnings(rows: List[Dict]) -> List[str]:
+def _eval_warnings(
+    rows: List[Dict], file_aliases: Optional[Dict[str, str]] = None
+) -> List[str]:
     """
     Denuncia ground truth que no puede puntuar.
 
@@ -430,12 +435,20 @@ def _eval_warnings(rows: List[Dict]) -> List[str]:
     0.0 de forma permanente y el fichero pasó meses aparentando medir algo.
     Un 0.0 por ground truth roto y un 0.0 por retrieval malo son
     indistinguibles en el número; aquí se separan.
+
+    `file_aliases` canoniza los duplicados byte-idénticos para no avisar en
+    falso de que un fichero "no aparece" cuando lo que se recuperó fue su copia.
     """
+    aliases = file_aliases or {}
+
+    def canon(name: str) -> str:
+        return aliases.get(name, name)
+
     warnings = []
 
     # Todos los archivos vistos en toda la tanda: si una referencia no aparece
     # en ninguna, lo más probable es que esté mal escrita o en otro tema.
-    seen_files = {f for r in rows for f in dedupe_files(r["retrieved"])}
+    seen_files = {canon(f) for r in rows for f in dedupe_files(r["retrieved"])}
 
     for r in rows:
         q = r["query"][:60]
@@ -451,13 +464,35 @@ def _eval_warnings(rows: List[Dict]) -> List[str]:
                 )
 
         for f in {normalize_file(x) for x in r["relevant_pages"] + r["relevant_files"]}:
-            if f not in seen_files:
+            if canon(f) not in seen_files:
                 warnings.append(
                     f"'{q}': '{f}' no aparece en ningún resultado de la tanda; "
                     f"revisa el nombre y el tema"
                 )
 
     return warnings
+
+
+def _resolve_file_aliases(rows: List[Dict]) -> Dict[str, str]:
+    """Agrupa los ficheros byte-idénticos (§3.-1) que intervienen en esta tanda.
+
+    Sólo se hashea el conjunto de ficheros implicados —los recuperados y los
+    nombrados por el ground truth—, no todo el corpus. Los recuperados traen su
+    ruta real de contenedor; los que sólo están en el golden se buscan bajo
+    `TOPIC_BASE_DIR/<tema>` (si están anidados y no se encuentran, se ignoran:
+    lo importante es cazar el caso en que ambas copias aparecen recuperadas).
+    """
+    paths_by_name: Dict[str, str] = {}
+    for r in rows:
+        for c in r["retrieved"]:
+            name = normalize_file(c["file_path"])
+            paths_by_name.setdefault(name, c["file_path"])
+        for ref in r["relevant_pages"] + r["relevant_files"]:
+            name = normalize_file(ref)
+            paths_by_name.setdefault(
+                name, os.path.join(TOPIC_BASE_DIR, r["topic"], name)
+            )
+    return build_content_alias_map(paths_by_name)
 
 
 @app.post("/v1/eval/offline")
@@ -513,7 +548,8 @@ async def eval_offline(
             }
         )
 
-    agg = aggregate_eval(rows)
+    file_aliases = _resolve_file_aliases(rows)
+    agg = aggregate_eval(rows, file_aliases=file_aliases)
     return {
         "aggregate": agg,
         "config": {
@@ -524,8 +560,10 @@ async def eval_offline(
                 None if final_topk is not None else CTX_TOKENS_SOFT_LIMIT
             ),
             "embed_model": EMBED_DEFAULT,
+            "page_tolerance": agg["page_tolerance"],
+            "duplicate_groups": agg["duplicate_groups"],
         },
-        "warnings": _eval_warnings(rows),
+        "warnings": _eval_warnings(rows, file_aliases),
         "details": [
             {
                 "query": r["query"],
