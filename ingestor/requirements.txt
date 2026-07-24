@@ -16,10 +16,17 @@ pypdf[crypto]==6.3.0
 # Docling los soporta de forma nativa y ya arrastra esas librerías.
 
 # Búsqueda y caché
+# qdrant-client alineado con la imagen del servidor (docker-compose: v1.15.x).
+# No subir por delante del servidor (PLAN.md §7.2): moverlos en bloque.
 qdrant-client==1.15.1
 whoosh==2.7.4
 
 # Embeddings
+# NB: rag-api corre sentence-transformers 3.0.1 y este servicio 5.1.2. La
+# divergencia es inocua: e5-large-instruct produce embeddings idénticos (a 6
+# decimales) en ambas versiones —el pooling/normalización salen de la model
+# card, no de la versión de ST— así que documentos y consultas comparten
+# espacio vectorial. Alinear versiones es higiene, no corrección (PLAN.md §7.2).
 sentence-transformers==5.1.2
 
 # Procesamiento de imágenes
@@ -30,8 +37,8 @@ pillow-heif==1.1.1
 # Detección de tipo MIME
 python-magic==0.4.27
 
-# Utilidades
-watchdog==4.0.1
+# (watchdog eliminado: no se importa en ningún sitio; el "watchdog" del ingestor
+# es su hilo de heartbeat propio, no el paquete pip. §6.5 lo reintroduciría.)
 
 # OCR
 pytesseract==0.3.13
