@@ -42,7 +42,10 @@ services:
   # docling-service removed - extraction now runs inside ingestor
 
   vllm:
-    image: vllm/vllm-openai:nightly
+    # Fijado al digest de la nightly auditada (era :nightly, un tag móvil).
+    # Para actualizar: `docker pull vllm/vllm-openai:nightly`, verificar, y
+    # sustituir el digest por el nuevo (docker inspect ... RepoDigests).
+    image: vllm/vllm-openai@sha256:7ee49e12fc4f971b91d62b1fdb0409b22f85b071c22bc3d9389c636600ae03b8
     container_name: vllm
     restart: unless-stopped
     ipc: host

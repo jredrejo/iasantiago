@@ -13,16 +13,24 @@ class CrossEncoderReranker:
         self.device = os.getenv(
             "RERANK_DEVICE", "cuda" if torch.cuda.is_available() else "cpu"
         )
+        # Fija el SHA auditado: el código custom de jina se ejecuta vía
+        # trust_remote_code, así que un `pull` no debe traer código sin auditar.
+        from config.settings import get_model_revision
+
+        revision = get_model_revision(model_name)
         logger.info(f"[RERANKER] Cargando modelo: {model_name}")
         logger.info(f"[RERANKER] Dispositivo: {self.device}")
+        logger.info(f"[RERANKER] Revision: {revision or 'default'}")
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=True
+                model_name, revision=revision, trust_remote_code=True
             )
             logger.info(f"[RERANKER] Tokenizer cargado")
 
-            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            config = AutoConfig.from_pretrained(
+                model_name, revision=revision, trust_remote_code=True
+            )
             if self.device == "cpu" and hasattr(config, "use_flash_attn"):
                 # El código custom de jina usa flash-attn, que exige CUDA
                 # (assert qkv.is_cuda); en CPU hay que usar la atención estándar
@@ -31,6 +39,7 @@ class CrossEncoderReranker:
 
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_name,
+                revision=revision,
                 config=config,
                 trust_remote_code=True,
                 ignore_mismatched_sizes=True,  # ← Ignora diferencias de tamaño

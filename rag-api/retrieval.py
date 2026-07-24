@@ -23,6 +23,7 @@ from config.settings import (
     MAX_CHUNKS_PER_FILE_GENERATIVE,
     RERANK_MODEL,
     TELEMETRY_PATH,
+    TELEMETRY_RETENTION_MONTHS,
 )
 from core.cache import ModelCache
 from retrieval_lib.fusion import deduplicate_chunks, reciprocal_rank_fusion
@@ -346,15 +347,48 @@ def attach_citations(chunks: List[Dict], topic: str = "") -> Tuple[str, List[Dic
 # ============================================================
 
 
+def _rotate_telemetry_if_needed(path: str) -> None:
+    """Rota el JSONL cuando cambia el mes y purga los archivos antiguos.
+
+    El fichero activo permanece en `path` (lo que leen eval/§3.1); al cruzar el
+    mes se renombra a `path.YYYY-MM` (os.replace es atómico) y se purgan los
+    archivos más viejos que TELEMETRY_RETENTION_MONTHS. Best-effort: cualquier
+    fallo se registra, nunca interrumpe la petición.
+    """
+    from datetime import datetime, timedelta
+    from glob import glob
+
+    try:
+        if os.path.exists(path):
+            mtime = datetime.fromtimestamp(os.path.getmtime(path))
+            now = datetime.now()
+            if (mtime.year, mtime.month) != (now.year, now.month):
+                archive = f"{path}.{mtime:%Y-%m}"
+                if not os.path.exists(archive):
+                    os.replace(path, archive)
+
+        if TELEMETRY_RETENTION_MONTHS > 0:
+            cutoff = datetime.now() - timedelta(days=31 * TELEMETRY_RETENTION_MONTHS)
+            for archived in glob(f"{path}.*"):
+                if datetime.fromtimestamp(os.path.getmtime(archived)) < cutoff:
+                    os.remove(archived)
+    except Exception as e:
+        logger.warning(f"No se pudo rotar/purgar la telemetría: {e}")
+
+
 def telemetry_log(entry: Dict):
-    """Registra telemetría en archivo JSONL"""
+    """Registra telemetría en archivo JSONL (con rotación mensual)."""
     ts = int(time.time() * 1000)
     entry["ts"] = ts
+    _rotate_telemetry_if_needed(TELEMETRY_PATH)
     try:
+        os.makedirs(os.path.dirname(TELEMETRY_PATH), exist_ok=True)
         with open(TELEMETRY_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        # Antes era `except: pass`, que ocultó una caída del logging de
+        # telemetría durante días. Registrar, pero no romper la petición.
+        logger.warning(f"No se pudo escribir telemetría en {TELEMETRY_PATH}: {e}")
 
 
 # ============================================================

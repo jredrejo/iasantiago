@@ -22,24 +22,28 @@ RUN python3 << 'EOF'
 from sentence_transformers import SentenceTransformer
 import os
 
-models = [
-    "intfloat/multilingual-e5-large-instruct",
-    "jinaai/jina-reranker-v2-base-multilingual"
-]
+# SHAs auditados (deben coincidir con PINNED_MODEL_REVISIONS en config/settings.py):
+# trust_remote_code=True ejecuta código remoto, así que se fija la revisión para
+# que la imagen no descargue una versión distinta a la auditada.
+models = {
+    "intfloat/multilingual-e5-large-instruct": "274baa43b0e13e37fafa6428dbc7938e62e5c439",
+    "jinaai/jina-reranker-v2-base-multilingual": "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9",
+}
 
-for model in models:
+for model, revision in models.items():
     try:
-        print(f"Downloading {model}...")
+        print(f"Downloading {model}@{revision}...")
         if "reranker" in model:
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
-            AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+            AutoTokenizer.from_pretrained(model, revision=revision, trust_remote_code=True)
             AutoModelForSequenceClassification.from_pretrained(
                 model,
+                revision=revision,
                 trust_remote_code=True,
                 ignore_mismatched_sizes=True
             )
         else:
-            SentenceTransformer(model, trust_remote_code=True)
+            SentenceTransformer(model, revision=revision, trust_remote_code=True)
         print(f"✓ {model} downloaded successfully")
     except Exception as e:
         print(f"✗ Error downloading {model}: {e}")

@@ -61,6 +61,41 @@ RERANK_MODEL = os.getenv(
 
 
 # ============================================================
+# REVISIONES FIJADAS - Pin de commit para modelos con trust_remote_code
+# ============================================================
+# Estos modelos ejecutan código remoto (trust_remote_code=True). Fijar la
+# revisión al SHA auditado impide que un `pull` introduzca código sin auditar.
+# Un modelo que NO esté en el mapa se carga sin pin (revision=None), igual que
+# antes: así cambiar el nombre de un modelo nunca fija un SHA equivocado en
+# silencio. Actualizar el SHA aquí es una decisión deliberada de auditoría.
+PINNED_MODEL_REVISIONS = {
+    "intfloat/multilingual-e5-large-instruct": "274baa43b0e13e37fafa6428dbc7938e62e5c439",
+    "jinaai/jina-reranker-v2-base-multilingual": "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9",
+}
+
+
+def get_model_revision(model_name: str):
+    """
+    Devuelve el SHA de commit fijado para un modelo, o None si no está fijado.
+
+    None reproduce el comportamiento previo (carga la rama por defecto). Una
+    variable de entorno HF_REVISION_<...> permite sobreescribir el pin sin tocar
+    el código, para rotar a un SHA recién auditado.
+
+    Args:
+        model_name: Nombre del modelo HF (ej: "jinaai/jina-reranker-v2-...")
+
+    Returns:
+        SHA de commit fijado, o None.
+    """
+    env_key = "HF_REVISION_" + model_name.replace("/", "_").replace("-", "_").upper()
+    override = os.getenv(env_key)
+    if override and override.strip():
+        return override.strip()
+    return PINNED_MODEL_REVISIONS.get(model_name)
+
+
+# ============================================================
 # ALMACENAMIENTO - URLs y rutas de bases de datos
 # ============================================================
 
@@ -136,7 +171,13 @@ MIN_RESPONSE_TOKENS = get_int_env("MIN_RESPONSE_TOKENS", 512)
 # TELEMETRÍA - Logging y métricas
 # ============================================================
 
-TELEMETRY_PATH = os.getenv("TELEMETRY_PATH", "/app/retrieval.jsonl")
+# Default alineado con el volumen real (/data/telemetry). El antiguo default
+# /app/retrieval.jsonl escribía dentro de la imagen (root-owned, no persistente).
+TELEMETRY_PATH = os.getenv("TELEMETRY_PATH", "/data/telemetry/retrieval.jsonl")
+
+# Meses de telemetría a conservar. El JSONL rota por mes; los archivos más
+# antiguos que esta ventana se purgan (0 o negativo = sin purga).
+TELEMETRY_RETENTION_MONTHS = get_int_env("TELEMETRY_RETENTION_MONTHS", 6)
 
 
 # ============================================================

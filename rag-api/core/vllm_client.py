@@ -177,17 +177,20 @@ class VLLMClient:
                 operation_name="chat completion vLLM",
             )
         except httpx.HTTPStatusError as e:
+            # El detalle crudo de vLLM se registra pero NO se devuelve al cliente
+            # (puede filtrar rutas de modelo, trazas internas, etc.).
             logger.error(
                 f"Error HTTP de vLLM: {e.response.status_code} - {e.response.text}"
             )
             raise HTTPException(
                 status_code=e.response.status_code,
-                detail=f"Error de vLLM: {e.response.text}",
+                detail="Error al procesar la solicitud en el servicio de lenguaje.",
             )
         except Exception as e:
+            logger.error(f"Servicio vLLM no disponible: {e}", exc_info=True)
             raise HTTPException(
                 status_code=503,
-                detail=f"Servicio vLLM no disponible: {str(e)}",
+                detail="Servicio de lenguaje no disponible temporalmente.",
             )
 
     async def stream_chat_completion(
@@ -248,7 +251,7 @@ class VLLMClient:
                     logger.error(f"Stream falló después de {max_retries} intentos: {e}")
                     error_data = {
                         "error": {
-                            "message": f"Conexión con vLLM falló después de {max_retries} reintentos: {str(e)}",
+                            "message": "Servicio de lenguaje no disponible temporalmente.",
                             "type": "connection_error",
                             "code": 503,
                         }
@@ -275,7 +278,7 @@ class VLLMClient:
                 )
                 error_data = {
                     "error": {
-                        "message": f"Error vLLM: HTTP {e.response.status_code} - {error_text}",
+                        "message": "Error al procesar la solicitud en el servicio de lenguaje.",
                         "type": "upstream_error",
                         "code": e.response.status_code,
                     }
@@ -287,7 +290,7 @@ class VLLMClient:
                 logger.error(f"Error inesperado en streaming: {str(e)}", exc_info=True)
                 error_data = {
                     "error": {
-                        "message": f"Error de streaming: {str(e)}",
+                        "message": "Error interno al generar la respuesta.",
                         "type": "internal_error",
                     }
                 }

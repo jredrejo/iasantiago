@@ -73,16 +73,22 @@ class ModelCache:
             SentenceTransformer configurado para el tema
         """
         from sentence_transformers import SentenceTransformer
+        from config.settings import get_model_revision
 
         model_name = embed_config.get(topic, default_model)
 
         if model_name not in cls._embedders:
             try:
                 device = cls._get_device()
-                logger.info(f"Cargando embedder: {model_name} en {device}")
+                revision = get_model_revision(model_name)
+                logger.info(
+                    f"Cargando embedder: {model_name} en {device} "
+                    f"(revision={revision or 'default'})"
+                )
 
                 embedder = SentenceTransformer(
                     model_name,
+                    revision=revision,
                     trust_remote_code=True,
                     device=device,
                 )

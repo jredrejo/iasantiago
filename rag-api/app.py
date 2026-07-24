@@ -5,6 +5,7 @@
 # está delegada a los módulos core/, chat/, y retrieval_lib/.
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -279,7 +280,12 @@ async def chat_completions(
     4. Calcular tokens
     5. Verificar salud de vLLM y enviar (streaming o no)
     """
-    logger.info(f"Usuario: {x_email}")
+    # Hash del email en lugar de texto plano: identifica al usuario en los logs
+    # sin registrar el correo del alumno.
+    user_ref = (
+        hashlib.sha256(x_email.encode("utf-8")).hexdigest()[:12] if x_email else "anon"
+    )
+    logger.info(f"Usuario: {user_ref}")
     logger.info(f"Mensajes recibidos: {len(req.messages)}")
 
     # 1. Extraer topic y mensaje del usuario
