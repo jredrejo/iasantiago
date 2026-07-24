@@ -11,6 +11,7 @@ import logging
 import os
 import time
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -222,6 +223,37 @@ class ChatRequest(BaseModel):
     stream: Optional[bool] = True
 
 
+class RetrieveRequest(BaseModel):
+    """Petición al servicio de retrieval puro (§7.1).
+
+    Es el contrato que consume el Filter (inlet) de Open WebUI: le pasa la
+    consulta y el tema, y recibe el contexto ya montado con citaciones. Ni
+    historial ni vLLM viven aquí — eso lo orquesta Open WebUI.
+    """
+
+    query: str
+    topic: str
+    # Override de profundidad; None => FINAL_TOPK (o su múltiplo generativo).
+    top_k: Optional[int] = None
+    # Modo generativo (examen): recupera más hondo, igual que la ruta de chat.
+    generative: bool = False
+    # Reranking jina (CPU). Desactivable para depurar orden vs recuperación.
+    rerank: bool = True
+
+
+class Citation(BaseModel):
+    file: str
+    page: int
+    chunk_id: str
+    url: str
+
+
+class RetrieveResponse(BaseModel):
+    context: str
+    citations: List[Citation]
+    meta: Dict
+
+
 class EvalCase(BaseModel):
     query: str
     topic: str
@@ -426,6 +458,115 @@ async def chat_completions(
             content=resp.content,
             media_type=resp.headers.get("Content-Type", "application/json"),
         )
+
+
+def _build_citations(chunks: List[Dict], topic: str) -> List[Dict]:
+    """Lista estructurada de fuentes, con la misma URL clicable que el contexto.
+
+    Duplica el esquema de `retrieval_lib/citations.py` a propósito: el contexto
+    de texto lleva los enlaces embebidos para el LLM, y esta lista los expone en
+    JSON para el Filter (o una futura UI de fuentes de Open WebUI).
+    """
+    out = []
+    for c in chunks:
+        filename = os.path.basename(c["file_path"])
+        page = c["page"]
+        encoded = quote(filename, safe=".")
+        url = f"/docs/{topic}/{encoded}#page={page}" if topic else f"/docs/{encoded}#page={page}"
+        out.append(
+            {
+                "file": filename,
+                "page": page,
+                # chunk_id llega como int desde el payload de Qdrant; se
+                # normaliza a str para un contrato estable de la API.
+                "chunk_id": str(c["chunk_id"]),
+                "url": url,
+            }
+        )
+    return out
+
+
+@app.post("/retrieve", response_model=RetrieveResponse)
+async def retrieve(
+    req: RetrieveRequest,
+    x_email: str = Header(None),
+    api_key: str = Depends(verify_api_key),
+):
+    """Servicio de retrieval puro (§7.1) — sin vLLM, sin historial.
+
+    Recorre la MISMA cadena que `/v1/chat/completions` (retrieval → reranking →
+    recorte por tokens → citaciones) pero devuelve el contexto en JSON en vez de
+    generar. Open WebUI lo orquesta: su Filter (inlet) llama aquí, inyecta el
+    `context` en el último mensaje del usuario y hace streaming directo contra
+    vLLM. Es aditivo: la ruta `topic:X` sigue viva para poder hacer A/B.
+    """
+    user_ref = (
+        hashlib.sha256(x_email.encode("utf-8")).hexdigest()[:12] if x_email else "anon"
+    )
+    logger.info(f"[/retrieve] Usuario: {user_ref}, topic={req.topic}, gen={req.generative}")
+
+    # Límite de contexto: mismo cálculo que la ruta de chat.
+    if req.generative:
+        context_token_limit = min(
+            CTX_TOKENS_GENERATIVE, VLLM_MAX_MODEL_LEN - VLLM_MAX_TOKENS - 1000
+        )
+    else:
+        context_token_limit = CTX_TOKENS_SOFT_LIMIT
+
+    retrieved, meta = choose_retrieval(
+        req.topic, req.query, req.generative, final_topk_override=req.top_k
+    )
+    logger.info(f"[/retrieve] Recuperados {len(retrieved)} chunks para '{req.topic}'")
+
+    if retrieved:
+        if req.rerank:
+            retrieved = rerank_passages(req.query, retrieved, rerank_topk=None)
+        retrieved = soft_trim_context(retrieved, context_token_limit)
+
+    context_text, cited = attach_citations(retrieved, req.topic)
+
+    # Telemetría marcada source=retrieve para separar el tráfico del Filter del
+    # de la ruta topic:X durante el A/B (§7.1).
+    telemetry_log(
+        {
+            "source": "retrieve",
+            "query": req.query,
+            "original_language": meta.get("original_language"),
+            "translated_query": (
+                meta.get("original_query")
+                if meta.get("original_language") != "en"
+                else None
+            ),
+            "topic": req.topic,
+            "mode": meta.get("mode"),
+            "generative": req.generative,
+            "dense_k": meta.get("dense_k"),
+            "bm25_k": meta.get("bm25_k"),
+            "final_topk": meta.get("final_topk"),
+            "retrieved": [
+                {
+                    "file_path": r["file_path"],
+                    "page": r["page"],
+                    "chunk_id": r["chunk_id"],
+                }
+                for r in retrieved
+            ],
+        }
+    )
+
+    return {
+        "context": context_text,
+        "citations": _build_citations(retrieved, req.topic),
+        "meta": {
+            "topic": req.topic,
+            "mode": meta.get("mode"),
+            "generative": req.generative,
+            "num_chunks": len(retrieved),
+            "final_topk": meta.get("final_topk"),
+            "original_language": meta.get("original_language"),
+            "context_token_limit": context_token_limit,
+        },
+    }
 
 
 def _eval_warnings(
