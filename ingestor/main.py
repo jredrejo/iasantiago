@@ -39,6 +39,7 @@ from chunking.token_chunker import build_chunks
 from core.cache import get_pdf_total_pages
 from core.config import (
     CHUNK_MAX_TOKENS,
+    EMBED_BATCH_SIZE,
     EMBED_DEFAULT,
     EMBED_PER_TOPIC,
     TOPIC_BASE_DIR,
@@ -153,7 +154,7 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
         vecs = embedding_service.encode(
             model,
             texts,
-            batch_size=32,
+            batch_size=EMBED_BATCH_SIZE,
             heartbeat_callback=update_heartbeat,
         )
 

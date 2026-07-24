@@ -93,6 +93,11 @@ EMBEDDING_DTYPE = os.getenv("EMBEDDING_DTYPE", "float16")
 LARGE_PDF_BATCH_SIZE = int(os.getenv("LARGE_PDF_BATCH_SIZE", "1000"))
 ENCODING_MEGA_BATCH_SIZE = int(os.getenv("ENCODING_MEGA_BATCH_SIZE", "5000"))
 
+# Lote de forward-pass del embedder. Era 32 (muy conservador). Con la GPU
+# dedicada de 32 GiB y chunks de ~256 tokens, 128 sobra y acelera notablemente;
+# si un lote provoca OOM de CUDA, encode() ya degrada a CPU sin abortar (§7.3).
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "128"))
+
 # ============================================================
 # FRAGMENTACIÓN
 # ============================================================

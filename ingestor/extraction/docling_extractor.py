@@ -305,6 +305,11 @@ class DoclingExtractor:
         # Último DoclingDocument convertido, para que el pipeline pueda
         # fragmentarlo con HybridChunker en vez de usar los Element aplanados.
         self._last_document: Optional[Any] = None
+        # DocumentConverter reutilizado entre ficheros (PLAN.md §7.3): construirlo
+        # carga los modelos de layout + tableformer, que antes se reinicializaban
+        # en cada PDF. El extractor vive toda la ejecución (pipeline lo cachea),
+        # así que se construye una sola vez y se reutiliza.
+        self._converter: Optional[DocumentConverter] = None
 
     @property
     def last_document(self) -> Optional[Any]:
@@ -450,15 +455,23 @@ class DoclingExtractor:
             return self._extract_pypdf_fallback(pdf_path)
 
         finally:
-            if converter:
-                del converter
-
+            # El converter se reutiliza entre ficheros (self._converter): NO se
+            # destruye aquí. Sólo se libera la caché CUDA de tensores transitorios
+            # de esta conversión; los pesos del modelo siguen residentes.
             if self._gpu_manager.is_available:
                 gc.collect()
                 self._gpu_manager.clear_cache()
 
     def _get_converter(self) -> DocumentConverter:
-        """Obtiene DocumentConverter configurado."""
+        """Obtiene el DocumentConverter, construyéndolo una sola vez.
+
+        Se reutiliza entre ficheros: los modelos (layout, tableformer) quedan
+        residentes en GPU y no se recargan por PDF (PLAN.md §7.3). Las opciones
+        del pipeline son fijas por instancia, así que un único converter sirve.
+        """
+        if self._converter is not None:
+            return self._converter
+
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = self.enable_ocr
         pipeline_options.do_table_structure = self.enable_tables
@@ -482,7 +495,8 @@ class DoclingExtractor:
             )
         }
 
-        return DocumentConverter(format_options=format_options)
+        self._converter = DocumentConverter(format_options=format_options)
+        return self._converter
 
     def _extract_from_document(self, doc, pdf_path: Path) -> List[Element]:
         """Extrae elementos del objeto documento de Docling."""
