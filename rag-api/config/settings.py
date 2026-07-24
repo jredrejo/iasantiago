@@ -43,6 +43,12 @@ def get_bool_env(key: str, default: bool) -> bool:
 # anterior sin tocar código.
 TRANSLATE_QUERIES = get_bool_env("TRANSLATE_QUERIES", False)
 
+# Expansión de acrónimos de dominio en la consulta (REBT → Reglamento
+# Electrotécnico para Baja Tensión, etc.). Ayuda cuando la norma se cita por
+# acrónimo pero el PDF usa el nombre completo (PLAN.md §3.1). Kill-switch por si
+# alguna vez estorba; por defecto ACTIVADO. La tabla vive en acronyms.py.
+EXPAND_ACRONYMS = get_bool_env("EXPAND_ACRONYMS", True)
+
 
 # ============================================================
 # TOPICS - Configuración de temas educativos

@@ -25,7 +25,9 @@ from config.settings import (
     TELEMETRY_PATH,
     TELEMETRY_RETENTION_MONTHS,
     TRANSLATE_QUERIES,
+    EXPAND_ACRONYMS,
 )
+from acronyms import expand_acronyms
 from core.cache import ModelCache
 from retrieval_lib.fusion import deduplicate_chunks, reciprocal_rank_fusion
 from retrieval_lib.search import apply_per_file_limit, prepare_query_for_retrieval
@@ -233,6 +235,14 @@ def _prepare_query(query: str) -> Tuple[str, str, str]:
         logger.info(
             f"Query en {detected_lang}; sin traducir (TRANSLATE_QUERIES=off)"
         )
+
+    # Expansión de acrónimos de dominio (REBT → Reglamento… , PLAN.md §3.1).
+    # Se aplica a la consulta de retrieval; original_query se mantiene intacta.
+    if EXPAND_ACRONYMS:
+        expanded, matched = expand_acronyms(query)
+        if matched:
+            logger.info(f"Acrónimos expandidos: {matched}")
+            query = expanded
 
     return query, detected_lang, original_query
 
