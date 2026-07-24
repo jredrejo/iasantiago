@@ -39,6 +39,15 @@ class Filter:
                 'Ej: {"quimica": "Chemistry", "electricidad": "Electricidad"}'
             ),
         )
+        strip_suffixes: str = Field(
+            default="- Generador,-Generador,— Generador, Generador,- Examen,-Examen",
+            description=(
+                "Sufijos (separados por coma) que se quitan del nombre del modelo "
+                "antes de resolver el tema, para que las variantes 'Electricidad - "
+                "Generador' apunten al mismo tema 'Electricidad'. topic_map tiene "
+                "prioridad sobre esto."
+            ),
+        )
         default_topic: str = Field(
             default="",
             description="Tema de reserva si no se resuelve ninguno (vacio = error visible).",
@@ -81,7 +90,17 @@ class Filter:
         for key in (model_id, name):
             if key and key in mapping:
                 return mapping[key]
-        return name or self.valves.default_topic or None
+
+        # Quitar sufijos de variante ("Electricidad - Generador" -> "Electricidad")
+        # para que las variantes compartan el tema base sin tener que mapearlas.
+        resolved = name
+        for suffix in (s.strip() for s in (self.valves.strip_suffixes or "").split(",")):
+            if suffix and resolved.lower().endswith(suffix.lower()):
+                resolved = resolved[: -len(suffix)]
+                break
+        resolved = resolved.rstrip(" \t-–—")
+
+        return resolved or self.valves.default_topic or None
 
     async def _emit(self, emitter, description: str, done: bool):
         if emitter and self.valves.show_status:
