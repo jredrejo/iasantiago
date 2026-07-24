@@ -130,9 +130,23 @@ services:
     ports:
       # Solo localhost: nginx (en el host) llega por 127.0.0.1:8001.
       - "127.0.0.1:8001:8001"
+    healthcheck:
+      # /healthz es público (sin Bearer) y sólo responde 200 tras el preload de
+      # embedder+reranker en el lifespan, así que sirve de señal de readiness.
+      # start_period generoso: la carga de modelos en CPU tarda.
+      test: ["CMD", "curl", "-fs", "http://localhost:8001/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
     depends_on:
-      - vllm
-      - qdrant
+      # Espera a que qdrant/vllm estén sanos, no sólo arrancados. Desbloqueado
+      # por el fix del healthcheck de qdrant (4b700f5): antes service_healthy
+      # sobre qdrant colgaba rag-api para siempre.
+      vllm:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -204,7 +218,8 @@ services:
       - ./ingestor:/app
       - docling_cache:/cache/docling # Docling extraction cache
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -261,7 +276,8 @@ services:
       - ./openwebui/custom/logo.png:/app/backend/open_webui/static/logo.png:ro
       - ./openwebui/custom/splash.png:/app/backend/open_webui/static/splash.png:ro
     depends_on:
-      - rag-api
+      rag-api:
+        condition: service_healthy
 
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
@@ -291,7 +307,10 @@ services:
       - --cookie-expire=168h
       - --cookie-refresh=0h
     depends_on:
-      - openwebui
+      # openwebui trae su propio HEALTHCHECK en la imagen, así que esperamos a
+      # que esté sano antes de exponer el proxy (evita 502 en el arranque).
+      openwebui:
+        condition: service_healthy
 
 volumes:
   huggingface_cache:
