@@ -24,6 +24,26 @@ def get_int_env(key: str, default: int) -> int:
         return default
 
 
+def get_bool_env(key: str, default: bool) -> bool:
+    """Lee una variable de entorno como bool ('1/true/yes/on' → True)."""
+    value = os.getenv(key)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ============================================================
+# TRADUCCIÓN DE QUERIES
+# ============================================================
+# Kill-switch para la traducción es→en previa al retrieval. Con el embedder
+# multilingüe (e5-instruct, cross-lingual) traducir la consulta perjudica al
+# corpus mayoritariamente en español: destruye la rama BM25 y añade ruido de
+# traducción (PLAN.md §3.3/§1.4/§4.5). Por defecto DESACTIVADO: la consulta va
+# tal cual a densa y BM25. Poner TRANSLATE_QUERIES=true restaura el comportamiento
+# anterior sin tocar código.
+TRANSLATE_QUERIES = get_bool_env("TRANSLATE_QUERIES", False)
+
+
 # ============================================================
 # TOPICS - Configuración de temas educativos
 # ============================================================

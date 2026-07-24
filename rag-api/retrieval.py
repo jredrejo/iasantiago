@@ -24,6 +24,7 @@ from config.settings import (
     RERANK_MODEL,
     TELEMETRY_PATH,
     TELEMETRY_RETENTION_MONTHS,
+    TRANSLATE_QUERIES,
 )
 from core.cache import ModelCache
 from retrieval_lib.fusion import deduplicate_chunks, reciprocal_rank_fusion
@@ -221,9 +222,17 @@ def _prepare_query(query: str) -> Tuple[str, str, str]:
     detected_lang = detect_language(query)
     original_query = query
 
-    if detected_lang != "en":
+    # Traducción desactivada por defecto (kill-switch TRANSLATE_QUERIES): con el
+    # embedder cross-lingual la consulta original rinde mejor en un corpus
+    # español y conserva la rama BM25 (PLAN.md §3.3). Con el flag activo se
+    # restaura la traducción es→en previa.
+    if TRANSLATE_QUERIES and detected_lang != "en":
         logger.info(f"Query en {detected_lang}, traduciendo a inglés para retrieval")
         query, _ = translate_query(query, detected_lang, "en")
+    elif detected_lang != "en":
+        logger.info(
+            f"Query en {detected_lang}; sin traducir (TRANSLATE_QUERIES=off)"
+        )
 
     return query, detected_lang, original_query
 
