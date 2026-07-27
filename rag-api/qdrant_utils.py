@@ -13,6 +13,21 @@ def topic_collection(topic: str) -> str:
     return f"rag_{topic.lower()}"
 
 
+def collection_exists(topic: str) -> bool:
+    """True si existe la colección Qdrant del tema.
+
+    Sirve para que el llamador degrade con elegancia (contexto vacío) en vez de
+    reventar con un 500 cuando el tema no mapea a ninguna colección — p. ej. una
+    etiqueta mal escrita en un workspace model de Open WebUI (PLAN.md §7.1).
+    """
+    coll = topic_collection(topic)
+    try:
+        return client.collection_exists(coll)
+    except Exception as e:
+        logger.error(f"[QDRANT] Error comprobando existencia de '{coll}': {e}")
+        return False
+
+
 def search_dense(topic: str, vector: list, topk: int):
     """
     Busca vectores en Qdrant.

@@ -62,6 +62,7 @@ from retrieval import (
     soft_trim_context,
     telemetry_log,
 )
+from qdrant_utils import collection_exists
 from token_utils import extract_topic_from_model_name
 
 from eval import (
@@ -504,6 +505,28 @@ async def retrieve(
         hashlib.sha256(x_email.encode("utf-8")).hexdigest()[:12] if x_email else "anon"
     )
     logger.info(f"[/retrieve] Usuario: {user_ref}, topic={req.topic}, gen={req.generative}")
+
+    # Tema sin colección → degradar con elegancia (contexto vacío) en vez de 500.
+    # El Filter de Open WebUI sigue sin contexto y el modelo responde igual; una
+    # etiqueta mal escrita en un workspace model no debe tumbar el endpoint (§7.1).
+    if not collection_exists(req.topic):
+        logger.warning(
+            f"[/retrieve] Tema '{req.topic}' sin colección Qdrant; devuelvo vacío"
+        )
+        return {
+            "context": "",
+            "citations": [],
+            "meta": {
+                "topic": req.topic,
+                "mode": None,
+                "generative": req.generative,
+                "num_chunks": 0,
+                "final_topk": None,
+                "original_language": None,
+                "context_token_limit": None,
+                "error": "unknown_topic",
+            },
+        }
 
     # Límite de contexto: mismo cálculo que la ruta de chat.
     if req.generative:
