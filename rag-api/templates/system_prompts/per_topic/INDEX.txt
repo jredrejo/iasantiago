@@ -1,0 +1,28 @@
+Prompts de sistema por tema — ruta del Filter de Open WebUI (PLAN.md §7.1)
+==========================================================================
+
+Estos ficheros son la FUENTE DE VERDAD versionada de los prompts de sistema
+por tema. Open WebUI NO los carga solo: hay que pegar el contenido de cada uno
+en el campo "System Prompt" del workspace model correspondiente (Admin →
+Workspace → Models → editar modelo). Si se edita un prompt aquí, hay que volver
+a pegarlo en Open WebUI.
+
+Solo aplican a los modelos NORMALES (ruta Filter). Las variantes "- Generador"
+siguen usando templates/system_prompts/generative.txt (reglas de generación de
+exámenes), común a todos los temas.
+
+Fichero              -> id del workspace model  (nombre visible)
+-----------------------------------------------------------------
+Electricidad.txt     -> electricidad            (Electricidad y Electrónica)
+Quimica.txt          -> qumica                  (Química)            [topic: Chemistry]
+Programacion.txt     -> programacin             (Programación)      [topic: Programming]
+Mecanica.txt         -> mecnica                 (Mecánica)          [topic: Mecanica]
+Dibujo.txt           -> dibujo                  (Dibujo)
+FOL.txt              -> fol                     (FOL)
+Latin.txt            -> latin                   (Latín)             [topic: Latin]
+AFD.txt              -> afd                     (AFD)
+Sostenibilidad.txt   -> sostenibilidad          (Sostenibilidad)
+
+Nota: los prompts NO construyen URLs de cita ni conocen el tema. El contexto
+que inyecta el Filter ya trae, tras cada fragmento, una línea "FUENTE:" con el
+enlace exacto; el prompt solo recuerda al modelo que copie ese formato.
