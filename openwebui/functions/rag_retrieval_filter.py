@@ -1,7 +1,7 @@
 """
 title: IASantiago RAG Retrieval
 author: iasantiago
-version: 0.1.0
+version: 0.2.0
 required_open_webui_version: 0.5.0
 description: >
     Inlet Filter que consulta el servicio de retrieval puro de rag-api
@@ -9,9 +9,10 @@ description: >
     ultimo mensaje del usuario. Open WebUI conserva el historial y hace
     streaming directo contra vLLM; rag-api queda como servicio de retrieval.
 
-    Se instala como *Function* de tipo Filter y se activa por cada workspace
-    model de tema. Es un prototipo que corre EN PARALELO a la ruta topic:X
-    actual para poder hacer A/B (PLAN.md §5, paso 8): no borra nada de rag-api.
+    UN SOLO Filter sirve a los modelos normales y a los '- Generador': el modo
+    examen se detecta por el nombre/id del modelo (ver `generative_markers`), no
+    por una valve global, así que ya no hacen falta dos copias del Filter con
+    distinta valve `generative` (v0.2.0). Se activa por cada workspace model.
 """
 
 import json
@@ -52,9 +53,22 @@ class Filter:
             default="",
             description="Tema de reserva si no se resuelve ninguno (vacio = error visible).",
         )
+        generative_markers: str = Field(
+            default="generador,generator,examen",
+            description=(
+                "Tokens (separados por coma) que, si aparecen en el id o el nombre "
+                "del modelo, activan el modo examen (recupera mas hondo). Así un "
+                "solo Filter distingue 'qumica' de 'qumica---generador' sin valve "
+                "por modelo. Busqueda por substring, sin mayusculas/acentos."
+            ),
+        )
         generative: bool = Field(
             default=False,
-            description="Modo examen: recupera mas hondo. Actívalo en la variante '— generador'.",
+            description=(
+                "Fuerza el modo examen para TODOS los modelos de este Filter, "
+                "ignorando generative_markers. Normalmente False: deja que el "
+                "nombre/id del modelo decida."
+            ),
         )
         top_k: int = Field(
             default=0,
@@ -102,6 +116,31 @@ class Filter:
 
         return resolved or self.valves.default_topic or None
 
+    def _is_generative(self, model: Optional[dict]) -> bool:
+        """Decide el modo examen a partir del modelo, no de una valve global.
+
+        La valve `generative` (si está a True) fuerza el modo para todos. Si no,
+        se mira si el id o el nombre del modelo contienen alguno de los
+        `generative_markers` (p. ej. 'generador'), lo que permite que un único
+        Filter sirva tanto a 'qumica' como a 'qumica---generador'.
+        """
+        if self.valves.generative:
+            return True
+        if not model:
+            return False
+        haystack = " ".join(
+            (
+                model.get("id") or "",
+                model.get("name") or "",
+                (model.get("info") or {}).get("name") or "",
+            )
+        ).lower()
+        markers = (
+            m.strip().lower()
+            for m in (self.valves.generative_markers or "").split(",")
+        )
+        return any(m and m in haystack for m in markers)
+
     async def _emit(self, emitter, description: str, done: bool):
         if emitter and self.valves.show_status:
             await emitter(
@@ -145,7 +184,7 @@ class Filter:
         payload = {
             "query": query,
             "topic": topic,
-            "generative": self.valves.generative,
+            "generative": self._is_generative(__model__),
         }
         if self.valves.top_k > 0:
             payload["top_k"] = self.valves.top_k
