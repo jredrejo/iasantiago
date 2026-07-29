@@ -254,7 +254,10 @@ services:
       - ENABLE_RAG=false
       # Confiar en los headers que envia oauth2-proxy
       - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
-      - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-Forwarded-User
+      # X-Ow-Name la construye nginx a partir del email (parte local). No usar
+      # X-Forwarded-User: con provider=oidc oauth2-proxy mete ahi el claim "sub"
+      # de Google, que es un numero de 21 digitos.
+      - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-Ow-Name
       - WEBUI_AUTH_COOKIE_AGE=604800 # 7 days in seconds
       - WEBUI_SESSION_COOKIE_AGE=604800 # 7 days in seconds
       # Cookies "sanas" detrás de reverse proxy
