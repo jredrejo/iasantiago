@@ -1,0 +1,24 @@
+Prompts de sistema por tema — variantes GENERADOR (examen) — Filter §7.1
+========================================================================
+
+Cada fichero = cabecera de la materia + el cuerpo íntegro de reglas de examen
+de ../generative.txt. Se generan con scripts/gen_generador desde generative.txt,
+así que si cambian las reglas de examen, regenera; no edites el cuerpo a mano.
+
+Pega el contenido de cada fichero en el campo "System Prompt" del workspace
+model "- Generador" correspondiente (Open WebUI no los carga solo).
+
+Fichero              -> id del workspace model generador
+--------------------------------------------------------
+Electricidad.txt     -> electricidad-generador
+Quimica.txt          -> qumica---generador
+Programacion.txt     -> programacin---generador
+Mecanica.txt         -> mecnica---generador
+Dibujo.txt           -> dibujo---generador
+FOL.txt              -> fol---generador
+Latin.txt            -> latn---generador
+AFD.txt              -> afd---generador
+Sostenibilidad.txt   -> sostenibilidad---generador
+
+El modo examen (recuperación más honda) lo activa el Filter solo, por el
+'generador' del id/nombre; este prompt aporta las reglas de escritura del examen.

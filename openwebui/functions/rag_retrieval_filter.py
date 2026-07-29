@@ -1,6 +1,6 @@
 """
 title: IASantiago RAG Retrieval
-author: iasantiago
+author: José L. Redrejo Rodríguez
 version: 0.2.0
 required_open_webui_version: 0.5.0
 description: >
