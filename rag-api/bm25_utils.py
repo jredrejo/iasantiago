@@ -1,5 +1,5 @@
 from whoosh import index
-from whoosh.qparser import QueryParser
+from whoosh.qparser import OrGroup, QueryParser
 import re
 import time
 import logging
@@ -60,7 +60,15 @@ def bm25_search_safe(base: str, topic: str, query: str, topk: int):
         open_time = time.time() - open_start
 
         parse_start = time.time()
-        qp = QueryParser("text", schema=idx.schema)
+        # OrGroup (no AndGroup, el default de Whoosh): una pregunta natural como
+        # "cuántos músculos hay" no exige que TODOS los términos co-ocurran en el
+        # mismo chunk — con AndGroup el interrogativo "cuántos" (presente en 2
+        # docs) vaciaba el resultado y la ruta BM25-solo (queries cortas) devolvía
+        # 0. El factor de coordinación 0.9 sigue premiando a los docs que casan
+        # más términos, y BM25 ya pondera por IDF, así que los términos raros
+        # (músculos) mandan sobre los comunes (hay). La precisión se restaura
+        # aguas abajo con el reranker jina.
+        qp = QueryParser("text", schema=idx.schema, group=OrGroup.factory(0.9))
         q = qp.parse(clean_query)
         parse_time = time.time() - parse_start
 
