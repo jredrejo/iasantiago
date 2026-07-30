@@ -582,11 +582,21 @@ class DoclingExtractor:
                         )
                         return elements
 
-                else:
-                    # Respaldo: estimar páginas
+                    # Sin páginas no es lo mismo que sin texto: si los items no
+                    # traen 'prov', export_to_markdown(page_no=N) filtra y devuelve
+                    # vacío para TODAS las páginas aunque el documento tenga texto.
+                    # Antes se daba el documento por vacío y se caía a PyPDF; eran
+                    # 32 ficheros. Se reintenta el documento entero.
                     logger.warning(
-                        "[DOCLING] Sin conteo de páginas, usando páginas estimadas"
+                        "[DOCLING] Ninguna página dio texto, probando documento completo"
                     )
+
+                if not elements:
+                    # Respaldo: estimar páginas
+                    if num_pages == 0:
+                        logger.warning(
+                            "[DOCLING] Sin conteo de páginas, usando páginas estimadas"
+                        )
                     markdown = doc.export_to_markdown()
 
                     if markdown.strip() and len(markdown) > 50:
@@ -624,43 +634,50 @@ class DoclingExtractor:
             try:
                 doc_dict = doc.export_to_dict()
 
-                if "body" in doc_dict:
-                    for item in doc_dict["body"]:
+                # El texto NO está en doc_dict["body"]: ahí sólo hay el nodo raíz
+                # ({self_ref, children, label}). Recorrerlo con un for itera sus
+                # CLAVES —cadenas—, el isinstance(item, dict) las descartaba todas
+                # y este respaldo devolvía siempre 0 elementos. El contenido vive
+                # en las listas planas "texts" y "tables".
+                for key in ("texts", "tables"):
+                    for item in doc_dict.get(key) or []:
                         if not isinstance(item, dict):
                             continue
 
-                        text = item.get("text", "").strip()
+                        text = (item.get("text") or "").strip()
                         if not text or len(text) < 30:
                             continue
 
                         page = 1
-                        if (
-                            "prov" in item
-                            and isinstance(item["prov"], list)
-                            and item["prov"]
-                        ):
-                            prov = item["prov"][0]
-                            if isinstance(prov, dict) and "page" in prov:
-                                page = prov["page"]
-                            elif hasattr(prov, "page"):
-                                page = prov.page
+                        prov_list = item.get("prov")
+                        if isinstance(prov_list, list) and prov_list:
+                            prov = prov_list[0]
+                            if isinstance(prov, dict):
+                                # docling_core usa 'page_no'; 'page' es el nombre
+                                # antiguo. Se aceptan los dos.
+                                page = prov.get("page_no") or prov.get("page") or 1
+                            else:
+                                page = getattr(prov, "page_no", None) or getattr(
+                                    prov, "page", 1
+                                )
 
                         elements.append(
                             Element(
                                 text=text,
-                                type="text",
+                                type="table" if key == "tables" else "text",
                                 page=page,
                                 source=source,
                                 metadata={
-                                    "docling_type": item.get("type", "text"),
+                                    "docling_type": item.get("label")
+                                    or item.get("type", "text"),
                                     "method": "export_to_dict",
                                 },
                             )
                         )
 
-                    logger.info(
-                        f"[DOCLING] export_to_dict extrajo {len(elements)} elementos"
-                    )
+                logger.info(
+                    f"[DOCLING] export_to_dict extrajo {len(elements)} elementos"
+                )
 
             except Exception as e:
                 logger.warning(f"[DOCLING] Exportar dict falló: {e}")
@@ -680,8 +697,19 @@ class DoclingExtractor:
                 logger.info(f"[DOCLING] Validación PDF: {num_pages} páginas")
 
                 if reader.is_encrypted:
-                    logger.warning("[DOCLING] PDF está encriptado")
-                    return False, "PDF está encriptado"
+                    # Casi todos los manuales de fabricante (Omron, KUKA) y los
+                    # apuntes de Química vienen "encriptados" sólo por permisos:
+                    # contraseña de usuario vacía y contraseña de propietario para
+                    # impedir copiar/imprimir. Se leen sin problema. Rechazarlos en
+                    # bloque mandó 67 ficheros al respaldo PyPDF (PLAN.md §6.8-bis).
+                    # decrypt("") != 0 significa que se ha abierto; sólo 0 es un
+                    # PDF que de verdad necesita contraseña.
+                    if not reader.decrypt(""):
+                        logger.warning("[DOCLING] PDF con contraseña de usuario")
+                        return False, "PDF requiere contraseña"
+
+                    logger.info("[DOCLING] PDF con permisos restringidos, se abre igual")
+                    num_pages = len(reader.pages)
 
                 # Verificar tamaños de página
                 for page_num, page in enumerate(reader.pages[:5], 1):
