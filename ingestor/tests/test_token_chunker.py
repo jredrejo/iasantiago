@@ -180,6 +180,77 @@ def test_crash_state_lee_el_formato_enriquecido_antiguo(tmp_path):
     assert mgr.should_skip("y.pdf")  # 3 >= 3
 
 
+def _banned(mgr, filename, reason):
+    """Deja `filename` vetado (3/3) con el motivo indicado."""
+    for _ in range(mgr.max_crashes):
+        mgr.mark_processing(filename, reason=reason)
+
+
+def test_reset_selectivo_solo_toca_los_vetos_por_interrupcion(tmp_path):
+    """
+    Un kill del watchdog deja "conversión interrumpida"; un PDF que docling no
+    sabe abrir deja el nombre de la excepción (`record_reason`). Rehabilitar los
+    primeros no debe rehabilitar los segundos, que volverían a tumbar docling.
+
+    Caso real (PLAN.md §6.8): la tirada rota de Electricidad vetó 44 ficheros
+    sanos por falsos positivos del watchdog, mientras `bgpython_a4_c_2.pdf` y
+    `catalogo_industria_microbiologia_panreac_akralab.pdf` están rotos de verdad.
+    """
+    from extraction.docling_extractor import CrashStateManager
+
+    mgr = CrashStateManager(tmp_path, max_crashes=3)
+    _banned(mgr, "manual_sano.pdf", "conversión interrumpida")
+    _banned(mgr, "roto.pdf", "ConversionError: status FAILURE")
+    assert mgr.should_skip("manual_sano.pdf") and mgr.should_skip("roto.pdf")
+
+    assert mgr.reset(only_interrupted=True) == 1
+
+    assert not mgr.should_skip("manual_sano.pdf"), "el falso positivo debe rehabilitarse"
+    assert mgr.should_skip("roto.pdf"), "el PDF roto de verdad debe seguir vetado"
+
+
+def test_reset_a_secas_sigue_rehabilitandolo_todo(tmp_path):
+    """El comportamiento por defecto no cambia: la opción es opt-in."""
+    from extraction.docling_extractor import CrashStateManager
+
+    mgr = CrashStateManager(tmp_path, max_crashes=3)
+    _banned(mgr, "manual_sano.pdf", "conversión interrumpida")
+    _banned(mgr, "roto.pdf", "ConversionError: status FAILURE")
+
+    assert mgr.reset() == 2
+    assert not mgr.should_skip("roto.pdf")
+
+
+def test_list_banned_no_modifica_el_estado(tmp_path):
+    """`--dry-run` tiene que poder enseñar la lista sin rehabilitar nada."""
+    from extraction.docling_extractor import CrashStateManager
+
+    mgr = CrashStateManager(tmp_path, max_crashes=3)
+    _banned(mgr, "manual_sano.pdf", "conversión interrumpida")
+    _banned(mgr, "roto.pdf", "ConversionError: status FAILURE")
+    mgr.mark_processing("a_medias.pdf", reason="conversión interrumpida")  # 1/3
+
+    assert mgr.list_banned(only_interrupted=True) == ["manual_sano.pdf"]
+    assert mgr.list_banned() == ["manual_sano.pdf", "roto.pdf"]
+    assert mgr.should_skip("manual_sano.pdf"), "listar no debe rehabilitar"
+
+
+def test_un_exito_borra_el_veto_y_su_motivo(tmp_path):
+    """Tras rehabilitar y reconvertir bien, no debe quedar rastro del falso veto."""
+    from extraction.docling_extractor import CrashStateManager
+
+    mgr = CrashStateManager(tmp_path, max_crashes=3)
+    _banned(mgr, "manual_sano.pdf", "conversión interrumpida")
+    mgr.reset(only_interrupted=True)
+
+    mgr.mark_processing("manual_sano.pdf", reason="conversión interrumpida")
+    mgr.mark_success("manual_sano.pdf")
+
+    assert mgr._state.get("manual_sano.pdf") is None
+    assert mgr._reasons.get("manual_sano.pdf") is None
+    assert not mgr.is_interrupted_only("manual_sano.pdf")
+
+
 def test_dedup_normaliza_espacios_y_mayusculas():
     chunks = [
         Chunk(text="El mismo contenido exacto aquí presente", page=1),

@@ -161,6 +161,12 @@ class ProcessingState:
             "topic": topic,
             "status": "success",
         }
+        # Un reproceso correcto tiene que sacar el fichero de "failed": si no, un
+        # fallo antiguo queda ahí para siempre y el mismo fichero aparece a la vez
+        # en "processed" (success) y en "failed" con un error caducado. Pasó en la
+        # reindexación de Electricidad: 280 ficheros reindexados bien seguían
+        # listados como fallidos con el error 500 de Qdrant de la tirada anterior.
+        self.state["failed"].pop(file_path, None)
         self._save_state()
         logger.info(f"[STATE] Marcado como procesado: {Path(file_path).name}")
 
@@ -207,7 +213,11 @@ class ProcessingState:
             if info.get("status") == "failed" and info.get("retry_count", 0) > 0:
                 info["retry_count"] = 0
                 reset_count += 1
-                self.state["failed"].get(file_path, {})["retry_count"] = 0
+                # `.get(path, {})["retry_count"] = 0` escribía sobre un dict
+                # temporal cuando el fichero no estaba en "failed": no fallaba,
+                # pero tampoco hacía nada.
+                if file_path in self.state["failed"]:
+                    self.state["failed"][file_path]["retry_count"] = 0
 
         if reset_count:
             self._save_state()

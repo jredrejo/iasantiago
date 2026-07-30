@@ -347,7 +347,22 @@ def main() -> None:
         elif command == "reset-docling-crashes":
             from extraction.docling_extractor import _get_crash_state
 
-            count = _get_crash_state().reset()
+            # `--interrumpidos` rehabilita sólo los vetos por conversión
+            # interrumpida (watchdog o caída del proceso), no los PDFs que
+            # docling no sabe abrir. Es lo que hay que usar tras arreglar un
+            # falso positivo del watchdog; el reset a secas los rehabilita todos.
+            only_interrupted = "--interrumpidos" in sys.argv[2:]
+            dry_run = "--dry-run" in sys.argv[2:]
+            crash_state = _get_crash_state()
+
+            if dry_run:
+                targets = crash_state.list_banned(only_interrupted=only_interrupted)
+                print(f"Se rehabilitarían {len(targets)} archivos:")
+                for name in targets:
+                    print(f"  {name}")
+                sys.exit(0)
+
+            count = crash_state.reset(only_interrupted=only_interrupted)
             print(f"Rehabilitado docling para {count} archivos")
             sys.exit(0)
 
@@ -357,7 +372,10 @@ def main() -> None:
             print("  python main.py delete <topic> <pdf> - Eliminar un PDF")
             print("  python main.py delete-topic <topic> - Eliminar todo de un tema")
             print("  python main.py retry-failed         - Reactivar archivos en cuarentena")
-            print("  python main.py reset-docling-crashes - Rehabilitar docling en archivos vetados")
+            print("  python main.py reset-docling-crashes [--interrumpidos] [--dry-run]")
+            print("                                      - Rehabilitar docling en archivos vetados")
+            print("                                        (--interrumpidos: sólo los vetados por")
+            print("                                         conversión interrumpida, no los rotos)")
             sys.exit(1)
     else:
         initial_scan()

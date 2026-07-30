@@ -164,12 +164,43 @@ class CrashStateManager:
             }
             self._save()
 
-    def reset(self, only_over_threshold: bool = False) -> int:
+    def is_interrupted_only(self, filename: str) -> bool:
+        """
+        True si el veto viene de una conversión interrumpida y no de un error real.
+
+        `mark_processing` graba "conversión interrumpida" *antes* de convertir;
+        `mark_success` la borra al acabar bien y `record_reason` la sustituye por
+        el nombre de la excepción si docling falla de verdad. Así que un veto que
+        conserva ese motivo significa "el proceso murió a media conversión sin
+        dejar excepción": un kill del watchdog o una caída nativa, nunca un PDF
+        que docling sepa que no puede abrir.
+
+        Distinguirlo importa porque un reset a ciegas también rehabilitaría los
+        ficheros genuinamente rotos (`bgpython_a4_c_2.pdf`,
+        `catalogo_industria_microbiologia_panreac_akralab.pdf`), que volverían a
+        hacer caer a docling en la siguiente pasada.
+        """
+        reason = self._reasons.get(filename, {}).get("reason", "")
+        return "interrump" in reason.lower()
+
+    def list_banned(self, only_interrupted: bool = False) -> list:
+        """Lista los archivos vetados, para poder revisarlos antes de tocar nada."""
+        banned = sorted(k for k, c in self._state.items() if c >= self.max_crashes)
+        if only_interrupted:
+            banned = [k for k in banned if self.is_interrupted_only(k)]
+        return banned
+
+    def reset(
+        self, only_over_threshold: bool = False, only_interrupted: bool = False
+    ) -> int:
         """
         Limpia el estado de fallos.
 
         Args:
             only_over_threshold: Si True, sólo borra los que superan el umbral.
+            only_interrupted: Si True, sólo borra los vetos por conversión
+                interrumpida (ver `is_interrupted_only`), dejando intactos los
+                ficheros que hacen fallar a docling de verdad.
 
         Returns:
             Número de entradas eliminadas
@@ -178,6 +209,9 @@ class CrashStateManager:
             targets = [k for k, c in self._state.items() if c >= self.max_crashes]
         else:
             targets = list(self._state)
+
+        if only_interrupted:
+            targets = [k for k in targets if self.is_interrupted_only(k)]
 
         for k in targets:
             self._state.pop(k, None)
