@@ -76,6 +76,37 @@ log "Temas: ${TOPICS[*]}"
 [[ "$DRY_RUN" == "1" ]] && log "*** DRY RUN — no se modifica nada ***"
 
 # ---------------------------------------------------------------------------
+# 0. El árbol de trabajo tiene que estar limpio bajo ingestor/.
+#
+#    `/app` NO sale de la imagen: docker-compose.yml monta ./ingestor encima
+#    (bind). Lo que haya en el árbol de trabajo es literalmente el código que
+#    corre. La tirada del 30-07 19:00 arrancó justo mientras un `git checkout`
+#    tenía el fichero en su versión anterior durante ~80 segundos: python
+#    importó el módulo sin el arreglo y se pasó 37 minutos mandando a PyPDF
+#    exactamente los PDFs que el arreglo recupera, con el fichero ya correcto en
+#    disco y el mensaje viejo saliendo por el log. Sólo estaba viejo el módulo
+#    en memoria, que es lo único que no se puede inspeccionar.
+#
+#    Reconstruir la imagen no protege de esto y comprobar el fichero después
+#    tampoco: para cuando se mira, ya se importó. Lo único que corta el problema
+#    es no empezar con cambios sin confirmar, y no tocar el árbol mientras corre.
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_GIT_CHECK:-0}" != "1" ]] && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  DIRTY=$(git -C "$ROOT" status --porcelain -- ingestor/ 2>/dev/null | grep -v '^??' || true)
+  if [[ -n "$DIRTY" ]]; then
+    log "ERROR: hay cambios sin confirmar en ingestor/:"
+    echo "$DIRTY" | tee -a "$LOG"
+    log ""
+    log "       docker-compose monta ./ingestor en /app, así que el ingestor"
+    log "       ejecuta el árbol de trabajo. Con cambios a medias se arriesga a"
+    log "       importar una versión que no es la que crees (pasó el 30-07)."
+    log "       Confírmalos, guárdalos con git stash, o SKIP_GIT_CHECK=1."
+    exit 1
+  fi
+  log "Árbol limpio bajo ingestor/ ($(git -C "$ROOT" rev-parse --short HEAD))."
+fi
+
+# ---------------------------------------------------------------------------
 # 1. Qué se rehabilitaría. `--interrumpidos` deja vetados los PDFs que docling
 #    no sabe abrir (bgpython_a4_c_2.pdf, el catálogo de Panreac).
 # ---------------------------------------------------------------------------
