@@ -20,5 +20,12 @@ topics/
 retrieval.jsonl
 .claude/settings.local.json
 
+# Copias de Qdrant (1,3 GB) y PDFs apartados a mano de la ingesta (394 MB).
+# Son datos, no código, y `backups/` la crea el propio reingest_false_bans.sh.
+backups/
+quarantine/
+# Worktrees de trabajo en paralelo: un checkout dentro del checkout.
+.claude/worktrees/
+
 # Host netplan config — machine-specific, must not live in the app repo (§5.d)
 50-cloud-init.yaml
