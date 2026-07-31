@@ -29,6 +29,7 @@ __all__ = [
     "UPSTREAM_OPENAI_URL",
     "OPENAI_API_KEY",
     "VLLM_MODEL",
+    "VLLM_SERVED_MODEL",
     "VLLM_MAX_MODEL_LEN",
     "VLLM_MAX_TOKENS",
     # Tokens dinámicos

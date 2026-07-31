@@ -45,7 +45,7 @@ from config.settings import (
     TOPIC_LABELS,
     VLLM_MAX_MODEL_LEN,
     VLLM_MAX_TOKENS,
-    VLLM_MODEL,
+    VLLM_SERVED_MODEL,
 )
 from core.vllm_client import VLLMClient
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -426,7 +426,8 @@ async def chat_completions(
     logger.info(f"Enviando a vLLM: {len(messages)} mensajes")
 
     payload = {
-        "model": VLLM_MODEL,
+        # El nombre publicado por vLLM, no la ruta HF (ver settings.VLLM_MODEL).
+        "model": VLLM_SERVED_MODEL,
         "messages": messages,
         "temperature": effective_temp,
         "top_p": effective_top_p,

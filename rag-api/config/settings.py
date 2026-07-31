@@ -172,7 +172,16 @@ GENERATIVE_TOPK_MULTIPLIER = get_int_env("GENERATIVE_TOPK_MULTIPLIER", 4)
 
 UPSTREAM_OPENAI_URL = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "dummy-key")
+# Ruta HF del modelo: la carga vLLM y la usa AutoTokenizer.from_pretrained().
+# NO sirve para el campo "model" de las peticiones: vLLM arranca con
+# --served-model-name, que *sustituye* el nombre publicado en la API en vez de
+# añadir un alias, así que pedirle la ruta HF devuelve 404 "does not exist".
 VLLM_MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+
+# Nombre con el que vLLM publica el modelo en su API (--served-model-name).
+# Estable y desacoplado de VLLM_MODEL para poder cambiar de modelo base sin
+# tocar rag-api ni el TASK_MODEL_EXTERNAL de Open WebUI.
+VLLM_SERVED_MODEL = os.getenv("VLLM_SERVED_MODEL", "santiago")
 
 # Límites del modelo
 VLLM_MAX_MODEL_LEN = get_int_env("VLLM_MAX_MODEL_LEN", 32768)
