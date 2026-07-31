@@ -370,8 +370,14 @@ async def chat_completions(
     context_builder.log_context_status(context_text, len(retrieved))
 
     # 6. Telemetría
+    # `source` marca explícitamente la ruta topic:X para el A/B del §7.1. Las
+    # filas anteriores a este cambio no lo llevan; el comparador las cuenta como
+    # "chat" por ausencia. `generative` deja medible lo que decide el §7.1: aquí
+    # lo adivina la regex de intención, en la ruta /retrieve lo elige el usuario.
     telemetry_log(
         {
+            "source": "chat",
+            "generative": is_generative,
             "query": user_msg,
             "original_language": meta.get("original_language"),
             "translated_query": (
