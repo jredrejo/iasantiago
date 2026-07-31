@@ -23,6 +23,36 @@ DEFAULT_STATE_FILE = "/whoosh/.processing_state.json"
 # lo reactiva manualmente.
 MAX_RETRIES = int(os.getenv("INGESTOR_MAX_RETRIES", "3"))
 
+# Atajo de detección de cambios del §7.3: evitar el MD5 de 7,3 GB en cada
+# escaneo usando (tamaño, mtime_ns) como *negativo rápido*.
+#
+# APAGADO POR DEFECTO, y a propósito. `impact()` da riesgo ALTO: esto decide si
+# un fichero se reprocesa, y equivocarse por el lado malo significa saltarse
+# ficheros informando de éxito — el fallo que `LESSONS.md` describe tres veces.
+# El §7.3 lo tenía diferido porque "necesita una reingesta real para verificar",
+# y esa reingesta necesita ventana de GPU. Se enciende con
+# `FAST_CHANGE_DETECTION=true` cuando haya con qué comprobarlo.
+#
+# El atajo sólo puede CONFIRMAR "no ha cambiado", nunca decidir "ha cambiado":
+# cualquier discrepancia, o la ausencia de los metadatos, cae al MD5 de siempre.
+# Así el único fallo nuevo posible es un fichero modificado conservando tamaño y
+# mtime_ns exactos, que requiere restaurar el mtime a mano.
+#
+# MEDIDO EL 2026-07-31, y el resultado desaconseja encenderlo: el MD5 del corpus
+# entero (561 PDFs, 7,73 GB) tarda **8 s** a ~1 GB/s con la caché de página
+# caliente. La tirada de reingesta del §6.8-bis duró 4 h 40 min. El §7.3 daba por
+# supuesto que hashear en cada escaneo era caro; a esta escala no lo es. Encender
+# esto compra 8 segundos de 17 000 a cambio de tocar la decisión de reprocesar.
+# El código se deja porque los metadatos que escribe son útiles y el coste de
+# tenerlo apagado es cero, pero **no lo enciendas sin volver a medir**: sólo
+# valdría la pena si el corpus creciera un orden de magnitud.
+FAST_CHANGE_DETECTION = os.getenv("FAST_CHANGE_DETECTION", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 
 class ProcessingState:
     """
@@ -107,6 +137,43 @@ class ProcessingState:
         """Calcula hash MD5 del archivo (por streaming, no carga el PDF en RAM)."""
         return get_file_hash_md5(file_path)
 
+    @staticmethod
+    def get_file_stat(file_path: str) -> Optional[Dict[str, int]]:
+        """`(tamaño, mtime_ns)` del archivo, o None si no se puede leer.
+
+        `mtime_ns` y no `mtime`: el float de `st_mtime` pierde precisión y dos
+        escrituras dentro del mismo tick pueden comparar iguales.
+        """
+        try:
+            st = os.stat(file_path)
+            return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+        except OSError as e:
+            logger.warning(f"[STATE] No se pudo hacer stat de {file_path}: {e}")
+            return None
+
+    def _unchanged_by_stat(self, file_path: str, file_info: Dict[str, Any]) -> bool:
+        """¿Puede afirmarse SIN hashear que el fichero no ha cambiado?
+
+        Devuelve True sólo si el atajo está activo y tanto el tamaño como el
+        `mtime_ns` guardados existen y coinciden con los actuales. En cualquier
+        otro caso devuelve False, que no significa "ha cambiado" sino "no lo sé":
+        quien llama pasa entonces al MD5. Las entradas escritas por versiones
+        anteriores no llevan estos campos y caen aquí por ese camino.
+        """
+        if not FAST_CHANGE_DETECTION:
+            return False
+
+        stored_size = file_info.get("size")
+        stored_mtime = file_info.get("mtime_ns")
+        if stored_size is None or stored_mtime is None:
+            return False
+
+        current = self.get_file_stat(file_path)
+        if current is None:
+            return False
+
+        return current["size"] == stored_size and current["mtime_ns"] == stored_mtime
+
     def is_already_processed(self, file_path: str) -> bool:
         """
         Verifica si el archivo ya fue procesado.
@@ -139,7 +206,17 @@ class ProcessingState:
             )
             return False
 
-        # Verificar cambios de contenido
+        # Verificar cambios de contenido.
+        # Negativo rápido primero (§7.3): si tamaño y mtime_ns coinciden con lo
+        # guardado, se ahorra el MD5 del fichero entero. Sólo puede confirmar
+        # "igual"; si duda, sigue el MD5 de siempre.
+        if self._unchanged_by_stat(file_path, file_info):
+            logger.info(
+                f"[STATE] Omitiendo ya procesado (stat sin cambios, sin MD5): "
+                f"{Path(file_path).name}"
+            )
+            return True
+
         current_hash = self.get_file_hash(file_path)
         stored_hash = file_info.get("hash")
 
@@ -155,11 +232,19 @@ class ProcessingState:
     def mark_as_processed(self, file_path: str, topic: str) -> None:
         """Marca archivo como procesado exitosamente."""
         file_path = str(file_path)
+        # `size`/`mtime_ns` son aditivos: alimentan el negativo rápido del §7.3 y
+        # se escriben siempre, esté o no activo el atajo, para que encenderlo más
+        # tarde no exija reprocesar el corpus. Una versión anterior del ingestor
+        # que lea este estado simplemente ignora las dos claves de más — el hash
+        # sigue siendo la autoridad (`LESSONS.md`: el estado de los volúmenes
+        # compartidos sobrevive al código, cambiar su formato es una decisión de
+        # compatibilidad; ésta es compatible en los dos sentidos).
         self.state["processed"][file_path] = {
             "hash": self.get_file_hash(file_path),
             "timestamp": datetime.now().isoformat(),
             "topic": topic,
             "status": "success",
+            **(self.get_file_stat(file_path) or {}),
         }
         # Un reproceso correcto tiene que sacar el fichero de "failed": si no, un
         # fallo antiguo queda ahí para siempre y el mismo fichero aparece a la vez

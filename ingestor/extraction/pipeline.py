@@ -27,8 +27,10 @@ class ExtractionPipeline:
     Orden por defecto:
     1. DoclingExtractor (acelerado por GPU, mejor calidad)
     2. TextExtractor (pypdf + pdfplumber, rápido)
-    3. OCRExtractor (EasyOCR + Tesseract, para docs escaneados)
-    4. UnstructuredExtractor (hi_res, consciente del layout)
+    3. VlmExtractor (granite-docling, escaneados) — inerte salvo que
+       VLM_EXTRACTOR_ENABLED=true (§7.2)
+    4. OCRExtractor (EasyOCR + Tesseract, para docs escaneados)
+    5. UnstructuredExtractor (hi_res, consciente del layout)
 
     El pipeline valida los resultados después de cada extractor y
     recurre al siguiente si los resultados son insuficientes.
@@ -80,6 +82,19 @@ class ExtractionPipeline:
             extractors.append(TextExtractor())
         except ImportError as e:
             logger.warning(f"[PIPELINE] TextExtractor no disponible: {e}")
+
+        # Candidato a sustituir la cadena EasyOCR/Tesseract (§7.2). Se añade
+        # siempre pero `can_handle()` devuelve False mientras
+        # VLM_EXTRACTOR_ENABLED esté apagado, así que por defecto la cadena se
+        # comporta exactamente igual que antes. Va DELANTE del OCR para que,
+        # cuando se encienda, coja los escaneados primero; si se aparta (fichero
+        # con capa de texto, o más páginas que VLM_MAX_PAGES) sigue el OCR.
+        try:
+            from extraction.vlm_extractor import VlmExtractor
+
+            extractors.append(VlmExtractor())
+        except ImportError as e:
+            logger.warning(f"[PIPELINE] VlmExtractor no disponible: {e}")
 
         try:
             from extraction.ocr_extractor import OCRExtractor

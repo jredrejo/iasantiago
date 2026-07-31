@@ -107,3 +107,97 @@ def test_un_fichero_reprocesado_deja_de_estar_en_cuarentena(state, pdf):
     assert state.get_quarantined() == {}
     assert state.is_already_processed(pdf) is True  # ahora por ser correcto, no por cuarentena
     assert state.state["processed"][pdf]["status"] == "success"
+
+
+# ============================================================
+# §7.3 — negativo rápido por (tamaño, mtime_ns)
+# ============================================================
+#
+# `impact()` marca `is_already_processed` como riesgo ALTO: decide si un fichero
+# se reprocesa. Lo que estos tests fijan no es que el atajo sea rápido, sino que
+# NUNCA pueda decidir por sí solo que algo no ha cambiado cuando sí lo ha hecho.
+
+
+def _hash_calls(monkeypatch):
+    """Cuenta las veces que se calcula el MD5 real."""
+    calls = []
+    original = ProcessingState.get_file_hash
+
+    def contador(self, file_path):
+        calls.append(file_path)
+        return original(self, file_path)
+
+    monkeypatch.setattr(ProcessingState, "get_file_hash", contador)
+    return calls
+
+
+def test_apagado_por_defecto_sigue_hasheando(state, pdf, monkeypatch):
+    """Sin FAST_CHANGE_DETECTION el comportamiento es exactamente el de antes."""
+    monkeypatch.setattr("state.processing_state.FAST_CHANGE_DETECTION", False)
+    state.mark_as_processed(pdf, "Electricidad")
+    calls = _hash_calls(monkeypatch)
+
+    assert state.is_already_processed(pdf) is True
+    assert calls == [pdf]  # el MD5 se calculó
+
+
+def test_encendido_evita_el_md5_si_stat_coincide(state, pdf, monkeypatch):
+    state.mark_as_processed(pdf, "Electricidad")
+    monkeypatch.setattr("state.processing_state.FAST_CHANGE_DETECTION", True)
+    calls = _hash_calls(monkeypatch)
+
+    assert state.is_already_processed(pdf) is True
+    assert calls == []  # no se hasheó nada
+
+
+def test_mark_as_processed_guarda_tamano_y_mtime(state, pdf, monkeypatch):
+    """Se guardan siempre, esté o no activo el atajo: así encenderlo después no
+    obliga a reprocesar el corpus para poblar los metadatos."""
+    monkeypatch.setattr("state.processing_state.FAST_CHANGE_DETECTION", False)
+    state.mark_as_processed(pdf, "Electricidad")
+
+    info = state.state["processed"][pdf]
+    assert info["size"] == len(b"%PDF-1.4 contenido de prueba")
+    assert isinstance(info["mtime_ns"], int)
+    assert info["hash"]  # el hash sigue siendo la autoridad
+
+
+def test_entrada_antigua_sin_stat_cae_al_md5(state, pdf, monkeypatch):
+    """Estado escrito por una versión anterior: sin `size`/`mtime_ns` el atajo no
+    puede opinar y debe pasar el control al hash, no dar por bueno el fichero."""
+    state.mark_as_processed(pdf, "Electricidad")
+    state.state["processed"][pdf].pop("size")
+    state.state["processed"][pdf].pop("mtime_ns")
+    monkeypatch.setattr("state.processing_state.FAST_CHANGE_DETECTION", True)
+    calls = _hash_calls(monkeypatch)
+
+    assert state.is_already_processed(pdf) is True
+    assert calls == [pdf]
+
+
+def test_contenido_modificado_se_detecta_con_el_atajo_encendido(state, pdf, monkeypatch):
+    """El caso que importa: reescribir el fichero cambia tamaño y mtime, el
+    atajo no confirma, el MD5 decide y el fichero vuelve a la cola."""
+    state.mark_as_processed(pdf, "Electricidad")
+    monkeypatch.setattr("state.processing_state.FAST_CHANGE_DETECTION", True)
+
+    from pathlib import Path
+
+    Path(pdf).write_bytes(b"%PDF-1.4 contenido distinto y mas largo")
+    # La caché en memoria de hashes es por proceso y guarda el valor anterior.
+    from core.cache import _md5_cache
+
+    _md5_cache.clear()
+
+    assert state.is_already_processed(pdf) is False
+
+
+def test_stat_que_falla_cae_al_md5(state, pdf, monkeypatch):
+    """Si `os.stat` revienta, el atajo dice "no lo sé" y no bloquea nada."""
+    state.mark_as_processed(pdf, "Electricidad")
+    monkeypatch.setattr("state.processing_state.FAST_CHANGE_DETECTION", True)
+    monkeypatch.setattr(ProcessingState, "get_file_stat", staticmethod(lambda p: None))
+    calls = _hash_calls(monkeypatch)
+
+    assert state.is_already_processed(pdf) is True
+    assert calls == [pdf]
