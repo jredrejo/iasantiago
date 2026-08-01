@@ -130,6 +130,29 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
         chunks = build_chunks(result, embed_name, max_tokens=CHUNK_MAX_TOKENS)
         logger.info(f"Fragmentado en {len(chunks)} chunks")
 
+        # Cero fragmentos con una extracción que el pipeline dio por buena es la
+        # firma del escaneado cuya capa de texto era sólo la cabecera repetida de
+        # un descargador: pasa por "documento con texto", no llega al OCR, y
+        # `detect_boilerplate` le quita lo único que tenía. Se reintenta por OCR
+        # en vez de tocar el criterio de aceptación, que movería los 562 ficheros
+        # y no sólo el roto. Sólo se entra por aquí en la ruta de error.
+        if not chunks and not result.extractor.startswith("OCRExtractor"):
+            logger.warning(
+                f"[REINTENTO-OCR] {filename}: 0 chunks con {result.extractor}; "
+                f"reintentando por OCR"
+            )
+            try:
+                result = extraction_pipeline.extract_document_ocr(Path(pdf_path))
+                logger.info(
+                    f"[REINTENTO-OCR] {len(result.elements)} elementos por OCR"
+                )
+                chunks = build_chunks(result, embed_name, max_tokens=CHUNK_MAX_TOKENS)
+                logger.info(f"[REINTENTO-OCR] Fragmentado en {len(chunks)} chunks")
+            except Exception as e:
+                # Se traga a propósito: el fallo que hay que registrar es el de
+                # los cero fragmentos, no el del reintento.
+                logger.warning(f"[REINTENTO-OCR] El reintento por OCR falló: {e}")
+
         if not chunks:
             raise ExtractionError(f"No se produjo ningún chunk para {filename}")
 

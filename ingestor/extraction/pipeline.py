@@ -202,6 +202,39 @@ class ExtractionPipeline:
         logger.error(f"[PIPELINE] {error_msg}")
         raise ExtractionError(error_msg)
 
+    def extract_document_ocr(self, pdf_path: Path) -> ExtractionResult:
+        """
+        Fuerza la vía OCR, saltándose la cadena de respaldo.
+
+        Existe para un caso concreto: la cadena normal acepta como "documento con
+        texto" un escaneado cuya única capa de texto es mobiliario de página —la
+        cabecera repetida de un descargador—, porque `_is_sufficient` la cuenta
+        como contenido. Ese fichero no llega nunca al OCR y al fragmentar se queda
+        en cero, porque `detect_boilerplate` —correctamente— le quita lo único que
+        tenía. Esto da una segunda vía para ese caso **sin mover el criterio de
+        aceptación** de los demás ficheros.
+
+        Args:
+            pdf_path: Ruta al archivo PDF
+
+        Returns:
+            ExtractionResult con los elementos del OCR y las páginas validadas.
+            `docling_document` es siempre None: el OCR no produce estructura.
+
+        Raises:
+            ExtractionError: Si la extracción OCR falla
+        """
+        from extraction.ocr_extractor import OCRExtractor
+
+        pdf_path = Path(pdf_path)
+        extractor = OCRExtractor()
+
+        logger.info(f"[PIPELINE] Extracción OCR forzada para {pdf_path.name}")
+        elements = extractor.extract(pdf_path)
+        elements = self._validate_pages(elements, get_pdf_total_pages(str(pdf_path)))
+
+        return ExtractionResult(elements=elements, extractor=extractor.name)
+
     def extract_with_strategy(
         self,
         pdf_path: Path,
