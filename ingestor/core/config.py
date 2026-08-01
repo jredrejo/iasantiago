@@ -97,6 +97,16 @@ WATCHDOG_TIMEOUT = int(os.getenv("WATCHDOG_TIMEOUT", "1200"))
 WATCHDOG_CHECK_INTERVAL = int(os.getenv("WATCHDOG_CHECK_INTERVAL", "60"))
 HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE", "/tmp/ingestor_heartbeat")
 
+# Rastro que deja el watchdog justo antes de matar el proceso. Sin él, un kill
+# del watchdog y una caída nativa son indistinguibles: los dos dejan el contador
+# de `crash_state` incrementado con el motivo "conversión interrumpida".
+# **No va junto a HEARTBEAT_FILE a propósito**: ése vive en /tmp y se lo lleva
+# el reinicio de contenedor que provoca el propio watchdog. Va en el volumen de
+# estado, que es lo único que sobrevive.
+WATCHDOG_KILL_MARKER = os.getenv(
+    "WATCHDOG_KILL_MARKER", os.path.join(STATE_BASE_DIR, "watchdog_kill.json")
+)
+
 # Presupuesto de reloj para UNA conversión de Docling. Mientras dura, un
 # BackgroundHeartbeat mantiene vivo el proceso (una conversión sana de un
 # manual de cientos de páginas tarda legítimamente más que WATCHDOG_TIMEOUT).

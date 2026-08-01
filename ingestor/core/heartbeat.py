@@ -10,11 +10,13 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
 from typing import Callable, Optional
 
 from core.config import (
     HEARTBEAT_FILE,
     WATCHDOG_CHECK_INTERVAL,
+    WATCHDOG_KILL_MARKER,
     WATCHDOG_TIMEOUT,
 )
 
@@ -24,6 +26,53 @@ logger = logging.getLogger(__name__)
 DEFAULT_HEARTBEAT_FILE = HEARTBEAT_FILE
 DEFAULT_WATCHDOG_TIMEOUT = WATCHDOG_TIMEOUT
 DEFAULT_CHECK_INTERVAL = WATCHDOG_CHECK_INTERVAL
+DEFAULT_KILL_MARKER = WATCHDOG_KILL_MARKER
+
+
+def write_kill_marker(
+    context: str, age: float, timeout: int, marker_path: str = DEFAULT_KILL_MARKER
+) -> bool:
+    """
+    Deja constancia en disco de que el watchdog mató el proceso, y por qué.
+
+    Se llama desde `_watchdog_loop` **inmediatamente antes de `os._exit(1)`**, así
+    que no puede depender de nada que corra al salir: `os._exit` no ejecuta
+    `atexit`, no vacía buffers de Python y no desenrolla la pila. De ahí el
+    fsync + rename atómico y el que no se propague ninguna excepción: si esto
+    falla, el watchdog tiene que matar igual.
+
+    Lo consume `CrashStateManager` en el siguiente arranque, para cambiar el
+    "conversión interrumpida" del fichero afectado por una atribución real.
+
+    Returns:
+        True si el rastro quedó escrito.
+    """
+    import json
+
+    tmp = marker_path + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(marker_path) or ".", exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump(
+                {
+                    "context": context,
+                    "age_s": round(age, 1),
+                    "timeout_s": timeout,
+                    "at": datetime.now().isoformat(),
+                },
+                f,
+                indent=2,
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, marker_path)
+        return True
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
 
 
 class HeartbeatManager:
@@ -124,6 +173,13 @@ class HeartbeatManager:
                                 logger.error(
                                     "[WATCHDOG] Forzando salida para reiniciar contenedor"
                                 )
+                                # Antes de `os._exit`, que no ejecuta nada más.
+                                if write_kill_marker(
+                                    current_file, age, self._watchdog_timeout
+                                ):
+                                    logger.error(
+                                        f"[WATCHDOG] Rastro dejado en {DEFAULT_KILL_MARKER}"
+                                    )
                                 sys.stdout.flush()
                                 sys.stderr.flush()
                                 os._exit(1)

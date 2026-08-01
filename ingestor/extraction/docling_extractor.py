@@ -24,7 +24,7 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from core.cache import ExtractionCache, get_file_hash_sha256
 from core.gpu import get_gpu_manager
-from core.config import DOCLING_CONVERT_MAX_SECONDS
+from core.config import DOCLING_CONVERT_MAX_SECONDS, WATCHDOG_KILL_MARKER
 from core.heartbeat import BackgroundHeartbeat, call_heartbeat
 from extraction.base import Element, ExtractionError
 
@@ -66,13 +66,21 @@ class CrashStateManager:
     código antiguo simplemente ignora.
     """
 
-    def __init__(self, cache_dir: Path, max_crashes: int = DOCLING_MAX_CRASHES):
+    def __init__(
+        self,
+        cache_dir: Path,
+        max_crashes: int = DOCLING_MAX_CRASHES,
+        kill_marker: Optional[str] = None,
+    ):
         self.state_file = cache_dir / "crash_state.json"
         self.reasons_file = cache_dir / "crash_reasons.json"
         self.max_crashes = max_crashes
         self._state: Dict[str, int] = {}
         self._reasons: Dict[str, Dict[str, Any]] = {}
         self._load()
+        # Si el proceso anterior murió a manos del watchdog, aquí es donde se
+        # entera. Idempotente: el rastro se borra al leerlo.
+        self.consume_watchdog_marker(kill_marker or WATCHDOG_KILL_MARKER)
 
     def _load(self):
         """Carga estado de fallos (y motivos) desde disco."""
@@ -154,6 +162,98 @@ class CrashStateManager:
             self._state.pop(filename, None)
             self._reasons.pop(filename, None)
             self._save()
+
+    def mark_fallback(self, filename: str, reason: str):
+        """
+        Deshace el incremento de `mark_processing` cuando docling no llegó a caerse.
+
+        El contador existe para poner en cuarentena lo que **tumba el proceso**. Hay
+        salidas de `extract` que devuelven por el respaldo PyPDF sin que docling
+        haya fallado —la validación previa del PDF, por ejemplo— y hasta el
+        2026-08-01 se dejaban el +1 puesto: el fichero se indexaba bien, el estado
+        decía "success", y aun así acumulaba fallos fantasma hasta el veto.
+        Costó ~180 ficheros sanos en cuarentena el 2026-07-22 por la otra vía (el
+        watchdog), que es la misma enfermedad.
+
+        Resta exactamente el incremento de este intento, no limpia el historial:
+        si el fichero ya traía caídas reales de pasadas anteriores, siguen contando.
+        """
+        if filename not in self._state:
+            return
+        self._state[filename] -= 1
+        if self._state[filename] <= 0:
+            self._state.pop(filename, None)
+            self._reasons.pop(filename, None)
+        else:
+            # Queda historial real: que el motivo no siga diciendo "interrumpida",
+            # o `is_interrupted_only` lo rehabilitaría como si fuera un falso veto.
+            self._reasons[filename] = {
+                "reason": reason,
+                "last": datetime.now().isoformat(),
+            }
+        self._save()
+
+    def consume_watchdog_marker(self, marker_path: str) -> Optional[str]:
+        """
+        Convierte el rastro que dejó el watchdog en una atribución concreta.
+
+        `mark_processing` no puede saber *por qué* murió el proceso: un kill del
+        watchdog, un segfault de una biblioteca nativa y un OOM dejan los tres el
+        mismo "conversión interrumpida". El watchdog sí lo sabe, y lo escribe al
+        salir (`core.heartbeat.write_kill_marker`); esto lo recoge en el arranque
+        siguiente y reescribe el motivo del fichero que estaba en vuelo.
+
+        El rastro se borra tras leerlo: describe una muerte concreta, no un estado.
+
+        Returns:
+            El nombre del fichero reatribuido, o None si no había rastro que aplicar.
+        """
+        import json
+
+        path = Path(marker_path)
+        try:
+            if not path.exists():
+                return None
+            marker = json.loads(path.read_text())
+        except Exception as e:
+            logger.warning(f"[DOCLING] Rastro del watchdog ilegible: {e}")
+            return None
+
+        # El heartbeat guarda un contexto ("docling_convert_<fichero>"), no un
+        # nombre limpio, así que se busca por contención.
+        context = str(marker.get("context", ""))
+        hit = next(
+            (
+                f
+                for f in self._state
+                if f and f in context and self.is_interrupted_only(f)
+            ),
+            None,
+        )
+        if hit:
+            age = marker.get("age_s", "?")
+            # El prefijo "conversión interrumpida" **no es decorativo**: es lo que
+            # reconoce `is_interrupted_only`, y con ello el `--interrumpidos` de
+            # `reset` y `reingest_false_bans.sh`. Un kill del watchdog es el falso
+            # veto arquetípico; perder esa marca al añadir la atribución dejaría
+            # los ficheros sanos vetados para siempre.
+            self._reasons[hit] = {
+                "reason": (
+                    f"conversión interrumpida: kill del watchdog "
+                    f"tras {age}s sin heartbeat"
+                ),
+                "last": marker.get("last", datetime.now().isoformat()),
+            }
+            self._save()
+            logger.warning(
+                f"[DOCLING] {hit} quedó interrumpido por el watchdog "
+                f"({age}s sin heartbeat), no por una caída de docling"
+            )
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return hit
 
     def record_reason(self, filename: str, reason: str):
         """Anota el motivo del último fallo sin volver a incrementar el contador."""
@@ -424,6 +524,11 @@ class DoclingExtractor:
         is_valid, error_msg = self._validate_pdf(pdf_path)
         if not is_valid:
             logger.error(f"[DOCLING] Validación de PDF fallida: {error_msg}")
+            # Docling ni se ha invocado: el +1 de `mark_processing` no describe
+            # nada. Revalidar en la próxima pasada es barato y no usa GPU.
+            self._crash_state.mark_fallback(
+                filename, f"validación previa fallida: {error_msg}"[:120]
+            )
             return self._extract_pypdf_fallback(pdf_path)
 
         # Limpieza de GPU antes de extracción
@@ -463,6 +568,15 @@ class DoclingExtractor:
             if not elements:
                 logger.warning(
                     "[DOCLING] No se extrajeron elementos - usando respaldo PyPDF"
+                )
+                # Aquí el contador **se queda**: convertir para no sacar nada es
+                # un resultado inútil que merece cuarentena tras N intentos. Lo
+                # que se corrige es el motivo: si siguiera diciendo "conversión
+                # interrumpida", `is_interrupted_only` lo tomaría por un falso
+                # veto del watchdog y `reingest_false_bans.sh` lo rehabilitaría
+                # en bucle. No murió nadie: docling terminó y devolvió cero.
+                self._crash_state.record_reason(
+                    filename, "conversión sin elementos: respaldo PyPDF"
                 )
                 return self._extract_pypdf_fallback(pdf_path)
 
