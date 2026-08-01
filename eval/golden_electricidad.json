@@ -1,0 +1,132 @@
+[
+  {
+    "query": "cómo se calcula el tiempo total de funcionamiento a partir de r2114 en el V20",
+    "topic": "Electricidad",
+    "relevant_pages": ["v20_OPI_es-SP_es-ES.pdf#227"]
+  },
+  {
+    "query": "qué parámetro ajusta el tiempo diferencial del regulador Vdc en el convertidor V20",
+    "topic": "Electricidad",
+    "relevant_pages": ["v20_OPI_es-SP_es-ES.pdf#205"]
+  },
+  {
+    "query": "ciclo de inversión para eliminar obturaciones en una bomba con el V20",
+    "topic": "Electricidad",
+    "relevant_pages": ["v20_OPI_es-SP_es-ES.pdf#267"]
+  },
+  {
+    "query": "qué grado de protección debe tener el armario para proteger el G120 de la condensación",
+    "topic": "Electricidad",
+    "relevant_pages": ["G120_CU250S2_op_instr_0725_es-ES.pdf#69"]
+  },
+  {
+    "query": "qué efecto tiene activar la protección de know-how en el convertidor",
+    "topic": "Electricidad",
+    "relevant_pages": ["G120_CU250S2_op_instr_0725_es-ES.pdf#193"]
+  },
+  {
+    "query": "qué parámetro del G120 invierte la consigna mediante una señal binaria",
+    "topic": "Electricidad",
+    "relevant_pages": ["G120_CU250S2_op_instr_0725_es-ES.pdf#341"]
+  },
+  {
+    "query": "el convertidor señaliza el fallo F07936, qué lo provoca",
+    "topic": "Electricidad",
+    "relevant_pages": ["G120_CU250S2_op_instr_0725_es-ES.pdf#422"]
+  },
+  {
+    "query": "hace falta prueba de recepción si sustituyo la Control Unit por otra de tipo idéntico",
+    "topic": "Electricidad",
+    "relevant_pages": ["G120_CU250S2_op_instr_0725_es-ES.pdf#510"]
+  },
+  {
+    "query": "para qué sirve la interfaz X127 del S210 y qué restricciones de acceso tiene",
+    "topic": "Electricidad",
+    "relevant_pages": ["S210_1FK2_op_instr_092019_es-ES.pdf#182"]
+  },
+  {
+    "query": "qué significa el aviso PROFIdrive 9003 de sobretensión en el circuito intermedio",
+    "topic": "Electricidad",
+    "relevant_pages": ["S210_1FK2_op_instr_092019_es-ES.pdf#321"]
+  },
+  {
+    "query": "por qué no me deja escribir un parámetro según el valor que tenga p0010",
+    "topic": "Electricidad",
+    "relevant_pages": ["S210_1FK2_op_instr_092019_es-ES.pdf#532"]
+  },
+  {
+    "query": "resistencia de freno de 30 ohmios y su potencia continua en el servoaccionamiento S210",
+    "topic": "Electricidad",
+    "relevant_pages": ["S210_1FK2_op_instr_092019_es-ES.pdf#71"]
+  },
+  {
+    "query": "qué datos de la CPU S7-1500 necesitan protección y dónde se documentan",
+    "topic": "Electricidad",
+    "relevant_pages": ["s71500_et200mp_system_manual_es-ES_es-ES.pdf#61"]
+  },
+  {
+    "query": "qué significa parametrizar los módulos y cómo carga STEP 7 la configuración hardware",
+    "topic": "Electricidad",
+    "relevant_pages": ["s71500_et200mp_system_manual_es-ES_es-ES.pdf#244"]
+  },
+  {
+    "query": "módulos de alimentación del sistema PS 60W para el S7-1500",
+    "topic": "Electricidad",
+    "relevant_pages": ["s71500_et200mp_system_manual_es-ES_es-ES.pdf#155"]
+  },
+  {
+    "query": "qué estados operativos tiene la CPU del S7-1200 y qué hace en STOP",
+    "topic": "Electricidad",
+    "relevant_pages": ["s71200_system_manual_es-ES_es-ES.pdf#59"]
+  },
+  {
+    "query": "qué ocurre si inserto en la CPU una Memory Card protegida contra escritura",
+    "topic": "Electricidad",
+    "relevant_pages": ["s71200_system_manual_es-ES_es-ES.pdf#107"]
+  },
+  {
+    "query": "herramientas online del TIA Portal para vigilar valores y forzar una salida",
+    "topic": "Electricidad",
+    "relevant_pages": ["s71200_system_manual_es-ES_es-ES.pdf#228"]
+  },
+  {
+    "query": "sección mínima de los conductores de protección de cobre con protección mecánica",
+    "topic": "Electricidad",
+    "relevant_pages": ["REBT_texto consolidado sep_25.pdf#123"]
+  },
+  {
+    "query": "cómo se seleccionan los equipos eléctricos para atmósferas con polvo explosivo",
+    "topic": "Electricidad",
+    "relevant_pages": ["REBT_texto consolidado sep_25.pdf#198"]
+  },
+  {
+    "query": "qué tiene que hacer una empresa instaladora de baja tensión para habilitarse",
+    "topic": "Electricidad",
+    "relevant_pages": ["REBT_texto consolidado sep_25.pdf#44"]
+  },
+  {
+    "query": "dónde se sitúa el registro principal óptico y el punto de interconexión en una ICT",
+    "topic": "Electricidad",
+    "relevant_pages": ["m_ict2_3ed_reglamento_0_compressed.pdf#39"]
+  },
+  {
+    "query": "qué planos debe incluir el proyecto técnico de una ICT",
+    "topic": "Electricidad",
+    "relevant_pages": ["m_ict2_3ed_reglamento_0_compressed.pdf#168"]
+  },
+  {
+    "query": "en qué consiste el criterio de amplitud mínima para la estabilidad del control",
+    "topic": "Electricidad",
+    "relevant_pages": ["Instrumentación Industrial - Creus  8ed.pdf#550"]
+  },
+  {
+    "query": "qué interfaces tiene la placa base D3076-K del KR C4 compact",
+    "topic": "Electricidad",
+    "relevant_pages": ["MA_KR_C4_compact_es.pdf#17"]
+  },
+  {
+    "query": "qué funciones de seguridad lleva instaladas el robot industrial KUKA",
+    "topic": "Electricidad",
+    "relevant_pages": ["MA_KR_C4_compact_es.pdf#30"]
+  }
+]
