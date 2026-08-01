@@ -120,11 +120,11 @@ services:
     shm_size: 8gb
     env_file: .env
     environment:
-      - BM25_BASE_DIR=/whoosh
       - TOPIC_BASE_DIR=/topics
     volumes:
       - ${TOPICS_HOST_DIR}:/topics:ro
-      - ${WHOOSH_HOST_DIR}:/whoosh
+      # Sin volumen de Whoosh: retirado el 2026-08-01 (§7.4). rag-api sirve la
+      # rama léxica desde el vector disperso de Qdrant y no toca disco local.
       - huggingface_cache:/root/.cache/huggingface
       - ./rag-api:/app
       - ./data/telemetry:/data/telemetry
@@ -188,7 +188,10 @@ services:
       - TORCH_HOME=/root/.cache/torch
       - TRANSFORMERS_CACHE=/models_cache/transformers
       - TOPIC_BASE_DIR=/topics
-      - BM25_BASE_DIR=/whoosh
+      # Volumen dedicado al estado del ingestor (.processing_state.json).
+      # NO lo quites ni lo apuntes a una caché: perderlo obliga a reprocesar
+      # el corpus entero. Era /whoosh hasta el 2026-08-01.
+      - STATE_BASE_DIR=/state
       # Fuente única de verdad del watchdog: la usan main.py y el healthcheck
       - WATCHDOG_TIMEOUT=1200
       # Presupuesto de tokens por fragmento. 256 sale de un barrido medido
@@ -215,7 +218,7 @@ services:
     volumes:
       - models_cache:/models_cache
       - ${TOPICS_HOST_DIR}:/topics
-      - ${WHOOSH_HOST_DIR}:/whoosh
+      - ${INGESTOR_STATE_HOST_DIR}:/state
       - ./ingestor:/app
       - docling_cache:/cache/docling # Docling extraction cache
     depends_on:

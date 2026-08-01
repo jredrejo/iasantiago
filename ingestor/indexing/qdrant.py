@@ -11,7 +11,12 @@ from typing import Any, Dict, List, Optional
 
 from qdrant_client import QdrantClient, models
 
-from core.config import QDRANT_URL
+from core.config import (
+    QDRANT_COLLECTION_SUFFIX,
+    QDRANT_URL,
+    SPARSE_ENABLED,
+    SPARSE_VECTOR_NAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +27,7 @@ POINT_ID_NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
 
 def topic_collection(topic: str) -> str:
     """Obtiene nombre de colección Qdrant para un tema."""
-    return f"rag_{topic.lower()}"
+    return f"rag_{topic.lower()}{QDRANT_COLLECTION_SUFFIX}"
 
 
 def build_point_id(file_path: str, chunk_id: Any) -> str:
@@ -48,6 +53,10 @@ class QdrantService:
     def __init__(self, url: str = QDRANT_URL):
         self.url = url
         self._client: Optional[QdrantClient] = None
+        # Colecciones que aceptan vector disperso, resuelto en `ensure_collection`.
+        # Una colección creada antes del §7.4 no lo tiene y NO se puede añadir
+        # en caliente, así que se escribe sólo denso en vez de fallar.
+        self._sparse_ok: Dict[str, bool] = {}
 
     @property
     def client(self) -> QdrantClient:
@@ -83,7 +92,9 @@ class QdrantService:
                     size=dimension,
                     distance=models.Distance.COSINE,
                 ),
+                sparse_vectors_config=self._sparse_config(),
             )
+            self._sparse_ok[coll] = SPARSE_ENABLED
         else:
             # Verificar que la dimensión coincide
             try:
@@ -105,7 +116,10 @@ class QdrantService:
                             size=dimension,
                             distance=models.Distance.COSINE,
                         ),
+                        sparse_vectors_config=self._sparse_config(),
                     )
+                    # Se recrea desde cero, así que aquí sí lleva el disperso.
+                    self._sparse_ok[coll] = SPARSE_ENABLED
                     logger.info(
                         f"[QDRANT] Colección '{coll}' recreada con dimensión {dimension}"
                     )
@@ -113,6 +127,7 @@ class QdrantService:
                     logger.info(
                         f"[QDRANT] Colección '{coll}' existe con dimensión correcta {dimension}"
                     )
+                    self._check_sparse_support(coll, collection_info)
             except Exception as e:
                 logger.error(f"[QDRANT] Error verificando colección '{coll}': {e}")
                 raise
@@ -120,6 +135,52 @@ class QdrantService:
         self._ensure_file_path_index(coll)
 
         return coll
+
+    def _sparse_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Config del vector disperso para colecciones nuevas, o `None`.
+
+        `modifier=IDF` deja el IDF del lado del servidor, que es lo que permite
+        que el vector de consulta no lo lleve.
+        """
+        if not SPARSE_ENABLED:
+            return None
+        return {
+            SPARSE_VECTOR_NAME: models.SparseVectorParams(
+                modifier=models.Modifier.IDF
+            )
+        }
+
+    def _check_sparse_support(self, coll: str, collection_info: Any) -> None:
+        """
+        Anota si una colección preexistente admite el vector disperso.
+
+        **No la recrea si no lo admite, a propósito.** Qdrant 1.15.5 no deja
+        añadir un vector disperso a una colección existente, y la única forma
+        de "arreglarlo" en caliente sería borrarla y perder sus puntos — para
+        Electricidad, 230 427. La migración se hace con
+        `scripts/migrate_sparse.py`, que construye colecciones nuevas y deja
+        las viejas intactas; aquí sólo se degrada a denso y se avisa.
+        """
+        if not SPARSE_ENABLED:
+            self._sparse_ok[coll] = False
+            return
+
+        try:
+            sparse = collection_info.config.params.sparse_vectors or {}
+            has_sparse = SPARSE_VECTOR_NAME in sparse
+        except Exception:
+            has_sparse = False
+
+        self._sparse_ok[coll] = has_sparse
+
+        if not has_sparse:
+            logger.warning(
+                f"[QDRANT] SPARSE_ENABLED=true pero '{coll}' no tiene el vector "
+                f"disperso '{SPARSE_VECTOR_NAME}'. Se escribe SÓLO denso: no se "
+                f"puede añadir en caliente y recrearla borraría sus puntos. "
+                f"Migra con scripts/migrate_sparse.py."
+            )
 
     def _ensure_file_path_index(self, coll: str) -> None:
         """
@@ -164,8 +225,29 @@ class QdrantService:
         coll = topic_collection(topic)
         total = len(vectors)
 
+        # Vectores dispersos: sólo si el interruptor está puesto Y la colección
+        # los admite. Si fallan, se sigue con denso — perder la rama léxica de
+        # un documento degrada la búsqueda, abortar la ingesta la rompe.
+        sparse_vectors = None
+        if SPARSE_ENABLED and self._sparse_ok.get(coll, False):
+            from indexing.sparse import build_sparse_vectors
+
+            sparse_vectors = build_sparse_vectors(payloads)
+            if sparse_vectors is None:
+                logger.warning(
+                    f"[QDRANT] Vectores dispersos no disponibles para '{coll}'; "
+                    f"se inserta sólo denso"
+                )
+            elif len(sparse_vectors) != total:
+                logger.error(
+                    f"[QDRANT] Descuadre disperso/denso en '{coll}': "
+                    f"{len(sparse_vectors)} vs {total}; se inserta sólo denso"
+                )
+                sparse_vectors = None
+
         logger.info(
-            f"[QDRANT] Insertando {total} vectores en '{coll}' en lotes de {batch_size}"
+            f"[QDRANT] Insertando {total} vectores en '{coll}' en lotes de "
+            f"{batch_size}{' (denso+disperso)' if sparse_vectors else ''}"
         )
 
         for batch_start in range(0, total, batch_size):
@@ -183,10 +265,23 @@ class QdrantService:
             batch_vecs = vectors[batch_start:batch_end]
             batch_payloads = payloads[batch_start:batch_end]
 
+            if sparse_vectors is None:
+                batch_vectors: List[Any] = batch_vecs
+            else:
+                # El denso de estas colecciones es anónimo, así que su clave es
+                # la cadena vacía; el disperso va con nombre en el mismo punto.
+                # Un único `upsert` escribe las dos ramas: de ahí la atomicidad
+                # por documento que el §7.4 persigue.
+                batch_sparse = sparse_vectors[batch_start:batch_end]
+                batch_vectors = [
+                    {"": batch_vecs[i], SPARSE_VECTOR_NAME: batch_sparse[i]}
+                    for i in range(len(batch_vecs))
+                ]
+
             points = [
                 models.PointStruct(
                     id=batch_ids[i],
-                    vector=batch_vecs[i],
+                    vector=batch_vectors[i],
                     payload=batch_payloads[i],
                 )
                 for i in range(len(batch_vecs))

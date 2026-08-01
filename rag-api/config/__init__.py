@@ -13,7 +13,8 @@ __all__ = [
     "RERANK_MODEL",
     # Almacenamiento
     "QDRANT_URL",
-    "BM25_BASE_DIR",
+    "QDRANT_COLLECTION_SUFFIX",
+    "SPARSE_VECTOR_NAME",
     # Límites de contexto
     "CTX_TOKENS_SOFT_LIMIT",
     "CTX_TOKENS_GENERATIVE",

@@ -19,7 +19,7 @@ from state.processing_state import MAX_RETRIES, ProcessingState
 @pytest.fixture
 def state(tmp_path):
     """Estado sobre un fichero temporal, sin tocar el volumen real."""
-    return ProcessingState(state_file=str(tmp_path / "whoosh" / ".processing_state.json"))
+    return ProcessingState(state_file=str(tmp_path / "state" / ".processing_state.json"))
 
 
 @pytest.fixture

@@ -1,5 +1,5 @@
 from qdrant_client import QdrantClient
-from config.settings import QDRANT_URL
+from config.settings import QDRANT_COLLECTION_SUFFIX, QDRANT_URL
 
 import logging
 
@@ -9,8 +9,9 @@ client = QdrantClient(url=QDRANT_URL)
 
 
 def topic_collection(topic: str) -> str:
-    # un nombre de colección por tema
-    return f"rag_{topic.lower()}"
+    # un nombre de colección por tema. El sufijo permite apuntar a las
+    # colecciones con vector disperso del §7.4 sin tocar las vivas.
+    return f"rag_{topic.lower()}{QDRANT_COLLECTION_SUFFIX}"
 
 
 def collection_exists(topic: str) -> bool:

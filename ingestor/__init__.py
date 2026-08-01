@@ -8,13 +8,13 @@ Módulos principales:
 - extraction: Pipeline de extracción de PDF con múltiples estrategias
 - pages: Validación y extracción de números de página
 - chunking: Estrategias de fragmentación de documentos
-- indexing: Servicios de indexación Qdrant y Whoosh
+- indexing: Servicios de indexación Qdrant (denso + disperso BM25)
 - state: Gestión del estado de procesamiento
 """
 
 # Configuración core
 from core.config import (
-    BM25_BASE_DIR,
+    STATE_BASE_DIR,
     EMBED_DEFAULT,
     EMBED_PER_TOPIC,
     QDRANT_URL,
@@ -34,9 +34,9 @@ from extraction.pipeline import (
 from indexing import (
     EmbeddingService,
     QdrantService,
-    WhooshService,
+    build_sparse_vectors,
     ensure_qdrant,
-    ensure_whoosh,
+    get_sparse_embedder,
     topic_collection,
     validate_and_fix_vectors,
 )
@@ -46,7 +46,7 @@ from state import ProcessingState, get_processing_state
 
 __all__ = [
     # Configuración
-    "BM25_BASE_DIR",
+    "STATE_BASE_DIR",
     "EMBED_DEFAULT",
     "EMBED_PER_TOPIC",
     "QDRANT_URL",
@@ -61,9 +61,9 @@ __all__ = [
     # Indexación
     "EmbeddingService",
     "QdrantService",
-    "WhooshService",
+    "build_sparse_vectors",
     "ensure_qdrant",
-    "ensure_whoosh",
+    "get_sparse_embedder",
     "topic_collection",
     "validate_and_fix_vectors",
     # Estado

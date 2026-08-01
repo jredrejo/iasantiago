@@ -11,7 +11,6 @@ import time
 from typing import Dict, List, Tuple
 
 from config.settings import (
-    BM25_BASE_DIR,
     BM25_FALLBACK_TOKEN_THRESHOLD,
     EMBED_DEFAULT,
     EMBED_PER_TOPIC,
@@ -35,11 +34,29 @@ from retrieval_lib.citations import build_context_with_citations
 
 # Importaciones de módulos existentes
 from qdrant_utils import search_dense
-from bm25_utils import bm25_search_safe
+from sparse_utils import sparse_search_safe
 from rerank import CrossEncoderReranker
 from translation import translate_query, detect_language
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# RAMA LÉXICA - vector disperso BM25 en Qdrant (§7.4)
+# ============================================================
+
+
+def lexical_search(topic: str, query: str, topk: int) -> List[Dict]:
+    """
+    Rama léxica de la búsqueda: BM25 disperso servido por Qdrant.
+
+    Hasta el 2026-08-01 esto elegía entre Whoosh y Qdrant con
+    `LEXICAL_BACKEND`. Whoosh se retiró tras aceptar los deltas del §7.4, así
+    que queda un solo motor y esta función sobrevive como el punto único por el
+    que pasa la rama léxica — que es lo que mantiene a `_execute_search` y a
+    `bm25_only` sin saber quién les responde.
+    """
+    return sparse_search_safe(topic, query, topk)
 
 
 # ============================================================
@@ -128,8 +145,8 @@ def _execute_search(
         for h in dense_hits
     ]
 
-    # Búsqueda BM25
-    bm25 = bm25_search_safe(BM25_BASE_DIR, topic, query, bm25_k)
+    # Búsqueda léxica: BM25 disperso en Qdrant
+    bm25 = lexical_search(topic, query, bm25_k)
 
     return dense, bm25
 
@@ -190,9 +207,9 @@ def hybrid_retrieve(
 def bm25_only(
     topic: str, query: str, final_topk: int, is_generative: bool = False
 ) -> List[Dict]:
-    """Búsqueda BM25 sola, con límite por archivo y topk configurable."""
+    """Búsqueda léxica sola, con límite por archivo y topk configurable."""
     # Buscar 3x más de lo necesario para tener margen
-    hits = bm25_search_safe(BM25_BASE_DIR, topic, query, final_topk * 3)
+    hits = lexical_search(topic, query, final_topk * 3)
 
     # Límite por archivo según modo
     max_per_file = (

@@ -6,7 +6,7 @@
 # referencias tipo ITC-BT-NN. Resultado: la consulta no puede casar con su
 # propia norma ni por léxico (BM25) ni acercarse por densa. Expandir el acrónimo
 # a su término completo añade el vocabulario que sí está indexado —y, de paso,
-# tokens acentuados que la rama BM25 encuentra (el índice Whoosh no pliega
+# tokens acentuados que la rama BM25 encuentra (el BM25 disperso sí pliega
 # acentos). No requiere re-indexar.
 #
 # Sólo acrónimos NO ambiguos en este corpus (electricidad / telecom / edificación).

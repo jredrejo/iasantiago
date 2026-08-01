@@ -4,7 +4,11 @@ httpx>=0.28.1
 pydantic
 qdrant-client==1.15.1
 sentence-transformers==3.0.1
-whoosh>=2.7.4,<3.0.0
+# Rama léxica: BM25 disperso en Qdrant (§7.4). Sustituyó a whoosh 2.7.4, que se
+# retiró el 2026-08-01 tras aceptar los deltas. Arrastra onnxruntime, pero
+# `Qdrant/bm25` no es una red neuronal —tokenizador + stopwords + stemmer
+# Snowball— y corre en CPU.
+fastembed==0.8.0
 numpy==1.26.4
 transformers>=4.44.0,<4.46.0
 einops>=0.8.0,<0.9.0

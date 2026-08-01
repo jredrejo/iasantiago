@@ -5,7 +5,7 @@ Proporciona gestión unificada de GPU, heartbeat/watchdog, caché y configuraci�
 """
 
 from core.config import (
-    BM25_BASE_DIR,
+    STATE_BASE_DIR,
     EMBED_DEFAULT,
     EMBED_PER_TOPIC,
     MODEL_CACHE_DIR,
@@ -23,7 +23,7 @@ __all__ = [
     # Configuración
     "TOPIC_LABELS",
     "TOPIC_BASE_DIR",
-    "BM25_BASE_DIR",
+    "STATE_BASE_DIR",
     "EMBED_PER_TOPIC",
     "EMBED_DEFAULT",
     "QDRANT_URL",

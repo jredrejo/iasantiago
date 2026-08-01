@@ -5,7 +5,7 @@ DATE := $(shell date +%F_%H%M%S)
 
 .PHONY: gen-env up down stop seed reset bench \
         status logs tail rag-restart \
-        backup backup-topics backup-qdrant backup-whoosh restore \
+        backup backup-topics backup-qdrant backup-state restore \
         watcher-on watcher-off \
         publish-docs unpublish-docs \
         eval-sample eval-file eval-nightly \
@@ -30,18 +30,18 @@ stop:
 
 seed: gen-env
 	@echo "Creando carpetas de temas y copiando PDFs de ejemplo..."
-	@mkdir -p data/storage data/whoosh
+	@mkdir -p data/storage data/ingestor-state
 	@mkdir -p topics/Chemistry topics/Electronics topics/Programming
 	@cp -r seeds/* topics/
 	@echo "Lanzando ingestor para indexar..."
 	docker compose restart ingestor
 
 reset: gen-env
-	@echo "Reseteando Qdrant y Whoosh..."
+	@echo "Reseteando Qdrant y el estado del ingestor..."
 	@docker compose down
-	@sudo rm -rf data/whoosh/.processing_state.json
+	@sudo rm -rf data/ingestor-state/.processing_state.json
 	@sudo rm -rf data/storage/*
-	@sudo rm -rf data/whoosh/*
+	@sudo rm -rf data/ingestor-state/*
 	@docker compose up -d ingestor
 
 bench:
@@ -73,7 +73,7 @@ web:
 	docker compose up -d oauth2-proxy openwebui rag-api vllm qdrant
 
 # ------- Backups -------
-backup: backup-topics backup-qdrant backup-whoosh
+backup: backup-topics backup-qdrant backup-state
 	@echo "Backup completo en $(BACKUP_DIR)/full-$(DATE)"
 
 backup-topics:
@@ -86,10 +86,13 @@ backup-qdrant:
 	sudo tar -C /opt/iasantiago-rag -czf $(BACKUP_DIR)/qdrant-$(DATE).tgz data/storage
 	@echo "[OK] qdrant -> $(BACKUP_DIR)/qdrant-$(DATE).tgz"
 
-backup-whoosh:
+# data/ingestor-state guarda .processing_state.json, que es justo lo que no se
+# puede perder: sin él se reprocesa el corpus entero. (Era data/whoosh hasta el
+# 2026-08-01, cuando se retiraron los índices Whoosh.)
+backup-state:
 	@sudo mkdir -p $(BACKUP_DIR)
-	sudo tar -C /opt/iasantiago-rag -czf $(BACKUP_DIR)/whoosh-$(DATE).tgz data/whoosh
-	@echo "[OK] whoosh -> $(BACKUP_DIR)/whoosh-$(DATE).tgz"
+	sudo tar -C /opt/iasantiago-rag -czf $(BACKUP_DIR)/state-$(DATE).tgz data/ingestor-state
+	@echo "[OK] estado del ingestor -> $(BACKUP_DIR)/state-$(DATE).tgz"
 
 # Uso:
 # make restore BACKUP=2025-10-10_023000
@@ -97,9 +100,15 @@ restore:
 	@if [ -z "$(BACKUP)" ]; then echo "ERROR: usa make restore BACKUP=YYYY-MM-DD_HHMMSS"; exit 1; fi
 	@echo "Restaurando backup $(BACKUP) (se requiere ventana de mantenimiento)..."
 	docker compose down
-	sudo rm -rf data/storage/* data/whoosh/*
+	sudo rm -rf data/storage/* data/ingestor-state/*
 	sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/qdrant-$(BACKUP).tgz
-	sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/whoosh-$(BACKUP).tgz
+	@# Backups desde el 2026-08-01 son state-*.tgz; los anteriores, whoosh-*.tgz
+	@if [ -f $(BACKUP_DIR)/state-$(BACKUP).tgz ]; then \
+	    sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/state-$(BACKUP).tgz; \
+	else \
+	    sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/whoosh-$(BACKUP).tgz && \
+	    sudo mv /opt/iasantiago-rag/data/whoosh /opt/iasantiago-rag/data/ingestor-state; \
+	fi
 	@echo "Opcionalmente restaura topics si procede:"
 	@echo "  sudo tar -C /opt/iasantiago-rag -xzf $(BACKUP_DIR)/topics-$(BACKUP).tgz"
 	docker compose up -d

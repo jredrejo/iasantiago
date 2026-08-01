@@ -22,7 +22,11 @@ TOPIC_LABELS = [
     for t in os.getenv("TOPIC_LABELS", "Chemistry,Electronics,Programming").split(",")
 ]
 TOPIC_BASE_DIR = os.getenv("TOPIC_BASE_DIR", "/topics")
-BM25_BASE_DIR = os.getenv("BM25_BASE_DIR", "/whoosh")
+# Volumen de estado del ingestor: `.processing_state.json` y sus copias.
+# Era `/whoosh` (alojaba los índices Whoosh) hasta que se renombró el
+# 2026-08-01, al retirarlos. **Perder este directorio obliga a reprocesar el
+# corpus entero**, así que no es una caché y no comparte volumen con ninguna.
+STATE_BASE_DIR = os.getenv("STATE_BASE_DIR", "/state")
 
 # ============================================================
 # MODELOS DE EMBEDDING (Sentence Transformers)
@@ -61,6 +65,26 @@ os.environ["HF_HOME"] = MODEL_CACHE_DIR
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
 QDRANT_BATCH_SIZE = int(os.getenv("QDRANT_BATCH_SIZE", "100"))
+
+# Sufijo de nombre de colección (§7.4). El vector disperso no se puede añadir a
+# una colección ya creada —Qdrant 1.15.5 responde "Not existing vector name"—,
+# así que las colecciones con denso+disperso se crearon aparte como
+# `rag_<tema>_v2`. **En producción vale `_v2`** (está en `.env`); el defecto
+# vacío sólo vale para una instalación desde cero. Debe coincidir con rag-api:
+# si discrepan, el ingestor escribe en una colección y el servicio lee de otra.
+QDRANT_COLLECTION_SUFFIX = os.getenv("QDRANT_COLLECTION_SUFFIX", "")
+
+# ============================================================
+# BÚSQUEDA LÉXICA DISPERSA (§7.4)
+# ============================================================
+
+# Escribe un vector disperso BM25 junto al denso, en el mismo punto y el mismo
+# upsert. **Encendido por defecto desde que Whoosh se retiró (2026-08-01)**: es
+# la única rama léxica que queda, así que apagarlo deja la búsqueda en densa
+# sola, sin error y sin aviso. Sólo se apaga para diagnosticar.
+SPARSE_ENABLED = os.getenv("SPARSE_ENABLED", "true").strip().lower() == "true"
+SPARSE_VECTOR_NAME = os.getenv("SPARSE_VECTOR_NAME", "bm25")
+SPARSE_LANGUAGE = os.getenv("SPARSE_LANGUAGE", "spanish")
 
 # ============================================================
 # HEARTBEAT Y WATCHDOG

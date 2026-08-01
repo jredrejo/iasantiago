@@ -54,7 +54,6 @@ from core.heartbeat import (
 from extraction.pipeline import ExtractionPipeline
 from indexing.embeddings import get_embedding_service, validate_and_fix_vectors
 from indexing.qdrant import ensure_qdrant, get_qdrant_service
-from indexing.whoosh_bm25 import ensure_whoosh, get_whoosh_service
 from pages.page_validator import validate_page_number
 from state.processing_state import get_processing_state
 
@@ -88,13 +87,12 @@ set_heartbeat_callback(update_heartbeat)
 state = get_processing_state()
 embedding_service = get_embedding_service()
 qdrant_service = get_qdrant_service()
-whoosh_service = get_whoosh_service()
 extraction_pipeline = ExtractionPipeline()
 
 
 def index_pdf(topic: str, pdf_path: str) -> bool:
     """
-    Indexar un archivo PDF a Qdrant y Whoosh.
+    Indexar un archivo PDF a Qdrant (denso + disperso BM25).
 
     Args:
         topic: Categoría del tema
@@ -125,7 +123,6 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
 
         # Ensure indexes exist
         ensure_qdrant(topic, dims)
-        ensure_whoosh(topic)
 
         # Fragmentar respetando el presupuesto de tokens del modelo de ESTE tema.
         # Antes se embebían los elementos en crudo, así que todo lo que pasara de
@@ -188,15 +185,13 @@ def index_pdf(topic: str, pdf_path: str) -> bool:
         # que se siguen recuperando en las búsquedas.
         logger.info("Limpiando índices previos de este archivo...")
         qdrant_service.delete_by_file(topic, pdf_path)
-        whoosh_service.delete_by_file(topic, pdf_path)
 
-        # Upload to Qdrant
-        logger.info("Subiendo a Qdrant...")
+        # Un solo upsert escribe denso y disperso en el mismo punto. Desde
+        # que Whoosh se retiró (§7.4) no hay segunda escritura, así que la
+        # indexación de un documento ya no puede quedarse a medias entre dos
+        # almacenes.
+        logger.info("Subiendo a Qdrant (denso + disperso)...")
         qdrant_service.upsert_vectors(topic, vecs, payloads)
-
-        # Index in Whoosh
-        logger.info("Indexando en Whoosh...")
-        whoosh_service.index_documents(topic, payloads)
 
         logger.info(f"[ÉXITO] {filename}")
         state.mark_as_processed(pdf_path, topic)
@@ -290,7 +285,6 @@ def delete_pdf(topic: str, pdf_path: str) -> bool:
 
     try:
         qdrant_service.delete_by_file(topic, pdf_path)
-        whoosh_service.delete_by_file(topic, pdf_path)
         state.remove_file(pdf_path)
         logger.info("[ÉXITO] PDF eliminado")
         return True
@@ -309,11 +303,9 @@ def delete_topic(topic: str) -> bool:
 
     try:
         qdrant_service.delete_collection(topic)
-        whoosh_service.delete_index(topic)
         state.remove_topic_files(topic, TOPIC_BASE_DIR)
 
         # Recreate empty indexes
-        ensure_whoosh(topic)
         embed_name = EMBED_PER_TOPIC.get(topic, EMBED_DEFAULT)
         model = embedding_service.get_model(embed_name, device="cpu")
         dims = embedding_service.get_dimension(model)

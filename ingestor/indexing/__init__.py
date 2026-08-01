@@ -1,8 +1,9 @@
 """
 Módulo de indexación para búsqueda vectorial y por palabras clave.
 
-Proporciona generación de embeddings y almacenamiento en Qdrant (vectores)
-y Whoosh (búsqueda por palabras clave BM25).
+Proporciona generación de embeddings y almacenamiento en Qdrant: vector denso
+para la búsqueda semántica y vector disperso BM25 para la léxica, escritos en el
+mismo punto (§7.4; Whoosh se retiró el 2026-08-01).
 """
 
 from indexing.embeddings import (
@@ -16,10 +17,9 @@ from indexing.qdrant import (
     get_qdrant_service,
     topic_collection,
 )
-from indexing.whoosh_bm25 import (
-    WhooshService,
-    ensure_whoosh,
-    get_whoosh_service,
+from indexing.sparse import (
+    build_sparse_vectors,
+    get_sparse_embedder,
 )
 
 __all__ = [
@@ -32,8 +32,7 @@ __all__ = [
     "ensure_qdrant",
     "get_qdrant_service",
     "topic_collection",
-    # Whoosh
-    "WhooshService",
-    "ensure_whoosh",
-    "get_whoosh_service",
+    # Disperso (BM25)
+    "build_sparse_vectors",
+    "get_sparse_embedder",
 ]

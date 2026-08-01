@@ -47,7 +47,7 @@ def reciprocal_rank_fusion(
 
     Args:
         dense_results: Resultados de búsqueda densa (Qdrant)
-        bm25_results: Resultados de búsqueda BM25 (Whoosh)
+        bm25_results: Resultados de la rama léxica (BM25 disperso en Qdrant)
         k: Constante para la fórmula RRF (default 60)
 
     Returns:

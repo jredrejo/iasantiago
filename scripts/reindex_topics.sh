@@ -31,7 +31,7 @@ DEFAULT_TOPICS=(Dibujo Sostenibilidad Mecanica FOL AFD Latin)
 TOPICS=("${@:-}")
 [[ -z "${TOPICS[0]:-}" ]] && TOPICS=("${DEFAULT_TOPICS[@]}")
 
-STATE="$ROOT/data/whoosh/.processing_state.json"
+STATE="$ROOT/data/ingestor-state/.processing_state.json"
 LOG="$ROOT/data/reindex-$(date +%F_%H%M%S).log"
 QDRANT="http://localhost:6333"
 WEB_SERVICES=(vllm rag-api openwebui oauth2-proxy)
@@ -39,7 +39,10 @@ WEB_SERVICES=(vllm rag-api openwebui oauth2-proxy)
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 die() { log "ABORTA: $*"; restore_web; exit 1; }
 
-collection_for() { echo "rag_$(echo "$1" | tr '[:upper:]' '[:lower:]')"; }
+# El sufijo del §7.4: sin él este script contaría y borraría en las colecciones
+# viejas mientras rag-api sirve desde las nuevas.
+: "${QDRANT_COLLECTION_SUFFIX:=}"
+collection_for() { echo "rag_$(echo "$1" | tr '[:upper:]' '[:lower:]')${QDRANT_COLLECTION_SUFFIX}"; }
 
 points_in() {
   curl -s "$QDRANT/collections/$1" \
@@ -49,7 +52,7 @@ points_in() {
 
 # El fichero de estado es de root: se edita desde un contenedor de usar y tirar.
 state_py() {
-  docker run --rm -v "$ROOT/data/whoosh:/w" python:3.11-alpine python -c "$1" 2>/dev/null
+  docker run --rm -v "$ROOT/data/ingestor-state:/w" python:3.11-alpine python -c "$1" 2>/dev/null
 }
 
 restore_web() {
@@ -83,7 +86,7 @@ print(f'  fallidos en estado  : {len(d.get(\"failed\",{}))}')
 " | tee -a "$LOG"
 python3 - <<'PY' | tee -a "$LOG"
 import json,os
-d=json.load(open('data/whoosh/.processing_state.json'))
+d=json.load(open('data/ingestor-state/.processing_state.json'))
 stale=[k for k in d['processed'] if not os.path.exists('.'+k)]
 disk={'/topics/'+os.path.relpath(os.path.join(r,f),'topics')
       for r,_,fs in os.walk('topics') for f in fs if f.lower().endswith('.pdf')}
@@ -163,8 +166,6 @@ print(f'  estado: {b} -> {len(d[\"processed\"])}')
   # Borrar la colección es obligatorio: si las dimensiones coinciden,
   # ensure_collection la da por buena y se mezclarían vectores viejos y nuevos.
   curl -s -X DELETE "$QDRANT/collections/$c" >/dev/null
-  rm -rf "$ROOT/data/whoosh/$t" 2>/dev/null || \
-    docker run --rm -v "$ROOT/data/whoosh:/w" alpine rm -rf "/w/$t" >/dev/null 2>&1
 
   log "  ingestando..."
   # Marca temporal para acotar los logs a ESTE tema: sin --since se cuenta todo

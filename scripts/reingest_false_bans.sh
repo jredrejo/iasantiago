@@ -55,7 +55,7 @@ SKIP_BACKUP="${SKIP_BACKUP:-0}"
 # (1.100)—, y ésos son justo los que hay que arreglar.
 MAX_CHUNKS="${MAX_CHUNKS:-0}"
 
-STATE="$ROOT/data/whoosh/.processing_state.json"
+STATE="$ROOT/data/ingestor-state/.processing_state.json"
 LOG="$ROOT/data/reingest-falsebans-$(date +%F_%H%M%S).log"
 WEB_SERVICES=(vllm rag-api openwebui oauth2-proxy)
 
@@ -148,14 +148,16 @@ print('\n'.join(
 " 2>/dev/null)
 
 STDERR_TMP=$(mktemp)
-TARGETS=$(MAX_CHUNKS="$MAX_CHUNKS" BANNED="$BANNED" python3 - "${TOPICS[@]}" 2>"$STDERR_TMP" <<'PY'
+TARGETS=$(MAX_CHUNKS="$MAX_CHUNKS" BANNED="$BANNED" \
+  QDRANT_COLLECTION_SUFFIX="${QDRANT_COLLECTION_SUFFIX:-}" \
+  python3 - "${TOPICS[@]}" 2>"$STDERR_TMP" <<'PY'
 import json, os, sys, urllib.request
 
 QDRANT = "http://127.0.0.1:6333"
 topics = sys.argv[1:]
 max_chunks = int(os.environ.get("MAX_CHUNKS") or 0)
 banned = {os.path.basename(b) for b in os.environ.get("BANNED", "").split("\n") if b.strip()}
-state = json.load(open("/opt/iasantiago-rag/data/whoosh/.processing_state.json"))
+state = json.load(open("/opt/iasantiago-rag/data/ingestor-state/.processing_state.json"))
 
 
 def count(collection, must):
@@ -171,7 +173,8 @@ targets, skipped_big, skipped_banned = [], [], []
 for path, info in state.get("processed", {}).items():
     if info.get("topic") not in topics:
         continue
-    coll = f"rag_{info['topic'].lower()}"
+    # Sufijo del §7.4: hay que mirar la colección que sirve, no la vieja.
+    coll = f"rag_{info['topic'].lower()}" + os.getenv("QDRANT_COLLECTION_SUFFIX", "")
     f = [{"key": "file_path", "match": {"value": path}}]
     total = count(coll, f)
     if total == 0:
@@ -270,7 +273,7 @@ if [[ -n "$TARGETS" ]]; then
   CHUNKS=$(python3 - "${FINAL_LIST[@]}" <<'PY'
 import json, sys, urllib.request
 
-state = json.load(open("/opt/iasantiago-rag/data/whoosh/.processing_state.json"))
+state = json.load(open("/opt/iasantiago-rag/data/ingestor-state/.processing_state.json"))
 total = 0
 for path in [p for p in sys.argv[1:] if p.strip()]:
     topic = state.get("processed", {}).get(path, {}).get("topic")
@@ -357,7 +360,7 @@ mapfile -t TARGET_LIST <<< "$TARGETS"
 
 log ""
 log "Sacando $COUNT ficheros de 'processed'..."
-OUT=$(docker run --rm -i -v "$ROOT/data/whoosh:/w" python:3.11-slim python - "${TARGET_LIST[@]}" <<'PY'
+OUT=$(docker run --rm -i -v "$ROOT/data/ingestor-state:/w" python:3.11-slim python - "${TARGET_LIST[@]}" <<'PY'
 import json, os, sys
 paths = [p for p in sys.argv[1:] if p.strip()]
 p = '/w/.processing_state.json'

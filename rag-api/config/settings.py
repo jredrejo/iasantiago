@@ -126,7 +126,20 @@ def get_model_revision(model_name: str):
 # ============================================================
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
-BM25_BASE_DIR = os.getenv("BM25_BASE_DIR", "/whoosh")
+
+# Sufijo de nombre de colección. Viene de la migración del §7.4: el vector
+# disperso NO se puede añadir a una colección ya creada (Qdrant 1.15.5 responde
+# "Not existing vector name"), así que las colecciones con denso+disperso se
+# crearon aparte como `rag_<tema>_v2`. **En producción vale `_v2`**; el defecto
+# vacío sólo sirve para pruebas contra colecciones creadas desde cero.
+# No se pasó a alias para quitarlo: `delete_collection` sobre un alias devuelve
+# False sin borrar nada y sin lanzar excepción (medido el 2026-08-01), así que
+# `delete_topic` informaría de éxito habiendo dejado los datos.
+QDRANT_COLLECTION_SUFFIX = os.getenv("QDRANT_COLLECTION_SUFFIX", "")
+
+# Nombre del vector disperso dentro de la colección. Debe coincidir con el que
+# escribe el ingestor (`ingestor/indexing/sparse.py`).
+SPARSE_VECTOR_NAME = os.getenv("SPARSE_VECTOR_NAME", "bm25")
 
 
 # ============================================================
@@ -153,7 +166,7 @@ MAX_CHUNKS_PER_FILE_GENERATIVE = get_int_env("MAX_CHUNKS_PER_FILE_GENERATIVE", 5
 # Número de resultados de búsqueda densa (Qdrant)
 HYBRID_DENSE_K = get_int_env("HYBRID_DENSE_K", 40)
 
-# Número de resultados de búsqueda BM25 (Whoosh)
+# Número de resultados de la rama léxica (BM25 disperso en Qdrant)
 HYBRID_BM25_K = get_int_env("HYBRID_BM25_K", 40)
 
 # Número final de resultados después de fusión

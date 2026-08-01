@@ -81,7 +81,9 @@ def main():
 
     names = collections_list()
     if args:
-        wanted = {f"rag_{t.lower()}" for t in args}
+        # Sufijo del §7.4, o esto inspecciona las colecciones que ya no sirven.
+        suffix = os.getenv("QDRANT_COLLECTION_SUFFIX", "")
+        wanted = {f"rag_{t.lower()}{suffix}" for t in args}
         names = [n for n in names if n in wanted]
         if not names:
             print(f"Sin colecciones para {args}. Hay: {collections_list()}")

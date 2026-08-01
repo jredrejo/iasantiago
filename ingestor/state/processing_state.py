@@ -16,7 +16,12 @@ from core.cache import get_file_hash_md5
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STATE_FILE = "/whoosh/.processing_state.json"
+# Volumen dedicado al estado del ingestor (era /whoosh hasta el 2026-08-01,
+# cuando se retiraron los índices Whoosh). **Perder este fichero obliga a
+# reprocesar el corpus entero**: no lo metas en un volumen de caché.
+DEFAULT_STATE_FILE = os.getenv(
+    "PROCESSING_STATE_FILE", "/state/.processing_state.json"
+)
 
 # Número de intentos antes de poner un archivo en cuarentena.
 # Superado el límite deja de reintentarse en cada arranque; `main.py retry-failed`
