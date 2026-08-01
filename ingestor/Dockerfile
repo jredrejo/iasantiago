@@ -43,4 +43,10 @@ RUN mkdir -p /root/.cache/huggingface && \
     python3 -c "from docling.document_converter import DocumentConverter; DocumentConverter()" || true && \
     echo "[DOCKERFILE] Docling model caching completed"
 
-ENTRYPOINT ["python", "main.py"]
+# El supervisor (§6.8) corre como PID 1 y lanza main.py como hijo, para poder
+# matarlo desde FUERA del intérprete cuando una falla nativa se cuelga reteniendo
+# el GIL y el watchdog interno no puede ejecutarse. Reenvía señales y propaga el
+# código de salida del hijo, así que se comporta igual para todo lo demás.
+# Los scripts que invocan subcomandos puntuales pasan `--entrypoint python`, que
+# se lo salta: un `retry-failed` no necesita vigilancia.
+ENTRYPOINT ["python", "supervise.py"]

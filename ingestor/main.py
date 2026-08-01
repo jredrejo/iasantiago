@@ -55,6 +55,7 @@ from extraction.pipeline import ExtractionPipeline
 from indexing.embeddings import get_embedding_service, validate_and_fix_vectors
 from indexing.qdrant import ensure_qdrant, get_qdrant_service
 from pages.page_validator import validate_page_number
+from state.inflight import get_inflight_tracker, record_hard_death
 from state.processing_state import get_processing_state
 
 # Re-registrar manejadores de señales después de la inicialización de CUDA/PyTorch
@@ -85,6 +86,7 @@ set_heartbeat_callback(update_heartbeat)
 
 # Inicializar servicios
 state = get_processing_state()
+inflight = get_inflight_tracker()
 embedding_service = get_embedding_service()
 qdrant_service = get_qdrant_service()
 extraction_pipeline = ExtractionPipeline()
@@ -240,10 +242,37 @@ def find_pdfs(topic_dir: str) -> List[str]:
     )
 
 
+def _clean_exit_on_signal(signum: int, frame) -> None:
+    """
+    En una parada ordenada (`docker stop` = SIGTERM), borra la anotación en vuelo.
+
+    Sin esto, parar el contenedor a mitad de fichero le cargaría un intento a un
+    PDF perfectamente sano. No cubre el `SIGKILL` que manda docker si el proceso
+    no sale a tiempo: eso es indistinguible de una muerte dura, y se acepta.
+    """
+    logger.warning(
+        f"[SEÑAL] {signal.Signals(signum).name} recibida: parada ordenada"
+    )
+    inflight.end()
+    sys.exit(128 + signum)
+
+
 def initial_scan() -> None:
     """Escanear todos los directorios de temas e indexar PDFs."""
     heartbeat = get_heartbeat_manager()
     heartbeat.start_watchdog()
+
+    # SIGSEGV/SIGBUS/SIGABRT siguen saliendo por `_force_exit_on_signal` y dejan
+    # la anotación puesta a propósito: eso *es* una muerte dura. SIGTERM/SIGINT
+    # son una parada pedida, y no deben costarle un intento a nadie.
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _clean_exit_on_signal)
+        except (OSError, ValueError):
+            pass
+
+    # Antes de tocar nada: ¿murió duro el proceso anterior, y sobre qué fichero?
+    record_hard_death(inflight, state)
 
     logger.info("\n" + "=" * 60)
     logger.info("INICIANDO ESCANEO INICIAL")
@@ -274,6 +303,9 @@ def initial_scan() -> None:
             pdf_count += 1
             update_heartbeat(os.path.basename(abs_pdf))
 
+            # La anotación va **antes** de tocar el fichero y se borra pase lo
+            # que pase: sobrevivir a `index_pdf` es lo que la convierte en señal.
+            inflight.begin(abs_pdf, context=f"index_pdf:{topic}")
             try:
                 if not index_pdf(topic, abs_pdf):
                     error_count += 1
@@ -281,6 +313,8 @@ def initial_scan() -> None:
                 logger.error(f"[ERROR] {abs_pdf}: {e}", exc_info=True)
                 state.mark_as_failed(abs_pdf, str(e))
                 error_count += 1
+            finally:
+                inflight.end()
 
     state.update_scan_time()
 

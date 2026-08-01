@@ -163,7 +163,13 @@ services:
     container_name: ingestor
     restart: on-failure # Restart on crash (segfault), but not on clean exit
     # Healthcheck monitors for stuck containers (visible via docker ps)
-    # Signal handler in main.py forces exit on SIGSEGV; if still stuck, use docker-autoheal
+    # Signal handler in main.py forces exit on SIGSEGV.
+    # Tres capas, de dentro a fuera (§6.8): (1) watchdog en proceso, mata a los
+    # WATCHDOG_TIMEOUT y atribuye la muerte; (2) supervisor PID 1 (supervise.py),
+    # mata desde fuera del intérprete a los +SUPERVISOR_GRACE_SECONDS cuando un
+    # cuelgue nativo retiene el GIL y (1) no puede ni ejecutarse; (3) este
+    # healthcheck, que sólo INFORMA — docker no reinicia por unhealthy. Quien
+    # reinicia de verdad es `restart: on-failure` cuando (1) o (2) salen con ≠ 0.
     # El umbral se deriva de WATCHDOG_TIMEOUT (por defecto 1200s) para que
     # healthcheck y watchdog no discrepen: antes el contenedor se marcaba
     # unhealthy a los 300s durante extracciones largas perfectamente sanas.

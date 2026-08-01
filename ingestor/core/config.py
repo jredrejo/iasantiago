@@ -107,6 +107,21 @@ WATCHDOG_KILL_MARKER = os.getenv(
     "WATCHDOG_KILL_MARKER", os.path.join(STATE_BASE_DIR, "watchdog_kill.json")
 )
 
+# Fichero "en vuelo": qué PDF estaba procesándose cuando el proceso murió.
+# `crash_state.json` sólo cubre docling; una muerte dura en la cadena OCR, en el
+# VLM, al fragmentar o al escribir en Qdrant no dejaba **ningún** rastro, así que
+# el reinicio volvía a coger el mismo fichero y la ingesta no avanzaba nunca.
+# Va en el volumen de estado, no en /tmp: tiene que sobrevivir al reinicio que
+# provoca el propio watchdog. Lo consume `initial_scan` al arrancar.
+INFLIGHT_FILE = os.getenv("INFLIGHT_FILE", os.path.join(STATE_BASE_DIR, "inflight.json"))
+
+# Margen que el supervisor externo espera POR ENCIMA de WATCHDOG_TIMEOUT antes
+# de matar. El watchdog en proceso tiene que disparar primero siempre que pueda:
+# es el que sabe atribuir la muerte (escribe el rastro que reatribuye el motivo
+# en `crash_state`). El supervisor sólo actúa cuando aquél no puede correr —un
+# cuelgue nativo con el GIL retenido—, que es justo el caso del §6.8.
+SUPERVISOR_GRACE_SECONDS = int(os.getenv("SUPERVISOR_GRACE_SECONDS", "300"))
+
 # Presupuesto de reloj para UNA conversión de Docling. Mientras dura, un
 # BackgroundHeartbeat mantiene vivo el proceso (una conversión sana de un
 # manual de cientos de páginas tarda legítimamente más que WATCHDOG_TIMEOUT).

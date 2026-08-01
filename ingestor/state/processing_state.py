@@ -234,6 +234,17 @@ class ProcessingState:
         logger.info(f"[STATE] Omitiendo ya procesado: {Path(file_path).name}")
         return True
 
+    def get_status(self, file_path: str) -> Optional[str]:
+        """
+        Estado registrado del fichero ("success", "failed") o None si no consta.
+
+        Lectura pura, sin hash ni stat: la usa el detector de muertes duras
+        (`state.inflight`) para no marcar como fallido un fichero que sí llegó a
+        indexarse y murió entre `mark_as_processed` y el borrado de la anotación.
+        """
+        info = self.state["processed"].get(str(file_path))
+        return info.get("status") if isinstance(info, dict) else None
+
     def mark_as_processed(self, file_path: str, topic: str) -> None:
         """Marca archivo como procesado exitosamente."""
         file_path = str(file_path)
