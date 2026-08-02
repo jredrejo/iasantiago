@@ -513,11 +513,33 @@ async def retrieve(
     )
     logger.info(f"[/retrieve] Usuario: {user_ref}, topic={req.topic}, gen={req.generative}")
 
-    # Tema sin colección → degradar con elegancia (contexto vacío) en vez de 500.
-    # El Filter de Open WebUI sigue sin contexto y el modelo responde igual; una
-    # etiqueta mal escrita en un workspace model no debe tumbar el endpoint (§7.1).
+    # Tema que no está en TOPIC_LABELS → 400. Es un error del llamador (una
+    # etiqueta mal escrita en un workspace model, un topic_map incompleto), y
+    # devolverlo como contexto vacío lo disfraza de "el corpus no tiene la
+    # respuesta": indistinguible de la operación normal para quien lo lee en la
+    # UI. Eso escondió los cuatro modelos "- Generador" rotos del 2026-08-02
+    # (PLAN.md punto 8). El detalle lleva el tema recibido y los válidos para
+    # que el mensaje baste sin abrir el log.
+    if req.topic not in TOPIC_LABELS:
+        logger.error(
+            f"[/retrieve] Tema desconocido '{req.topic}'; válidos: {TOPIC_LABELS}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unknown_topic",
+                "topic": req.topic,
+                "valid_topics": TOPIC_LABELS,
+            },
+        )
+
+    # Tema válido pero sin colección → NO es culpa del llamador (falta ingestar,
+    # o la colección se borró), así que se mantiene la degradación elegante del
+    # §7.1: contexto vacío en vez de 500, el modelo responde igual. Se registra
+    # como ERROR, no WARNING, porque un tema configurado sin colección es un
+    # fallo de operación que alguien tiene que ver.
     if not collection_exists(req.topic):
-        logger.warning(
+        logger.error(
             f"[/retrieve] Tema '{req.topic}' sin colección Qdrant; devuelvo vacío"
         )
         return {
@@ -531,7 +553,9 @@ async def retrieve(
                 "final_topk": None,
                 "original_language": None,
                 "context_token_limit": None,
-                "error": "unknown_topic",
+                # Ya no es "unknown_topic": ese caso sale por el 400 de arriba.
+                # Aquí el tema es válido y lo que falta es la colección.
+                "error": "missing_collection",
             },
         }
 

@@ -5,7 +5,7 @@ version: 0.2.0
 required_open_webui_version: 0.5.0
 description: >
     Inlet Filter que consulta el servicio de retrieval puro de rag-api
-    (POST /retrieve, PLAN.md §7.1) e inyecta el contexto con citaciones en el
+    (POST /retrieve) e inyecta el contexto con citaciones en el
     ultimo mensaje del usuario. Open WebUI conserva el historial y hace
     streaming directo contra vLLM; rag-api queda como servicio de retrieval.
 
@@ -148,6 +148,32 @@ class Filter:
         )
         return any(m and m in haystack for m in markers)
 
+    @staticmethod
+    async def _error_message(resp) -> str:
+        """Mensaje legible a partir del cuerpo de error de rag-api.
+
+        rag-api devuelve 400 con `detail={error, topic, valid_topics}` cuando el
+        tema no está en TOPIC_LABELS (PLAN.md punto 8). Sin esto la UI mostraba
+        "RAG no disponible: 400, message='Bad Request'", que ni nombra el tema ni
+        distingue una mala configuración de una caída del servicio — que es la
+        confusión que costó los cuatro modelos rotos del 2026-08-02.
+        """
+        try:
+            detail = (await resp.json()).get("detail")
+        except Exception:
+            detail = None
+
+        if isinstance(detail, dict) and detail.get("error") == "unknown_topic":
+            validos = ", ".join(detail.get("valid_topics") or [])
+            return (
+                f"RAG mal configurado: el tema '{detail.get('topic')}' no existe "
+                f"en rag-api (válidos: {validos}). Revisa el nombre del modelo o "
+                f"la valve topic_map."
+            )
+        if isinstance(detail, str) and detail:
+            return f"RAG rechazó la consulta ({resp.status}): {detail}"
+        return f"RAG rechazó la consulta ({resp.status})"
+
     async def _emit(self, emitter, description: str, done: bool):
         if emitter and self.valves.show_status:
             await emitter(
@@ -212,7 +238,13 @@ class Filter:
                     json=payload,
                     headers=headers,
                 ) as resp:
-                    resp.raise_for_status()
+                    # Un 4xx es una respuesta, no una caída: se lee el cuerpo
+                    # para poder decir QUÉ está mal en vez de "no disponible".
+                    if resp.status >= 400:
+                        await self._emit(
+                            __event_emitter__, await self._error_message(resp), True
+                        )
+                        return body
                     data = await resp.json()
         except Exception as e:
             await self._emit(__event_emitter__, f"RAG no disponible: {e}", True)
