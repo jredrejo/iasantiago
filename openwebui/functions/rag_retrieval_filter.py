@@ -114,6 +114,13 @@ class Filter:
                 break
         resolved = resolved.rstrip(" \t-–—")
 
+        # Y volver a mirar el mapa con el nombre ya sin sufijo: si el tema
+        # necesitaba topic_map ("Latín" -> "Latin"), su variante "Latín -
+        # Generador" lo necesita igual. Sin esta segunda consulta el tema
+        # viajaba tal cual y rag-api devolvía vacío sin error visible.
+        if resolved in mapping:
+            return mapping[resolved]
+
         return resolved or self.valves.default_topic or None
 
     def _is_generative(self, model: Optional[dict]) -> bool:
