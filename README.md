@@ -7,46 +7,59 @@ Sistema de Recuperación Aumentada con Generación (RAG) para el Colegio Santiag
 ## Arquitectura
 
 ```
-Internet / LAN                        Tailnet (Tailscale)
-      │                                     │
-┌─────▼─────────┐                           │
-│  nginx (443)  │ ← TLS Let's Encrypt       │
-└─────┬─────────┘                           │
-      │                                     │
-┌─────▼─────────┐                           │
-│ oauth2-proxy  │ ← Autenticación Google    │
-│    (4180)     │   Workspace (OIDC+PKCE)   │
-└─────┬─────────┘                           │
-      │                                     │
-┌─────▼─────────┐                           │
-│  Open WebUI   │ ← Interfaz de usuario     │
-│    (8080)     │   (cabeceras confiadas    │
-└─────┬─────────┘    X-Forwarded-Email)     │
-      │                                     │
-┌─────▼─────────────────────┐               │
-│    RAG API (8001)         │               │
-│  FastAPI OpenAI-compat    │               │
-│  • Retrieval híbrido      │               │
-│    (Qdrant + BM25/Whoosh) │               │
-│  • Re-ranking (Jina)      │               │
-│  • Streaming + citas      │               │
-└─┬───────┬───────┬─────────┘               │
-  │       │       │                         │
-  │       │       └───► vLLM (8000) ◄───────┘  ← opencode conecta
-  │       │             Qwen3.6-27B-NVFP4         directo por tailnet
-  │       │             64k ctx, MTP, tools
-  │       │
-  │       └───────────► Whoosh (BM25, índices locales)
-  │
-  └───────────────────► Qdrant (6333/6334, vectores)
+Internet / LAN
+      │
+┌─────▼─────────┐
+│  nginx (443)  │ ← TLS Let's Encrypt
+└─────┬─────────┘
+      │
+┌─────▼─────────┐
+│ oauth2-proxy  │ ← Autenticación Google Workspace (OIDC + PKCE)
+│    (4180)     │
+└─────┬─────────┘
+      │
+┌─────▼──────────────────────────┐
+│      Open WebUI (8080)         │ ← Interfaz Y orquestación del chat:
+│                                │   historial, prompt de sistema y
+│  ┌──────────────────────────┐  │   muestreo por modelo de workspace.
+│  │ Filter (inlet)           │  │   Cabeceras confiadas:
+│  │ resuelve tema → contexto │  │   X-Forwarded-Email
+│  └────────────┬─────────────┘  │
+└───────┬───────┼────────────────┘
+        │       │
+        │       │ POST /retrieve
+        │       │
+        │  ┌────▼──────────────────────────┐
+        │  │       RAG API (8001)          │
+        │  │   Servicio de retrieval PURO  │
+        │  │  • Búsqueda híbrida: Qdrant   │
+        │  │    denso + disperso (BM25)    │
+        │  │  • Re-ranking (Jina, CPU)     │
+        │  │  • Contexto + citas en JSON   │
+        │  └────────────┬──────────────────┘
+        │               │
+        │               └──► Qdrant (6333/6334, vectores)
+        │
+        │ generación (streaming, OpenAI-compat)
+        │
+        └──────────► vLLM (8000)
+                     Qwen3.6-27B-NVFP4, 64k ctx, MTP, tool calling
+
+                     También accesible por Tailnet (Tailscale) sin pasar
+                     por el RAG: es como conecta opencode.
 
 ┌─────────────────┐
 │    Ingestor     │ ← Indexación de PDFs (bajo demanda, EXCLUYENTE
 │                 │   con vLLM: no caben juntos en la GPU)
 │                 │   • Extracción con Docling + Unstructured.io
-│                 │   • Embeddings a Qdrant + BM25
+│                 │   • Embeddings a Qdrant (denso + disperso)
 └─────────────────┘
 ```
+
+> **rag-api no genera ni habla con vLLM.** Dejó de ser un proxy de chat compatible
+> con OpenAI el 2026-08-02: no expone `/v1/models` ni `/v1/chat/completions`. Quien
+> orquesta el chat es Open WebUI, y rag-api sólo responde `POST /retrieve`,
+> `POST /v1/eval/offline` y `GET /healthz`.
 
 ## Funcionalidades Principales
 
@@ -61,7 +74,7 @@ Internet / LAN                        Tailnet (Tailscale)
 ### Características Técnicas
 
 - **LLM**: `unsloth/Qwen3.6-27B-NVFP4` en vLLM — 64k de contexto, speculative decoding (MTP), tool calling habilitado (necesario para opencode)
-- **Retrieval inteligente**: Fallback automático a BM25 para consultas cortas (<4 tokens)
+- **Retrieval inteligente**: búsqueda híbrida (denso + BM25 disperso, fusión RRF) para **todas** las consultas. El atajo que desviaba las consultas de menos de 4 tokens a BM25 solo se desactivó el 2026-08-02 (`BM25_FALLBACK_TOKEN_THRESHOLD=0`): afectaba al 41 % del tráfico real y ningún banco lo medía
 - **Re-ranking**: Jina Reranker multilingüe mejora relevancia
 - **Límites por archivo**: Máximo N fragmentos por documento (evita monopolios)
 - **Límite de contexto dinámico**: Control por tokens (6000 default)
@@ -187,6 +200,160 @@ sudo ln -sf /opt/iasantiago-rag/systemd/logrotate-telemetry /etc/logrotate.d/ias
 
 ## Uso del Sistema
 
+### Añadir un tema nuevo
+
+Un tema son **siete piezas en cuatro sitios distintos**, y sólo las tres primeras
+son obligatorias para que responda. Las otras cuatro son las que hacen que
+responda *bien* y que se sepa si lo hace. El orden importa: el nombre elegido en
+el paso 1 se repite en casi todos los demás.
+
+> **Elige la etiqueta sin acentos ni espacios.** La etiqueta viaja a Qdrant como
+> nombre de colección —`rag_<etiqueta en minúsculas><QDRANT_COLLECTION_SUFFIX>`, hoy
+> `_v2`—, así que `Química` crearía `rag_química_v2`. El nombre bonito se pone
+> después, en Open WebUI, y se conecta con la etiqueta mediante el `topic_map` del
+> paso 5. Los temas existentes que llevan acento (`Química`, `Latín`, `Mecánica`,
+> `Programación`) usan exactamente ese mecanismo.
+
+**1. Carpeta con los PDFs.** El nombre de la carpeta tiene que ser **idéntico** a
+la etiqueta: el ingestor recorre `TOPIC_LABELS` y busca `topics/<etiqueta>`.
+
+```bash
+sudo mkdir -p /opt/iasantiago-rag/topics/Musica
+sudo cp *.pdf /opt/iasantiago-rag/topics/Musica/
+```
+
+Los PDFs se buscan **recursivamente** y sin distinguir mayúsculas en la extensión,
+así que puedes organizarlos en subcarpetas.
+
+**2. Declarar la etiqueta en `.env`.** Añádela a `TOPIC_LABELS`, separada por comas
+y sin espacios alrededor:
+
+```bash
+TOPIC_LABELS=AFD,Chemistry,Dibujo,Electricidad,FOL,Latin,Mecanica,Musica,Programming,Sostenibilidad
+```
+
+Un tema que esté en la carpeta pero no en `TOPIC_LABELS` **no se indexa**, y uno que
+esté en `TOPIC_LABELS` sin carpeta se salta con un aviso. `/retrieve` rechaza con
+**400** cualquier tema que no esté en esta lista, así que una errata aquí se ve en
+seguida en vez de parecer que el corpus no tiene la respuesta.
+
+Los cambios de `.env` exigen **recrear** el contenedor, no reiniciarlo — un
+`restart` no vuelve a leer `env_file`:
+
+```bash
+docker compose up -d rag-api      # `up -d`, NO `restart`
+```
+
+**3. Ingestar.** El ingestor y vLLM **no caben juntos en la GPU**, así que `make ingest`
+para el stack web y `make web` lo devuelve:
+
+```bash
+make ingest    # detiene vllm/rag-api/openwebui y lanza el ingestor
+make web       # ⚠️ SIEMPRE al terminar, o el sitio entero da 502
+```
+
+Crea la colección `rag_musica_v2` en Qdrant con el vector denso y el disperso (BM25)
+en el mismo punto, en un solo `upsert`. **Comprueba por contenido, no por el resumen
+de la tirada** —un proceso puede informar de éxito sin haber escrito nada:
+
+```bash
+# ¿Existe la colección y cuántos puntos tiene?
+curl -s http://localhost:6333/collections | jq '.result.collections[].name'
+curl -s http://localhost:6333/collections/rag_musica_v2 | jq '.result.points_count'
+
+# ¿Cuántos ficheros dio por procesados el ingestor, y cuántos falló?
+jq '.processed | length' data/ingestor-state/.processing_state.json
+jq '.failed' data/ingestor-state/.processing_state.json
+```
+
+`scripts/ragctl topic-stats` da el mismo conteo con más contexto, pero **necesita
+`qdrant_client`**, que no está en el Python del host: hay que lanzarlo desde un
+entorno con los requisitos de `ingestor` o `rag-api` instalados.
+
+A partir de aquí el tema ya responde por `POST /retrieve`. Lo que falta es la UI y
+la calidad.
+
+**4. Prompt de sistema del tema.** Los prompts viven versionados en
+`rag-api/templates/system_prompts/per_topic/` (respuesta) y `per_topic_generador/`
+(generación de exámenes); Open WebUI guarda su propia copia, así que el repo es la
+fuente de verdad y la UI el destino. El de examen **no se escribe a mano**: se genera
+añadiendo una cabecera de materia en `scripts/gen_generador.py` y ejecutándolo, que
+copia el reglamento de `generative.txt` intacto.
+
+```bash
+$EDITOR scripts/gen_generador.py     # añadir la entrada "Musica" a HEADERS
+python3 scripts/gen_generador.py
+```
+
+**5. Modelos de workspace en Open WebUI.** Dos por tema —el normal y su
+`- Generador`— con **modelo base `santiago`** (vLLM directo, no rag-api: desde el
+rip-out del §7.1 rag-api no sirve chat) y el prompt del paso 4 pegado en el campo
+*System Prompt*.
+
+- Si el modelo se llama **exactamente igual que la etiqueta** (`Musica`), no hay
+  nada más que hacer: el Filter resuelve el tema del nombre.
+- Si le pones nombre bonito (`Música`, `Historia de la Música`), **añádelo al
+  `topic_map`** del Filter (Admin → Functions → *IASantiago RAG Retrieval* →
+  Valves), que traduce nombre visible → etiqueta:
+
+```json
+{"Química": "Chemistry", "Latín": "Latin", "Música": "Musica"}
+```
+
+El sufijo `- Generador` se quita solo y **vuelve a consultar el mapa**, así que basta
+con una entrada por tema, no una por variante.
+
+**6. Golden set, para poder medir el tema.** Sin él, el tema no aparece en ninguna
+línea base y cualquier cambio futuro de recuperación lo mueve a ciegas. Se escribe
+como `eval/golden_musica.json`, con la página como ground truth (invariante frente
+a cambios de chunking):
+
+```json
+[{"query": "cadencia perfecta", "topic": "Musica",
+  "relevant_pages": ["armonia.pdf#42"]}]
+```
+
+Añádelo a la lista `GOLDEN` de `scripts/eval_lexical_backends.py` y mídelo. Ojo con
+dos trampas ya pagadas: un `relevant_pages` que apunte a un fichero que no está en
+el tema mide **0.000** para siempre (el endpoint ya avisa de ello en `warnings`), y
+las consultas escritas por quien conoce el corpus salen mucho más largas que las de
+los alumnos —mediana 4 tokens—, así que conviene mirar también
+`eval/golden_short.json`.
+
+```bash
+export OPENAI_API_KEY=$(grep -m1 '^OPENAI_API_KEY=' .env | cut -d= -f2)
+python3 scripts/eval_lexical_backends.py
+```
+
+**7. Comprobación de punta a punta.** Antes de darlo por hecho, contra el servicio
+vivo y no contra el log:
+
+```bash
+KEY=$(grep -m1 '^OPENAI_API_KEY=' .env | cut -d= -f2)
+curl -s http://127.0.0.1:8001/healthz | jq .topics        # la etiqueta aparece
+curl -s -X POST http://127.0.0.1:8001/retrieve \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"query":"cadencia perfecta","topic":"Musica"}' | jq '.meta, (.citations|length)'
+```
+
+`num_chunks: 0` con `meta.error: "missing_collection"` significa que falta ingestar;
+un **400** significa que la etiqueta no está en `TOPIC_LABELS`. Son fallos distintos
+a propósito: el primero es de operación y el segundo de quien llama.
+
+Por último, en el navegador: elige el modelo nuevo y comprueba que la respuesta trae
+**citas clicables** a `/docs/Musica/...`.
+
+#### Quitar un tema
+
+```bash
+docker compose --profile ingest run --rm --no-deps ingestor delete-topic Musica
+```
+
+Sin el prefijo `python main.py`: el `ENTRYPOINT` del contenedor es el supervisor y
+reenvía los argumentos. **`delete-topic` no borra el PDF del disco**, así que hay que
+sacar también la carpeta de `topics/` o el siguiente escaneo lo reingesta. Y quitar
+la etiqueta de `TOPIC_LABELS`, los modelos de workspace y su entrada del `topic_map`.
+
 ### Añadir Documentos
 
 1. Copiar PDFs a la carpeta del tema:
@@ -200,7 +367,7 @@ sudo cp documento.pdf /opt/iasantiago-rag/topics/Chemistry/
 
 El ingestor:
 - Solo procesa archivos nuevos o modificados (tracking con hash MD5)
-- Guarda estado en `/whoosh/.processing_state.json`
+- Guarda estado en `/state/.processing_state.json` (volumen `data/ingestor-state`)
 - Cachea análisis de imágenes/tablas en SQLite
 
 ### Hacer Consultas
@@ -239,7 +406,7 @@ make web                       # Modo web: detiene ingestor y lanza oauth2-proxy
 
 # Ver estado del ingestor
 docker compose logs ingestor
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq
+cat /opt/iasantiago-rag/data/ingestor-state/.processing_state.json | jq
 ```
 
 ### Backups
@@ -252,8 +419,8 @@ sudo rsync -av /opt/iasantiago-rag/topics/ /backups/topics-$(date +%F)/
 # Solo Qdrant
 sudo rsync -av /opt/iasantiago-rag/data/storage/ /backups/qdrant-$(date +%F)/
 
-# Solo Whoosh
-sudo rsync -av /opt/iasantiago-rag/data/whoosh/ /backups/whoosh-$(date +%F)/
+# Solo el estado del ingestor (lo único que no se reconstruye sin horas de GPU)
+make backup-state
 ```
 
 ### Monitoreo
@@ -280,10 +447,10 @@ cat retrieval.jsonl | jq '.topic' | sort | uniq -c
 
 ```bash
 # Ver archivos procesados
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.processed | length'
+cat /opt/iasantiago-rag/data/ingestor-state/.processing_state.json | jq '.processed | length'
 
 # Ver archivos fallidos
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.failed'
+cat /opt/iasantiago-rag/data/ingestor-state/.processing_state.json | jq '.failed'
 ```
 
 ## Configuración Avanzada
@@ -449,7 +616,7 @@ cat /opt/iasantiago-rag/eval_summary.csv
 │
 ├── data/                       # Datos persistentes
 │   ├── storage/               # Base de datos Qdrant
-│   └── whoosh/                # Índices BM25 + estado
+│   └── ingestor-state/        # .processing_state.json (estado de ingesta)
 │       └── .processing_state.json
 │
 ├── rag-api/                    # FastAPI
@@ -467,7 +634,7 @@ cat /opt/iasantiago-rag/eval_summary.csv
 │   ├── main.py                # Punto de entrada (scan / delete / delete-topic)
 │   ├── extraction/            # Pipeline: docling, unstructured, OCR, texto
 │   ├── chunking/              # Estrategias de chunking
-│   ├── indexing/              # Embeddings, Qdrant, Whoosh
+│   ├── indexing/              # Embeddings, Qdrant (denso + disperso BM25)
 │   ├── pages/                 # Validación de números de página
 │   ├── state/                 # Estado de procesamiento (.processing_state.json)
 │   ├── core/                  # Config, heartbeat/watchdog, GPU
@@ -507,16 +674,39 @@ curl http://127.0.0.1:4180/ping     # Debe responder 200
 
 ### Open WebUI no muestra temas
 
+Los temas **no salen de rag-api**: son modelos de workspace de Open WebUI. rag-api
+ya no expone `/v1/models` ni `/v1/chat/completions` (rip-out del §7.1), así que si
+falta un tema en el desplegable, el problema está en Open WebUI, no aquí.
+
 ```bash
-# Verificar endpoint
-curl http://localhost:8001/v1/models | jq
+# ¿Está el modelo de workspace creado y activo? (Admin -> Workspace -> Models)
+# Un is_active=0 lo esconde sin que nada dé error.
 
-# Verificar variables
+# rag-api sí publica la lista de etiquetas que acepta:
+curl -s http://localhost:8001/healthz | jq .topics
+
+# Verificar variables (los cambios de .env necesitan `up -d`, no `restart`)
 docker compose exec rag-api env | grep TOPIC
-
-# Reiniciar
-docker compose restart rag-api openwebui
+docker compose up -d rag-api openwebui
 ```
+
+### El tema sale pero responde "no encuentro fragmentos relevantes"
+
+Casi siempre es configuración, no calidad de recuperación. Los dos casos se
+distinguen desde fuera:
+
+```bash
+KEY=$(grep -m1 '^OPENAI_API_KEY=' .env | cut -d= -f2)
+curl -s -X POST http://127.0.0.1:8001/retrieve \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"query":"prueba","topic":"Musica"}' | jq .meta
+```
+
+- **HTTP 400** → la etiqueta no está en `TOPIC_LABELS` (errata, o falta el `topic_map`
+  del Filter si el modelo tiene nombre con acento). El cuerpo trae las válidas.
+- **`meta.error: "missing_collection"`** → la etiqueta es correcta pero el tema no se
+  ha ingestado.
+- **200 con `num_chunks > 0`** → recuperación real; entonces sí es calidad.
 
 ### No recupera resultados
 
@@ -528,7 +718,7 @@ ls -lh /opt/iasantiago-rag/topics/Chemistry/
 docker compose logs ingestor | tail -50
 
 # ¿Estado del ingestor?
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq
+cat /opt/iasantiago-rag/data/ingestor-state/.processing_state.json | jq
 
 # ¿Colecciones en Qdrant?
 curl http://localhost:6333/collections | jq
@@ -576,7 +766,7 @@ curl -I https://accounts.google.com
 docker compose logs ingestor | grep ERROR
 
 # Ver archivos fallidos
-cat /opt/iasantiago-rag/data/whoosh/.processing_state.json | jq '.failed'
+cat /opt/iasantiago-rag/data/ingestor-state/.processing_state.json | jq '.failed'
 
 # Aumentar memoria del contenedor
 nano docker-compose.yml
