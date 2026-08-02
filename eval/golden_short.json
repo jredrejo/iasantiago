@@ -1,0 +1,1415 @@
+[
+ {
+  "query": "luxación anteroinferior hombro",
+  "topic": "AFD",
+  "relevant_pages": [
+   "conceptos-y-metodos-para-el-entrenamiento-fisico.pdf#87"
+  ],
+  "long_query": "cómo se reduce una luxación anteroinferior de hombro en primeros auxilios",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "series repeticiones entrenamiento",
+  "topic": "AFD",
+  "relevant_pages": [
+   "conceptos-y-metodos-para-el-entrenamiento-fisico.pdf#258"
+  ],
+  "long_query": "qué indica la R de repeticiones y qué son las series en el entrenamiento",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "anfetaminas cocaína rendimiento",
+  "topic": "AFD",
+  "relevant_pages": [
+   "conceptos-y-metodos-para-el-entrenamiento-fisico.pdf#172"
+  ],
+  "long_query": "qué efectos tienen las anfetaminas y la cocaína sobre el rendimiento deportivo",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "grasas monoinsaturadas poliinsaturadas",
+  "topic": "AFD",
+  "relevant_pages": [
+   "Manual_de_nutricion_deportiva.pdf#40"
+  ],
+  "long_query": "qué alimentos aportan grasas monoinsaturadas y cuáles poliinsaturadas",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "agua peso corporal",
+  "topic": "AFD",
+  "relevant_pages": [
+   "Manual_de_nutricion_deportiva.pdf#142"
+  ],
+  "long_query": "qué porcentaje del peso corporal es agua en un adulto y en un recién nacido",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "vitamina E cocinar",
+  "topic": "AFD",
+  "relevant_pages": [
+   "Manual_de_nutricion_deportiva.pdf#74"
+  ],
+  "long_query": "por qué se destruye la vitamina E al cocinar los alimentos",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "inmovilización columna accidentado",
+  "topic": "AFD",
+  "relevant_pages": [
+   "Introduccion-a-los-primeros-auxilios.pdf#51"
+  ],
+  "long_query": "cómo se inmoviliza la columna de un accidentado y cuántas personas hacen falta",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "convulsiones parciales simples",
+  "topic": "AFD",
+  "relevant_pages": [
+   "Introduccion-a-los-primeros-auxilios.pdf#97"
+  ],
+  "long_query": "qué diferencia hay entre convulsiones parciales simples y las que alteran la conciencia",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "terremoto dentro coche",
+  "topic": "AFD",
+  "relevant_pages": [
+   "Introduccion-a-los-primeros-auxilios.pdf#186"
+  ],
+  "long_query": "qué hacer si estás dentro del coche cuando empieza un terremoto",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "hidratos termogénesis",
+  "topic": "AFD",
+  "relevant_pages": [
+   "La-guía-completa-de-la-nutrición-del-deportista.pdf#54"
+  ],
+  "long_query": "engordan los hidratos de carbono y qué relación tienen con la termogénesis",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "BCAA daño muscular",
+  "topic": "AFD",
+  "relevant_pages": [
+   "La-guía-completa-de-la-nutrición-del-deportista.pdf#36"
+  ],
+  "long_query": "sirve la suplementación con BCAA para reducir el daño muscular en ejercicios de resistencia",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "aminoácidos esenciales",
+  "topic": "AFD",
+  "relevant_pages": [
+   "guia_csd.pdf#7"
+  ],
+  "long_query": "cuáles son los aminoácidos esenciales de las proteínas",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "magnesio metabolismo deportista",
+  "topic": "AFD",
+  "relevant_pages": [
+   "guia_csd.pdf#13"
+  ],
+  "long_query": "para qué sirve el magnesio en el metabolismo del deportista",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "electrolitos",
+  "topic": "AFD",
+  "relevant_pages": [
+   "guia_csd.pdf#23"
+  ],
+  "long_query": "qué son los electrolitos y cuáles son los más importantes",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "recuperar hidratos entrenamiento",
+  "topic": "AFD",
+  "relevant_pages": [
+   "guia_nutricion_deportistas.pdf#15"
+  ],
+  "long_query": "qué se puede comer para recuperar hidratos de carbono después del entrenamiento",
+  "source_set": "golden_afd.json"
+ },
+ {
+  "query": "HPLC cromatografía líquidos",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Análisis_instrumental.pdf#346"
+  ],
+  "long_query": "qué significan las siglas HPLC y por qué se habla de cromatografía de líquidos de alta eficacia",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "cromatografía capa fina",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#961"
+  ],
+  "long_query": "cómo es la placa y la fase estacionaria en cromatografía de capa fina",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "enlace frecuencia infrarrojo",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Análisis_instrumental.pdf#206"
+  ],
+  "long_query": "por qué cada enlace absorbe a una frecuencia distinta en el espectro infrarrojo",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "electrodos amperométricos",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#651"
+  ],
+  "long_query": "qué dos tipos de sistemas de electrodos amperométricos hay",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "diámetro interno columna",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Análisis_instrumental.pdf#354"
+  ],
+  "long_query": "cómo se elige el diámetro interno de la columna para escala analítica o preparativa",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "atomizadores continuos discretos",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#797"
+  ],
+  "long_query": "diferencia entre atomizadores continuos y atomizadores discretos",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "tiocianato potasio hierro",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#526"
+  ],
+  "long_query": "para qué sirve el tiocianato de potasio como indicador en la valoración de hierro",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "ácido fuerte débil",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#369"
+  ],
+  "long_query": "cómo se determinan por separado un ácido fuerte y un ácido débil en la misma mezcla",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "porcentaje nitrógeno cloroplatinato",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2020_F Gallardo Arriagada_QUIMICA ANALITICA INSTRUMENTAL.pdf#55"
+  ],
+  "long_query": "ejercicio para calcular el porcentaje de nitrógeno precipitando cloroplatinato de amonio",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "lámpara deuterio fondo",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Análisis_instrumental.pdf#244"
+  ],
+  "long_query": "corrección de fondo usando una lámpara de deuterio junto a la de cátodo hueco",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "aerosoles análisis microbiológico",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "manual-microbiologia-aplicada.pdf#274"
+  ],
+  "long_query": "cómo se preparan los envases de aerosoles líquidos para el análisis microbiológico",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "filtros de profundidad",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "manual-microbiologia-aplicada.pdf#126"
+  ],
+  "long_query": "qué son los filtros de profundidad y cómo se forman sus poros",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "esencia agua colonia",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Conceptos básicos de cosmética.pdf#31"
+  ],
+  "long_query": "qué porcentaje de esencia lleva un agua de colonia",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "cifra significativa incertidumbre",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2020_F Gallardo Arriagada_QUIMICA ANALITICA INSTRUMENTAL.pdf#200"
+  ],
+  "long_query": "definición de cifra significativa y cuál es la primera cifra con incertidumbre",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "Pseudomonas gram negativo",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "manual-microbiologia-aplicada.pdf#30"
+  ],
+  "long_query": "bacilo gram negativo no fermentador de glucosa patógeno del género Pseudomonas",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "ondas oxígeno polarografía",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#647"
+  ],
+  "long_query": "por qué una disolución saturada de aire da dos ondas de oxígeno en polarografía",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "moler muestras pastillas",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Análisis_instrumental.pdf#219"
+  ],
+  "long_query": "por qué hay que moler las muestras sólidas antes de medirlas y cómo se hacen las pastillas",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "voltametría cationes metálicos",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "F JAMES HOLLER Y FUNDAMENTOS DE QUIMICA ANALITICA_9ª ed.pdf#663"
+  ],
+  "long_query": "aplicación de la voltametría a cationes metálicos y metales alcalinos",
+  "source_set": "golden_chemistry.json"
+ },
+ {
+  "query": "coeficiente actividad medio",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2002 Dr JM Fernandez_Manual de  problemas resueltos_QuimicaAnalitica.pdf#45"
+  ],
+  "long_query": "cómo se calcula el coeficiente de actividad medio de una disolución de sulfato de calcio",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "disociación ácido barbitúrico",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2002 Dr JM Fernandez_Manual de  problemas resueltos_QuimicaAnalitica.pdf#93"
+  ],
+  "long_query": "grado de disociación del ácido barbitúrico resuelto de forma aritmética y gráfica",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "AEDT calmagita estandarización",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2002 Dr JM Fernandez_Manual de  problemas resueltos_QuimicaAnalitica.pdf#194"
+  ],
+  "long_query": "estandarizar una disolución de AEDT con carbonato de calcio usando calmagita como indicador",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "dióxido azufre cerio",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2002 Dr JM Fernandez_Manual de  problemas resueltos_QuimicaAnalitica.pdf#321"
+  ],
+  "long_query": "determinar el dióxido de azufre del aire haciéndolo pasar por sulfato de cerio",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "membrana líquida calcio",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "2002 Dr JM Fernandez_Manual de  problemas resueltos_QuimicaAnalitica.pdf#363"
+  ],
+  "long_query": "electrodo de membrana líquida selectivo para iones calcio y su recta de calibrado",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "línea solidus",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "EnsayosFísicosyFisicoquímicos.pdf#31"
+  ],
+  "long_query": "qué es la línea de solidus en un diagrama de fases de una aleación",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "abrasivos desgastar",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "EnsayosFísicosyFisicoquímicos.pdf#52"
+  ],
+  "long_query": "qué materiales se emplean como abrasivos para desgastar otros más blandos",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "refractómetro Abbé",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "EnsayosFísicosyFisicoquímicos.pdf#215"
+  ],
+  "long_query": "en qué se basa el refractómetro de Abbé para medir el índice de refracción",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "anodizado electrodeposición",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "EnsayosFísicosyFisicoquímicos.pdf#158"
+  ],
+  "long_query": "diferencia entre anodizado y electrodeposición como recubrimiento anticorrosivo",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "paño lana pulir",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "EnsayosFísicosyFisicoquímicos.pdf#134"
+  ],
+  "long_query": "cuándo se usa un paño duro de lana y cuándo uno blando al pulir una probeta",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "diámetro bolas molienda",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#93"
+  ],
+  "long_query": "cómo influye el diámetro de las bolas en la molienda de un molino de bolas",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "frasco Schöniger",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#151"
+  ],
+  "long_query": "en qué consiste la combustión en frasco de Schöniger y qué elementos permite recuperar",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "analizador halógeno humedad",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#120"
+  ],
+  "long_query": "cómo funciona un analizador halógeno de humedad",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "filtro retención partículas",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#182"
+  ],
+  "long_query": "por qué mecanismos retiene un filtro las partículas que atraviesan sus fibras",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "diagrama heptano octano",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#216"
+  ],
+  "long_query": "diagrama de fases temperatura composición de una mezcla de heptano y octano",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "esencia limón arrastre",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#247"
+  ],
+  "long_query": "obtención de esencia de limón por arrastre de vapor a partir de la cáscara",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "muestra tanque cerrado",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "MuestreoPrepMuestra.pdf#62"
+  ],
+  "long_query": "cómo se toma la muestra de un tanque cerrado que no tiene agitador mecánico",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "colonias Campylobacter",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Métodos de análisis microbiológicos de alimentos.pdf#156"
+  ],
+  "long_query": "qué aspecto tienen las colonias de Campylobacter y cómo se interpretan",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "secar placa Proteus",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Métodos de análisis microbiológicos de alimentos.pdf#204"
+  ],
+  "long_query": "por qué hay que secar la superficie del medio en placa para evitar que se extienda Proteus",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "incubación levaduras mohos",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Métodos de análisis microbiológicos de alimentos.pdf#87"
+  ],
+  "long_query": "cuántos días se incuban las placas para el recuento de levaduras y mohos",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "número más probable",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Métodos de análisis microbiológicos de alimentos.pdf#64"
+  ],
+  "long_query": "qué significan las categorías de los resultados del número más probable",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "eficacia medio cultivo",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "Métodos de análisis microbiológicos de alimentos.pdf#186"
+  ],
+  "long_query": "control de eficacia de un medio de cultivo con Escherichia coli y Pseudomonas aeruginosa",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "densidad gases decímetro",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "TemasSelectosdeQuímica.pdf#25"
+  ],
+  "long_query": "por qué la densidad de los gases se expresa en gramos por decímetro cúbico",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "composición jabón bases",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "TemasSelectosdeQuímica.pdf#83"
+  ],
+  "long_query": "qué composición tiene un jabón y con qué bases se fabrica",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "comburente combustible",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "TemasSelectosdeQuímica.pdf#102"
+  ],
+  "long_query": "diferencia entre comburente y combustible en una reacción de combustión",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "equilibrio evaporación condensación",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "TemasSelectosdeQuímica.pdf#53"
+  ],
+  "long_query": "cuándo se alcanza el equilibrio dinámico entre evaporación y condensación en un líquido",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "presión vapor agua",
+  "topic": "Chemistry",
+  "relevant_pages": [
+   "TemasSelectosdeQuímica.pdf#35"
+  ],
+  "long_query": "cómo se descuenta la presión de vapor del agua en un gas recogido sobre agua",
+  "source_set": "golden_chemistry_docling.json"
+ },
+ {
+  "query": "Ronda noche Rembrandt",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "HISTORIA DEL ARTE.pdf#265"
+  ],
+  "long_query": "qué representa realmente la Ronda de noche de Rembrandt",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "Santa Cristina Lena",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "HISTORIA DEL ARTE.pdf#158"
+  ],
+  "long_query": "cómo es la planta y la cabecera de la iglesia de Santa Cristina de Lena",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "arte bizantino macedónica",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "HISTORIA DEL ARTE BACHILLERATO.pdf#124"
+  ],
+  "long_query": "qué dinastías marcan la evolución del arte bizantino, macedónica y Paleólogos",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "iglesia San Carlino",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "HISTORIA DEL ARTE BACHILLERATO.pdf#270"
+  ],
+  "long_query": "dónde se ubica la iglesia de San Carlino y cómo se integra en el urbanismo romano",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "intersección recta cono",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "geometra-descriptiva-por-fernando-izquierdo-asensi-24ta-edicicc3b3n.pdf#90"
+  ],
+  "long_query": "cómo se halla la intersección de una recta y un cono en geometría descriptiva",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "plantas independientes perspectiva",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "geometra-descriptiva-por-fernando-izquierdo-asensi-24ta-edicicc3b3n.pdf#196"
+  ],
+  "long_query": "en qué consiste el método de plantas independientes en perspectiva",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "arquitectura cobijo estética",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "TÉCNICAS Y MEDIOS ARTÍSTICOS.pdf#14"
+  ],
+  "long_query": "a qué necesidades del hombre responde la arquitectura, cobijo y estética",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "estofado policromía escultura",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "TÉCNICAS Y MEDIOS ARTÍSTICOS.pdf#272"
+  ],
+  "long_query": "qué es el estofado en el acabado y la policromía de la escultura",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "esquemas compositivos pintura",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "TÉCNICAS Y MEDIOS ARTÍSTICOS.pdf#152"
+  ],
+  "long_query": "qué esquemas compositivos usa la pintura como la simetría lateral o el esquema piramidal",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "Arts and Crafts",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "MUSEOLOGÍA Y MUSEOGRAFÍA.pdf#120"
+  ],
+  "long_query": "quién encabezó el movimiento Arts and Crafts y contra qué reaccionaba",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "marca Durex",
+  "topic": "Dibujo",
+  "relevant_pages": [
+   "Logotype.pdf#268"
+  ],
+  "long_query": "de dónde viene el nombre de la marca Durex",
+  "source_set": "golden_dibujo.json"
+ },
+ {
+  "query": "r2114 V20",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "v20_OPI_es-SP_es-ES.pdf#227"
+  ],
+  "long_query": "cómo se calcula el tiempo total de funcionamiento a partir de r2114 en el V20",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "tiempo diferencial Vdc",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "v20_OPI_es-SP_es-ES.pdf#205"
+  ],
+  "long_query": "qué parámetro ajusta el tiempo diferencial del regulador Vdc en el convertidor V20",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "ciclo inversión bomba",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "v20_OPI_es-SP_es-ES.pdf#267"
+  ],
+  "long_query": "ciclo de inversión para eliminar obturaciones en una bomba con el V20",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "grado protección condensación",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "G120_CU250S2_op_instr_0725_es-ES.pdf#69"
+  ],
+  "long_query": "qué grado de protección debe tener el armario para proteger el G120 de la condensación",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "protección know-how",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "G120_CU250S2_op_instr_0725_es-ES.pdf#193"
+  ],
+  "long_query": "qué efecto tiene activar la protección de know-how en el convertidor",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "invertir consigna binaria",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "G120_CU250S2_op_instr_0725_es-ES.pdf#341"
+  ],
+  "long_query": "qué parámetro del G120 invierte la consigna mediante una señal binaria",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "fallo F07936",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "G120_CU250S2_op_instr_0725_es-ES.pdf#422"
+  ],
+  "long_query": "el convertidor señaliza el fallo F07936, qué lo provoca",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "sustituir Control Unit",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "G120_CU250S2_op_instr_0725_es-ES.pdf#510"
+  ],
+  "long_query": "hace falta prueba de recepción si sustituyo la Control Unit por otra de tipo idéntico",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "interfaz X127 S210",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "S210_1FK2_op_instr_092019_es-ES.pdf#182"
+  ],
+  "long_query": "para qué sirve la interfaz X127 del S210 y qué restricciones de acceso tiene",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "PROFIdrive 9003 sobretensión",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "S210_1FK2_op_instr_092019_es-ES.pdf#321"
+  ],
+  "long_query": "qué significa el aviso PROFIdrive 9003 de sobretensión en el circuito intermedio",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "escribir parámetro p0010",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "S210_1FK2_op_instr_092019_es-ES.pdf#532"
+  ],
+  "long_query": "por qué no me deja escribir un parámetro según el valor que tenga p0010",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "resistencia freno S210",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "S210_1FK2_op_instr_092019_es-ES.pdf#71"
+  ],
+  "long_query": "resistencia de freno de 30 ohmios y su potencia continua en el servoaccionamiento S210",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "protección datos CPU",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "s71500_et200mp_system_manual_es-ES_es-ES.pdf#61"
+  ],
+  "long_query": "qué datos de la CPU S7-1500 necesitan protección y dónde se documentan",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "parametrizar módulos STEP7",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "s71500_et200mp_system_manual_es-ES_es-ES.pdf#244"
+  ],
+  "long_query": "qué significa parametrizar los módulos y cómo carga STEP 7 la configuración hardware",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "PS 60W alimentación",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "s71500_et200mp_system_manual_es-ES_es-ES.pdf#155"
+  ],
+  "long_query": "módulos de alimentación del sistema PS 60W para el S7-1500",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "estados operativos S7-1200",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "s71200_system_manual_es-ES_es-ES.pdf#59"
+  ],
+  "long_query": "qué estados operativos tiene la CPU del S7-1200 y qué hace en STOP",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "Memory Card protegida",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "s71200_system_manual_es-ES_es-ES.pdf#107"
+  ],
+  "long_query": "qué ocurre si inserto en la CPU una Memory Card protegida contra escritura",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "herramientas online TIA",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "s71200_system_manual_es-ES_es-ES.pdf#228"
+  ],
+  "long_query": "herramientas online del TIA Portal para vigilar valores y forzar una salida",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "sección conductores protección",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "REBT_texto consolidado sep_25.pdf#123"
+  ],
+  "long_query": "sección mínima de los conductores de protección de cobre con protección mecánica",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "atmósferas polvo explosivo",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "REBT_texto consolidado sep_25.pdf#198"
+  ],
+  "long_query": "cómo se seleccionan los equipos eléctricos para atmósferas con polvo explosivo",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "empresa instaladora habilitación",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "REBT_texto consolidado sep_25.pdf#44"
+  ],
+  "long_query": "qué tiene que hacer una empresa instaladora de baja tensión para habilitarse",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "registro principal óptico",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "m_ict2_3ed_reglamento_0_compressed.pdf#39"
+  ],
+  "long_query": "dónde se sitúa el registro principal óptico y el punto de interconexión en una ICT",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "planos proyecto ICT",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "m_ict2_3ed_reglamento_0_compressed.pdf#168"
+  ],
+  "long_query": "qué planos debe incluir el proyecto técnico de una ICT",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "criterio amplitud mínima",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "Instrumentación Industrial - Creus  8ed.pdf#550"
+  ],
+  "long_query": "en qué consiste el criterio de amplitud mínima para la estabilidad del control",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "placa D3076-K",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "MA_KR_C4_compact_es.pdf#17"
+  ],
+  "long_query": "qué interfaces tiene la placa base D3076-K del KR C4 compact",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "seguridad robot KUKA",
+  "topic": "Electricidad",
+  "relevant_pages": [
+   "MA_KR_C4_compact_es.pdf#30"
+  ],
+  "long_query": "qué funciones de seguridad lleva instaladas el robot industrial KUKA",
+  "source_set": "golden_electricidad.json"
+ },
+ {
+  "query": "Fondo Garantía Salarial",
+  "topic": "FOL",
+  "relevant_pages": [
+   "ESTATUTO DE LOS TRABAJADORES.pdf#58"
+  ],
+  "long_query": "qué es el Fondo de Garantía Salarial y qué indemnizaciones cubre",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "asamblea trabajadores horario",
+  "topic": "FOL",
+  "relevant_pages": [
+   "ESTATUTO DE LOS TRABAJADORES.pdf#153"
+  ],
+  "long_query": "dónde y en qué horario debe celebrarse la asamblea de trabajadores",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "directivas maternidad jóvenes",
+  "topic": "FOL",
+  "relevant_pages": [
+   "Ley de prevención de riesgo laborales.pdf#5"
+  ],
+  "long_query": "qué directivas europeas sobre maternidad y jóvenes recoge la ley de prevención de riesgos laborales",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "formación trabajadores temporales",
+  "topic": "FOL",
+  "relevant_pages": [
+   "Ley de prevención de riesgo laborales.pdf#23"
+  ],
+  "long_query": "qué formación deben recibir los trabajadores temporales y de empresas de trabajo temporal",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "obligaciones fabricantes maquinaria",
+  "topic": "FOL",
+  "relevant_pages": [
+   "Ley de prevención de riesgo laborales.pdf#32"
+  ],
+  "long_query": "qué obligaciones tienen los fabricantes e importadores de maquinaria en prevención de riesgos",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "servicio prevención ajeno",
+  "topic": "FOL",
+  "relevant_pages": [
+   "REGLAMENTO DE LOS SERVICIOS DE PREVENCIÓN.pdf#14"
+  ],
+  "long_query": "en qué consiste el concierto de la actividad preventiva con un servicio de prevención ajeno",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "incapacidad temporal prórroga",
+  "topic": "FOL",
+  "relevant_pages": [
+   "UNIDAD 7  - LA SEGURIDAD SOCIAL. PRESTACIONES.pdf#13"
+  ],
+  "long_query": "cuánto dura la incapacidad temporal y cuál es su prórroga máxima",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "riesgo durante lactancia",
+  "topic": "FOL",
+  "relevant_pages": [
+   "UNIDAD 7  - LA SEGURIDAD SOCIAL. PRESTACIONES.pdf#20"
+  ],
+  "long_query": "qué es la prestación por riesgo durante la lactancia y hasta qué edad del hijo se concede",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "jubilación anticipada voluntaria",
+  "topic": "FOL",
+  "relevant_pages": [
+   "UNIDAD 7  - LA SEGURIDAD SOCIAL. PRESTACIONES.pdf#27"
+  ],
+  "long_query": "qué coeficientes reductores se aplican en la jubilación anticipada voluntaria según los años cotizados",
+  "source_set": "golden_fol.json"
+ },
+ {
+  "query": "Eutropio origen griego",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Eutropio - BREVIARIVM HISTORIAE ROMANAE Breviario.pdf#2"
+  ],
+  "long_query": "por qué se supone que Eutropio era de origen griego",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "sobrenombre Torcuato",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Eutropio - BREVIARIVM HISTORIAE ROMANAE Breviario.pdf#26"
+  ],
+  "long_query": "de dónde procede el sobrenombre de Torcuato",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "emperador filósofo estoico",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Eutropio - BREVIARIVM HISTORIAE ROMANAE Breviario.pdf#81"
+  ],
+  "long_query": "qué emperador romano fue también un filósofo estoico según Eutropio",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "frase Julio César",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Literatura-Latina-2014.pdf#38"
+  ],
+  "long_query": "qué frase pronunció Julio César al ser asesinado según las distintas fuentes",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "Fedro fábulas",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Literatura-Latina-2014.pdf#61"
+  ],
+  "long_query": "quién fue Fedro y qué obra de fábulas escribió",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "tablillas enceradas",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Literatura-Latina-2014.pdf#95"
+  ],
+  "long_query": "qué eran las tablillas enceradas y cómo se escribía sobre ellas",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "brevis gravis fortis",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Conspectus_Grammaticus_Familia_Romana_LLPSI__Cepelak.pdf#24"
+  ],
+  "long_query": "cómo se declinan los adjetivos como brevis, gravis y fortis",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "erga dignus",
+  "topic": "Latin",
+  "relevant_pages": [
+   "Conspectus_Grammaticus_Familia_Romana_LLPSI__Cepelak.pdf#42"
+  ],
+  "long_query": "qué caso rige la preposición erga y el adjetivo dignus en latín",
+  "source_set": "golden_latin.json"
+ },
+ {
+  "query": "mecanizado ultrasonidos sonotrodo",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "ejecucion-de-procesos-de-mecanizado-conformado-y-montaje.pdf#112"
+  ],
+  "long_query": "en qué se basa el mecanizado por ultrasonidos y qué es el sonotrodo",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "mango troquel cortador",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "ejecucion-de-procesos-de-mecanizado-conformado-y-montaje.pdf#430"
+  ],
+  "long_query": "dónde debe colocarse el mango en un troquel cortador y por qué",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "aptitud rectificado vanadio",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "ejecucion-de-procesos-de-mecanizado-conformado-y-montaje.pdf#287"
+  ],
+  "long_query": "qué es la aptitud al rectificado y cómo influyen los carburos de vanadio",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "ensamblaje componente fijo",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Introducción a SolidWorks.pdf#59"
+  ],
+  "long_query": "por qué al crear un ensamblaje se empieza por el componente que no se mueve",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "anotaciones fabricación SolidWorks",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Introducción a SolidWorks.pdf#81"
+  ],
+  "long_query": "qué anotaciones de fabricación se pueden añadir además de las cotas en SolidWorks",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "campo imprecisión intercambiables",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Tolerancias dimensionales. Ajustes.pdf#1"
+  ],
+  "long_query": "por qué se admite un cierto campo de imprecisión para que las piezas sean intercambiables",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "eje único agujero",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Tolerancias dimensionales. Ajustes.pdf#21"
+  ],
+  "long_query": "qué ventajas tiene el sistema de eje único frente al de agujero único en los ajustes",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "máximo material MMC",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Tolerancias Geométricas.pdf#20"
+  ],
+  "long_query": "qué es la condición de máximo material MMC y la de mínimo material LMC",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "tolerancia proyectada",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Tolerancias Geométricas.pdf#33"
+  ],
+  "long_query": "en qué consiste la tolerancia proyectada y cómo influye la longitud del elemento",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "velocidad corte constante",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Manual de Autoaprendizaje 8055.pdf#14"
+  ],
+  "long_query": "qué hay que tener en cuenta para trabajar con velocidad de corte constante CSS en el CNC",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "punto cambio herramienta",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Manual de Autoaprendizaje 8055.pdf#46"
+  ],
+  "long_query": "qué es el punto de cambio de herramienta y cómo se define respecto al cero máquina",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "triscado hoja sierra",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Procesos de mecanizado. Mecanizado básico.pdf#6"
+  ],
+  "long_query": "qué es el triscado de la hoja de sierra y para qué sirve",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "corte plasma piloto",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Procesos de mecanizado. Mecanizado básico.pdf#12"
+  ],
+  "long_query": "cómo funciona el corte por plasma y qué es el arco piloto",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "operación de trazado",
+  "topic": "Mecanica",
+  "relevant_pages": [
+   "Procesos de mecanizado. Mecanizado básico.pdf#3"
+  ],
+  "long_query": "en qué consiste la operación de trazado de una pieza",
+  "source_set": "golden_mecanica.json"
+ },
+ {
+  "query": "tabla HTML tr",
+  "topic": "Programming",
+  "relevant_pages": [
+   "3.1 HTML.pdf#13"
+  ],
+  "long_query": "cómo se define una tabla en HTML con las etiquetas tr, td y th",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "flexbox justify-content",
+  "topic": "Programming",
+  "relevant_pages": [
+   "3.2 CSS.pdf#16"
+  ],
+  "long_query": "propiedades de un contenedor flexbox como justify-content y align-items",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "redundancia inconsistencia archivos",
+  "topic": "Programming",
+  "relevant_pages": [
+   "BBDD-T0.pdf#7"
+  ],
+  "long_query": "inconvenientes de usar sistemas de archivos para almacenar datos: redundancia e inconsistencia",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "modelo datos lógico",
+  "topic": "Programming",
+  "relevant_pages": [
+   "BBDD-T0.pdf#15"
+  ],
+  "long_query": "elección del modelo de datos y diseño lógico de una base de datos",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "removeprefix cadenas Python",
+  "topic": "Programming",
+  "relevant_pages": [
+   "CURSO INTENSIVO DE PYTHON 3.pdf#61"
+  ],
+  "long_query": "evitar errores de sintaxis con cadenas en Python y el método removeprefix",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "if precio entrada",
+  "topic": "Programming",
+  "relevant_pages": [
+   "CURSO INTENSIVO DE PYTHON 3.pdf#141"
+  ],
+  "long_query": "usar una sentencia if para calcular el precio de la entrada según la edad del visitante",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "argumentos arbitrarios tupla",
+  "topic": "Programming",
+  "relevant_pages": [
+   "CURSO INTENSIVO DE PYTHON 3.pdf#241"
+  ],
+  "long_query": "función con número arbitrario de argumentos que recoge los ingredientes en una tupla",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "if else JavaScript",
+  "topic": "Programming",
+  "relevant_pages": [
+   "Lenguaje Javascript.pdf#21"
+  ],
+  "long_query": "estructuras de control if else y bloques de sentencias en JavaScript",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "expresiones regulares replace",
+  "topic": "Programming",
+  "relevant_pages": [
+   "Lenguaje Javascript.pdf#56"
+  ],
+  "long_query": "expresiones regulares en JavaScript con replace y cuantificadores como bc+ o bc{1,4}",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "shiftOut Arduino",
+  "topic": "Programming",
+  "relevant_pages": [
+   "ARDUINO CC DOCUMENTACION OFICIAL.pdf#31"
+  ],
+  "long_query": "función shiftOut de Arduino para desplazar un byte bit a bit",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "biblioteca Wire Arduino",
+  "topic": "Programming",
+  "relevant_pages": [
+   "ARDUINO CC DOCUMENTACION OFICIAL.pdf#91"
+  ],
+  "long_query": "biblioteca Wire de Arduino donde read y write sustituyen a send y receive",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "operadores asignación Python",
+  "topic": "Programming",
+  "relevant_pages": [
+   "bgpython_a4_c_2.pdf#26"
+  ],
+  "long_query": "operadores de asignación aritmética en Python: += -= *= /=",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "secuencia Fibonacci",
+  "topic": "Programming",
+  "relevant_pages": [
+   "bgpython_a4_c_2.pdf#71"
+  ],
+  "long_query": "secuencia de Fibonacci donde cada número es la suma de los dos anteriores",
+  "source_set": "golden_programming.json"
+ },
+ {
+  "query": "dimensiones de sostenibilidad",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Tema 1 Sostenibilidad alumnos 25-26.pdf#2"
+  ],
+  "long_query": "cuáles son las tres dimensiones de la sostenibilidad",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "siglas ASG",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Tema 1 Sostenibilidad alumnos 25-26.pdf#5"
+  ],
+  "long_query": "qué significan las siglas ASG y qué evalúa cada letra",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "criterios ASG inversores",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Tema 1 Sostenibilidad alumnos 25-26.pdf#8"
+  ],
+  "long_query": "por qué son importantes los criterios ASG para los inversores",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "impacto Revolución Industrial",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Tema 1 Sostenibilidad alumnos 25-26.pdf#3"
+  ],
+  "long_query": "qué impacto ambiental tuvo la Revolución Industrial",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "Pacto Verde Europeo",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Tema 1 Sostenibilidad alumnos 25-26.pdf#9"
+  ],
+  "long_query": "qué es el Pacto Verde Europeo y qué objetivo de emisiones fija",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "ESRS empresas",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Tema 1 Sostenibilidad alumnos 25-26.pdf#10"
+  ],
+  "long_query": "qué son los ESRS que deben elaborar las empresas cada año",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "contribuciones NDC París",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.1.pdf#36"
+  ],
+  "long_query": "qué son las contribuciones determinadas a nivel nacional NDC del Acuerdo de París",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "emisión inmisión calidad",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.1.pdf#92"
+  ],
+  "long_query": "diferencia entre emisión, inmisión y calidad del aire",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "país redujo emisiones",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.1.pdf#65"
+  ],
+  "long_query": "qué país europeo redujo más sus emisiones de gases de efecto invernadero entre 2015 y 2019",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "economía circular residuos",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.1.pdf#115"
+  ],
+  "long_query": "cómo ayuda la economía circular a preservar la salud pública en la gestión de residuos",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "objetivo renovables 2020",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.2_.pdf#71"
+  ],
+  "long_query": "alcanzó España el objetivo del 20 por ciento de energías renovables en 2020",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "muertes trabajo OIT",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.2_.pdf#164"
+  ],
+  "long_query": "cuántas muertes anuales relacionadas con el trabajo estima la OIT",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "Integrated Reporting IR",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Informe-de-Sostenibilidad-Vol.3.2_.pdf#186"
+  ],
+  "long_query": "qué es el marco Integrated Reporting IR y para qué sirve",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "Heineken materia prima",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Matriz-Industrial-de-los-ODS_Alimentación-bebidas-y-bienes-de-consumo-.pdf#21"
+  ],
+  "long_query": "qué objetivo se marcó Heineken para obtener materia prima agrícola local",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "inversión LEGO sostenibles",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Matriz-Industrial-de-los-ODS_Alimentación-bebidas-y-bienes-de-consumo-.pdf#37"
+  ],
+  "long_query": "qué inversión anunció LEGO para desarrollar materias primas sostenibles",
+  "source_set": "golden_sostenibilidad.json"
+ },
+ {
+  "query": "Nueva Visión Agricultura",
+  "topic": "Sostenibilidad",
+  "relevant_pages": [
+   "Matriz-Industrial-de-los-ODS_Alimentación-bebidas-y-bienes-de-consumo-.pdf#15"
+  ],
+  "long_query": "en qué consiste la iniciativa Nueva Visión para la Agricultura del Foro Económico Mundial",
+  "source_set": "golden_sostenibilidad.json"
+ }
+]
