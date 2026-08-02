@@ -18,9 +18,15 @@ o, más cómodo, montando el script:
         -v /opt/iasantiago-rag/ingestor:/app:ro \\
         -v /opt/iasantiago-rag/scripts:/scripts:ro \\
         -v /opt/iasantiago-rag/topics:/topics:ro \\
-        -v /opt/iasantiago-rag/huggingface_cache:/models_cache \\
+        -v iasantiago-rag_models_cache:/models_cache -e HF_HOME=/models_cache \\
         -w /app --entrypoint python3 iasantiago-rag-ingestor:latest \\
         /scripts/compare_vlm_vs_ocr.py --sample 6
+
+El volumen y el `HF_HOME` importan: el `ENV HF_HOME` de la imagen apunta a
+`/root/.cache/huggingface`, que en un `docker run` suelto es efímero, así que sin
+esas dos banderas granite-docling (506 MB) se vuelve a bajar en cada tirada. El
+2026-08-01 se montó ahí un directorio del repo por error y acabaron 506 MB
+sueltos en el árbol de trabajo; borrados el 2026-08-02.
 
 **Necesita ventana de GPU**, y esto está medido, no supuesto: el 2026-07-31 se
 intentó en CPU y a los **19 minutos seguía en el primer fichero de 5 páginas**.
@@ -152,6 +158,14 @@ def run_extractor(extractor, pdf: Path) -> Run:
     seconds = time.time() - start
     text = "\n".join(e.text for e in elements)
     return Run(
+        # OJO: `ok` sólo dice que la extracción no reventó, NO que haya texto. El
+        # VlmPipeline devuelve a menudo un único elemento `<!-- image -->` (14
+        # caracteres) y eso entra aquí como éxito. En el censo del 2026-08-01 infló
+        # la cobertura VLM de 11/23 a 16/23, que es la diferencia entre NO-GO y
+        # empate. Para juzgar cobertura mira `chars`/`pages_with_text` en el JSON
+        # por fichero, nunca este campo ni el recuento agregado que imprime el
+        # resumen. Ver LESSONS.md §10 ("Un instrumento puede contar como cubierto
+        # un fichero vacío").
         ok=bool(elements),
         seconds=seconds,
         chars=len(text),
