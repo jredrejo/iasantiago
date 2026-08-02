@@ -719,6 +719,53 @@ async def eval_offline(
     contexto y sólo volvería a cortar lo que se quería ver. NO cambia nada de
     la ruta de chat: es un parámetro de esta petición.
     """
+    # Un tema mal escrito aquí medía **0.000 en silencio**, y 0.000 se lee como
+    # "el retrieval es malísimo" en vez de como "te has equivocado de etiqueta".
+    # Es exactamente la trampa contra la que avisa el cierre de PLAN.md: la
+    # reparación de Chemistry midió 0.000 porque el golden set no tocaba los
+    # documentos cambiados, y nadie lo vio hasta mucho después. Un banco que
+    # miente sin avisar es peor que uno que no existe, porque se usa para
+    # decidir.
+    #
+    # Misma separación por dueño que `/retrieve` (punto 8), y por el mismo
+    # motivo: los dos fallos tienen dueños distintos.
+    #
+    # La validación va **antes de recuperar nada**: una tirada completa son
+    # minutos y descubrir al final que el tema estaba mal escrito no ayuda a
+    # nadie. Se comprueban los temas distintos, no un caso por caso, para no
+    # pagar N viajes a Qdrant.
+    unknown = sorted({c.topic for c in cases if c.topic not in TOPIC_LABELS})
+    if unknown:
+        logger.error(
+            f"[/v1/eval/offline] Temas desconocidos {unknown}; válidos: {TOPIC_LABELS}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unknown_topic",
+                "topics": unknown,
+                "valid_topics": TOPIC_LABELS,
+            },
+        )
+
+    # Tema válido pero sin colección: no es culpa de quien llama, así que no es
+    # un 400. Pero medirá 0.000 y eso hay que decirlo en la propia respuesta —
+    # un log no lo ve quien lee la tabla de resultados.
+    # Los temas distintos primero: un set por comprensión sobre `cases` dedupe
+    # los resultados pero **no las llamadas**, y serían 157 viajes para 10 temas.
+    missing_collections = sorted(
+        t for t in sorted({c.topic for c in cases}) if not collection_exists(t)
+    )
+    topic_warnings = []
+    for topic in missing_collections:
+        logger.error(
+            f"[/v1/eval/offline] Tema '{topic}' sin colección Qdrant; medirá 0.000"
+        )
+        topic_warnings.append(
+            f"tema '{topic}': sin colección Qdrant; sus casos miden 0.000 "
+            f"y el resultado no describe al retrieval"
+        )
+
     rows = []
     for c in cases:
         retrieved, meta = choose_retrieval(
@@ -762,7 +809,9 @@ async def eval_offline(
             "page_tolerance": agg["page_tolerance"],
             "duplicate_groups": agg["duplicate_groups"],
         },
-        "warnings": _eval_warnings(rows, file_aliases),
+        # Los de tema van delante: si un tema no tiene colección, los avisos por
+        # caso que vengan detrás son consecuencia de eso y no causas distintas.
+        "warnings": topic_warnings + _eval_warnings(rows, file_aliases),
         "details": [
             {
                 "query": r["query"],

@@ -22,14 +22,27 @@ distinta, que es lo que el §7.1 puso en juego.
 Uso:
     python3 rag-api/tools/ab_retrieve_vs_chat.py [--since YYYY-MM-DD]
                                                  [--min-per-arm N]
+                                                 [--stale-days N]
                                                  [--json]
                                                  [ruta/al/retrieval.jsonl ...]
 
 Sin argumentos lee `data/telemetry/retrieval.jsonl` y sus archivos rotados
 (`retrieval.jsonl.YYYY-MM`).
 
-Salida distinta de cero si alguna rama no llega a `--min-per-arm` filas: el A/B
-no está listo para decidir. Es el criterio de parada, no un error.
+Códigos de salida — son el criterio de parada, no errores:
+
+    0  muestra suficiente en las dos ramas: el A/B se puede decidir.
+    1  falta muestra, pero las dos ramas siguen vivas: sigue acumulando.
+    2  no hay telemetría que leer.
+    3  falta muestra y **una rama está inactiva**: esperar no lo arregla.
+
+La diferencia entre 1 y 3 es la que motivó el arreglo del 2026-08-02. Este
+comparador decía "bloqueado hasta que haya tráfico real" mientras la ruta
+topic:X llevaba dos días sin una sola fila —el tráfico se había mudado al
+Filter cuando entraron los 18 modelos de workspace, pudiendo seguir usándola—,
+así que aconsejaba esperar a una muestra que no iba a llegar nunca. Un criterio
+de parada que no distingue "todavía no" de "ya nunca" no es un criterio de
+parada.
 """
 
 from __future__ import annotations
@@ -139,7 +152,44 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def print_report(by_arm: Dict[str, Dict[str, Any]], min_per_arm: int) -> None:
+def _gap_days(by_arm: Dict[str, Dict[str, Any]], arm: str) -> str:
+    """Días entre la última fila de `arm` y la más reciente de toda la muestra."""
+    newest = max((s["last"] for s in by_arm.values() if s["last"]), default=None)
+    last = by_arm[arm]["last"]
+    if not newest or not last:
+        return "—"
+    return str((datetime.fromisoformat(newest) - datetime.fromisoformat(last)).days)
+
+
+def _dormant_arms(
+    by_arm: Dict[str, Dict[str, Any]], stale_days: int
+) -> List[tuple]:
+    """Ramas cuya última fila va muy por detrás de la muestra: `(rama, fecha, días)`.
+
+    Una rama corta no dice **por qué** es corta, y la respuesta cambia el consejo
+    por completo: "faltan datos, espera" y "esta rama ya no la usa nadie" se ven
+    igual en el contador de filas. Medido el 2026-08-02: la ruta topic:X llevaba
+    parada desde el 07-31 mientras `/retrieve` seguía recibiendo, y el mensaje de
+    parada seguía diciendo "espera a que haya tráfico real".
+
+    Lo usan el informe y el código de salida, para que no puedan discrepar.
+    """
+    newest = max((s["last"] for s in by_arm.values() if s["last"]), default=None)
+    if not newest:
+        return []
+    out = []
+    for arm, s in by_arm.items():
+        if not s["last"]:
+            continue
+        gap = (datetime.fromisoformat(newest) - datetime.fromisoformat(s["last"])).days
+        if gap >= stale_days:
+            out.append((arm, s["last"][:10], gap))
+    return out
+
+
+def print_report(
+    by_arm: Dict[str, Dict[str, Any]], min_per_arm: int, stale_days: int = 7
+) -> None:
     arms = [CHAT, RETRIEVE]
     label = {CHAT: "topic:X (chat)", RETRIEVE: "/retrieve (Filter)"}
 
@@ -183,9 +233,12 @@ def print_report(by_arm: Dict[str, Dict[str, Any]], min_per_arm: int) -> None:
         "mismos temas."
     )
     print(
-        "  · `contexto vacío` en /retrieve es degradación silenciosa (tema "
-        "desconocido o\n    rag-api caído): el modelo responde sin RAG en vez de "
-        "dar error."
+        "  · `contexto vacío` en /retrieve **puede** ser degradación silenciosa (tema\n"
+        "    desconocido o rag-api caído): el modelo responde sin RAG en vez de dar\n"
+        "    error. Pero no lo des por hecho — cuando se miraron una a una el\n"
+        "    2026-08-02, ninguna de las 7 lo era: 4 eran un bug de consulta corta ya\n"
+        "    arreglado, 2 el atajo BM25 del §7.5 y 1 una pregunta fuera de su tema.\n"
+        "    Este contador dice dónde mirar, no qué encontraste."
     )
     print(
         "  · La calidad de recuperación NO se compara aquí: ambas rutas corren la "
@@ -195,12 +248,54 @@ def print_report(by_arm: Dict[str, Dict[str, Any]], min_per_arm: int) -> None:
 
     short = [a for a in arms if by_arm[a]["n"] < min_per_arm]
     print()
-    if short:
-        falta = ", ".join(f"{label[a]} ({by_arm[a]['n']}/{min_per_arm})" for a in short)
+
+    dormant = _dormant_arms(by_arm, stale_days)
+    if dormant:
+        for a, last, gap in dormant:
+            print(
+                f"  RAMA INACTIVA — {label[a]}: última fila {last}, "
+                f"{gap} días por detrás de la muestra."
+            )
+        print(
+            "  Esperar NO la desbloquea: el tráfico se mudó a la otra rama. Lo que\n"
+            "  queda es una decisión, no una medida — retirar la ruta inactiva y ver\n"
+            "  si alguien la echa de menos, o decidir por preferencia revelada."
+        )
+    elif short:
+        # Se enseña el retraso de cada rama aunque no llegue a `stale_days`: es
+        # el dato que distingue "va despacio" de "se está muriendo", y el
+        # contador de filas por sí solo no lo puede mostrar. Deliberadamente NO
+        # se baja el umbral para que el veredicto automático coincida con lo que
+        # uno ya sospecha — se enseña el dato y se deja juzgar.
+        falta = ", ".join(
+            f"{label[a]} ({by_arm[a]['n']}/{min_per_arm}, "
+            f"última hace {_gap_days(by_arm, a)} d)"
+            for a in short
+        )
         print(f"  NO DECIDIBLE — muestra insuficiente: {falta}")
-        print("  El rip-out del §7.1 sigue bloqueado hasta que haya tráfico real.")
+        print(
+            "  Sigue acumulando **si las dos ramas siguen recibiendo**. Mira la fila\n"
+            "  `hasta`: una rama que lleva días sin una sola consulta no va a llegar a\n"
+            f"  {min_per_arm} por esperar, y a los {stale_days} días esto lo dirá solo."
+        )
     else:
         print(f"  Muestra suficiente en ambas ramas (≥ {min_per_arm}).")
+
+    # El contador de filas no basta para saber si la pregunta del §7.1 se puede
+    # responder: se responde con `generative`, y una rama entera puede no
+    # llevarlo. Pasó — la instrumentación de la ruta de chat entró el 07-31,
+    # después de su última fila real, así que 0 de 82 lo llevan.
+    sin_marcar = [a for a in arms if by_arm[a]["n"] and not by_arm[a]["generative_known"]]
+    if sin_marcar:
+        print()
+        for a in sin_marcar:
+            print(
+                f"  SIN `generative` — {label[a]}: 0 de {by_arm[a]['n']} filas lo llevan."
+            )
+        print(
+            "  La afirmación central del §7.1 (la regex adivina, la variante de modelo\n"
+            "  se elige) no se puede medir con esta muestra, tenga las filas que tenga."
+        )
 
 
 def main() -> int:
@@ -212,6 +307,13 @@ def main() -> int:
         type=int,
         default=200,
         help="filas mínimas por rama para considerar el A/B decidible (defecto 200)",
+    )
+    ap.add_argument(
+        "--stale-days",
+        type=int,
+        default=7,
+        help="días de retraso de una rama respecto a la muestra para darla por "
+        "inactiva (defecto 7)",
     )
     ap.add_argument("--json", action="store_true", help="volcado JSON en vez de tabla")
     args = ap.parse_args()
@@ -234,9 +336,15 @@ def main() -> int:
         }
         print(json.dumps(serializable, ensure_ascii=False, indent=2))
     else:
-        print_report(by_arm, args.min_per_arm)
+        print_report(by_arm, args.min_per_arm, args.stale_days)
 
-    return 0 if all(s["n"] >= args.min_per_arm for s in by_arm.values()) else 1
+    if all(s["n"] >= args.min_per_arm for s in by_arm.values()):
+        return 0
+    # 3 y 1 son los dos motivos de no poder decidir, y piden cosas distintas: 3
+    # es "esto no se arregla esperando" y 1 es "sigue acumulando". Separarlos es
+    # el punto del arreglo — con un solo código, quien automatice esto seguirá
+    # esperando a una rama que no va a crecer.
+    return 3 if _dormant_arms(by_arm, args.stale_days) else 1
 
 
 if __name__ == "__main__":
