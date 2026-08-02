@@ -1,15 +1,12 @@
 # Archivo: rag-api/core/__init__.py
 # Descripción: Módulo de infraestructura compartida
+#
+# `vllm_client.py` (cliente HTTP + streaming SSE) y `retry.py` (reintentos con
+# backoff, cuyo único consumidor era ese cliente) se fueron con el rip-out del
+# §7.1: rag-api ya no hace peticiones salientes.
 
-from core.retry import with_retry, RetryConfig
 from core.cache import ModelCache
-from core.vllm_client import VLLMClient, get_vllm_client, configure_vllm_client
 
 __all__ = [
-    "with_retry",
-    "RetryConfig",
     "ModelCache",
-    "VLLMClient",
-    "get_vllm_client",
-    "configure_vllm_client",
 ]

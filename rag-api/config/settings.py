@@ -180,39 +180,34 @@ GENERATIVE_TOPK_MULTIPLIER = get_int_env("GENERATIVE_TOPK_MULTIPLIER", 4)
 
 
 # ============================================================
-# vLLM - Configuración del servidor de inferencia
+# vLLM - Lo que rag-api sigue necesitando saber del modelo
 # ============================================================
+# rag-api ya NO habla con vLLM (rip-out del §7.1, 2026-08-02): no hay cliente,
+# ni URL upstream, ni parámetros de muestreo, ni presupuesto de max_tokens. Eso
+# lo decide ahora Open WebUI por modelo de workspace.
+#
+# Lo que queda son las tres cosas que sí necesita un servicio de retrieval:
+# la clave de la API (autentica a quien llama), el tokenizador (para contar el
+# contexto que devuelve) y la ventana del modelo (para no devolver más contexto
+# del que cabe).
+#
+# Las variables retiradas —UPSTREAM_OPENAI_URL, VLLM_SERVED_MODEL,
+# GENERATIVE_MAX_TOKENS_PERCENT, RESPONSE_MAX_TOKENS_PERCENT,
+# MIN_RESPONSE_TOKENS y los ocho parámetros de muestreo— siguen en `.env`
+# porque compose las usa para los servicios `vllm` y `openwebui`
+# (VLLM_SERVED_MODEL), o quedan inertes. Aquí ya no se leen.
 
-UPSTREAM_OPENAI_URL = os.getenv("UPSTREAM_OPENAI_URL", "http://vllm:8000/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "dummy-key")
-# Ruta HF del modelo: la carga vLLM y la usa AutoTokenizer.from_pretrained().
-# NO sirve para el campo "model" de las peticiones: vLLM arranca con
-# --served-model-name, que *sustituye* el nombre publicado en la API en vez de
-# añadir un alias, así que pedirle la ruta HF devuelve 404 "does not exist".
+
+# Ruta HF del modelo. rag-api la usa SÓLO para AutoTokenizer.from_pretrained()
+# en core/cache.py: contar tokens con el mismo tokenizador que el modelo que
+# consumirá el contexto es lo que hace fiable el recorte de `soft_trim_context`.
 VLLM_MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 
-# Nombre con el que vLLM publica el modelo en su API (--served-model-name).
-# Estable y desacoplado de VLLM_MODEL para poder cambiar de modelo base sin
-# tocar rag-api ni el TASK_MODEL_EXTERNAL de Open WebUI.
-VLLM_SERVED_MODEL = os.getenv("VLLM_SERVED_MODEL", "santiago")
-
-# Límites del modelo
+# Límites del modelo: acotan cuánto contexto puede devolver `/retrieve` en modo
+# generativo (CTX_TOKENS_GENERATIVE vs. lo que deja libre la respuesta).
 VLLM_MAX_MODEL_LEN = get_int_env("VLLM_MAX_MODEL_LEN", 32768)
 VLLM_MAX_TOKENS = get_int_env("VLLM_MAX_TOKENS", 4096)
-
-
-# ============================================================
-# TOKENS DINÁMICOS - Porcentajes para max_tokens
-# ============================================================
-
-# Porcentaje del modelo para respuesta en modo generativo
-GENERATIVE_MAX_TOKENS_PERCENT = get_int_env("GENERATIVE_MAX_TOKENS_PERCENT", 60)
-
-# Porcentaje del modelo para respuesta en modo normal
-RESPONSE_MAX_TOKENS_PERCENT = get_int_env("RESPONSE_MAX_TOKENS_PERCENT", 25)
-
-# Mínimo absoluto de tokens para cualquier respuesta
-MIN_RESPONSE_TOKENS = get_int_env("MIN_RESPONSE_TOKENS", 512)
 
 
 # ============================================================
@@ -228,18 +223,8 @@ TELEMETRY_PATH = os.getenv("TELEMETRY_PATH", "/data/telemetry/retrieval.jsonl")
 TELEMETRY_RETENTION_MONTHS = get_int_env("TELEMETRY_RETENTION_MONTHS", 6)
 
 
-# ============================================================
-# SAMPLING PARAMETERS
-# ============================================================
-
-# Response mode (Q&A, explanations)
-RESPONSE_TEMPERATURE = float(os.getenv("RESPONSE_TEMPERATURE", "0.4"))
-RESPONSE_TOP_P = float(os.getenv("RESPONSE_TOP_P", "0.8"))
-RESPONSE_TOP_K = get_int_env("RESPONSE_TOP_K", 20)
-RESPONSE_REPETITION_PENALTY = float(os.getenv("RESPONSE_REPETITION_PENALTY", "1.05"))
-
-# Generative mode (exams, exercises)
-GENERATIVE_TEMPERATURE = float(os.getenv("GENERATIVE_TEMPERATURE", "0.3"))
-GENERATIVE_TOP_P = float(os.getenv("GENERATIVE_TOP_P", "0.75"))
-GENERATIVE_TOP_K = get_int_env("GENERATIVE_TOP_K", 15)
-GENERATIVE_REPETITION_PENALTY = float(os.getenv("GENERATIVE_REPETITION_PENALTY", "1.1"))
+# Los parámetros de muestreo (RESPONSE_*/GENERATIVE_* temperature, top_p, top_k,
+# repetition_penalty) se retiraron con el rip-out del §7.1: los aplicaba
+# `/v1/chat/completions` al construir el payload de vLLM. Quien genera hoy es
+# Open WebUI, y el muestreo se configura por modelo de workspace (columna
+# `params` de la tabla `model` en webui.db), no aquí.

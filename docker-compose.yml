@@ -242,12 +242,18 @@ services:
     restart: unless-stopped
     environment:
       - TZ=${TZ}
-      # Dos conexiones OpenAI (separadas por ';', el orden de KEYS debe coincidir
-      # con el de BASE_URLS):
-      #   1) rag-api  -> pipeline RAG, un modelo por tema
-      #   2) vllm     -> acceso directo, solo para el Task Model (ver abajo)
-      - OPENAI_API_BASE_URLS=http://rag-api:8001/v1;http://vllm:8000/v1
-      - OPENAI_API_KEYS=${OPENAI_API_KEY};${OPENAI_API_KEY}
+      # Una sola conexión OpenAI: vLLM directo. rag-api salió de aquí con el
+      # rip-out del §7.1 (2026-08-02): ya no expone `/v1/models` ni
+      # `/v1/chat/completions`, así que dejarlo listado hacía que Open WebUI
+      # sondease en cada refresco un endpoint que devuelve 404. La conexión con
+      # rag-api la mantiene ahora el Filter, contra `http://rag-api:8001/retrieve`
+      # (valve `rag_api_url`), que no es una conexión de modelo.
+      #
+      # OJO: esto sólo aplica a una instalación nueva. Open WebUI persiste las
+      # conexiones en `webui.db` (claves `openai.api_base_urls`/`api_keys`) y a
+      # partir del primer arranque manda la BD, no esta variable.
+      - OPENAI_API_BASE_URLS=http://vllm:8000/v1
+      - OPENAI_API_KEYS=${OPENAI_API_KEY}
       # Task Model: las tareas internas (titulo, tags, follow-up, autocomplete)
       # van directas a vLLM en vez de atravesar todo el pipeline RAG.
       # OJO: tiene que ser TASK_MODEL_EXTERNAL, no TASK_MODEL. TASK_MODEL es para

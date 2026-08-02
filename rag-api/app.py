@@ -2,26 +2,22 @@
 # Descripción: API FastAPI para RAG de IASantiago
 #
 # Este archivo contiene los endpoints HTTP. La lógica de negocio
-# está delegada a los módulos core/, chat/, y retrieval_lib/.
+# está delegada a los módulos core/ y retrieval_lib/.
+#
+# **rag-api es un servicio de retrieval puro** desde el rip-out del §7.1
+# (2026-08-02). La orquestación del chat —historial, prompt de sistema, muestreo,
+# streaming contra vLLM— la hace Open WebUI: sus 18 modelos de workspace apuntan
+# directamente a vLLM y su Filter (inlet) llama a `POST /retrieve` para inyectar
+# el contexto. Aquí ya no hay cliente de vLLM, ni SSE, ni superficie compatible
+# con la API de OpenAI (`/v1/models`, `/v1/chat/completions`): ver PLAN.md punto
+# 6 y FINDINGS.md §7.1.
 
 import contextlib
 import hashlib
-import json
 import logging
 import os
-import time
 from typing import Dict, List, Optional
 from urllib.parse import quote
-
-import httpx
-
-from chat.context_builder import ContextBuilder
-from chat.intent import (
-    detect_generative_intent,
-    get_last_user_message,
-    load_system_prompt,
-)
-from chat.token_calculator import TokenCalculator
 
 # Importaciones de módulos refactorizados
 from config.settings import (
@@ -29,33 +25,18 @@ from config.settings import (
     CTX_TOKENS_SOFT_LIMIT,
     EMBED_DEFAULT,
     FINAL_TOPK,
-    GENERATIVE_MAX_TOKENS_PERCENT,
-    GENERATIVE_REPETITION_PENALTY,
-    GENERATIVE_TEMPERATURE,
-    GENERATIVE_TOP_K,
-    GENERATIVE_TOP_P,
-    MIN_RESPONSE_TOKENS,
     OPENAI_API_KEY,
-    RESPONSE_MAX_TOKENS_PERCENT,
-    RESPONSE_REPETITION_PENALTY,
-    RESPONSE_TEMPERATURE,
-    RESPONSE_TOP_K,
-    RESPONSE_TOP_P,
     TOPIC_BASE_DIR,
     TOPIC_LABELS,
     VLLM_MAX_MODEL_LEN,
     VLLM_MAX_TOKENS,
-    VLLM_SERVED_MODEL,
 )
-from core.vllm_client import VLLMClient
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from retrieval import (
     attach_citations,
     choose_retrieval,
-    count_tokens,
     get_embedder,
     get_reranker,
     rerank_passages,
@@ -63,7 +44,6 @@ from retrieval import (
     telemetry_log,
 )
 from qdrant_utils import collection_exists
-from token_utils import extract_topic_from_model_name
 
 from eval import (
     aggregate_eval,
@@ -101,64 +81,31 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
 
 
 # ============================================================
-# LIFESPAN Y CLIENTE HTTPX COMPARTIDO
+# LIFESPAN
 # ============================================================
-
-# Cliente httpx compartido para todas las peticiones
-_shared_httpx_client: Optional[httpx.AsyncClient] = None
-# Cliente vLLM global instanciado durante lifespan
-_vllm_client_instance = None
-
-
-def get_httpx_client() -> httpx.AsyncClient:
-    """Obtiene el cliente httpx compartido"""
-    global _shared_httpx_client
-    if _shared_httpx_client is None:
-        raise RuntimeError("httpx client not initialized - lifespan not started")
-    return _shared_httpx_client
-
-
-def get_vllm_client_instance():
-    """Obtiene la instancia global del cliente vLLM"""
-    global _vllm_client_instance
-    if _vllm_client_instance is None:
-        raise RuntimeError("vllm client not initialized - lifespan not started")
-    return _vllm_client_instance
+# El cliente httpx compartido y el cliente de vLLM vivían aquí; los dos se
+# fueron con el rip-out del §7.1. rag-api ya no hace ninguna petición saliente:
+# habla con Qdrant (cliente propio) y carga modelos locales, nada más.
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan de FastAPI: precarga modelos al inicio, limpia al cierre"""
-    global _shared_httpx_client, _vllm_client_instance
+    """Lifespan de FastAPI: precarga modelos al inicio.
 
-    # Startup
+    El preload no es opcional: `/healthz` sólo responde 200 después, y el
+    healthcheck de compose lo usa como señal de readiness.
+    """
     logger.info("FastAPI startup: precargando modelos...")
     try:
         ensure_models_loaded()
         logger.info("Modelos precargados correctamente")
-
-        # Crear cliente httpx compartido
-        _shared_httpx_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
-        )
-        logger.info("Cliente httpx compartido creado")
-
-        # Instanciar vllm_client con el cliente compartido
-        _vllm_client_instance = VLLMClient(httpx_client=_shared_httpx_client)
-        logger.info("Cliente vLLM instanciado con httpx compartido")
-
     except Exception as e:
         logger.error(f"Error en startup: {e}", exc_info=True)
         raise
 
     yield
 
-    # Shutdown
-    logger.info("FastAPI shutdown: limpiando recursos...")
-    if _shared_httpx_client:
-        await _shared_httpx_client.aclose()
-        logger.info("Cliente httpx cerrado")
+    logger.info("FastAPI shutdown")
 
 
 # ============================================================
@@ -192,36 +139,10 @@ def ensure_models_loaded():
 # Crear aplicación FastAPI con lifespan
 app = FastAPI(title="IASantiago RAG API", lifespan=lifespan)
 
-# Instanciar componentes (que no dependen de lifespan)
-token_calculator = TokenCalculator(
-    model_max_len=VLLM_MAX_MODEL_LEN,
-    max_tokens_limit=VLLM_MAX_TOKENS,
-    generative_percent=GENERATIVE_MAX_TOKENS_PERCENT,
-    response_percent=RESPONSE_MAX_TOKENS_PERCENT,
-    min_response_tokens=MIN_RESPONSE_TOKENS,
-)
-context_builder = ContextBuilder(
-    max_context_tokens=CTX_TOKENS_SOFT_LIMIT,
-    model_max_len=VLLM_MAX_MODEL_LEN,
-)
-
 
 # ============================================================
 # MODELOS PYDANTIC
 # ============================================================
-
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-
-class ChatRequest(BaseModel):
-    model: str
-    messages: List[Message]
-    temperature: Optional[float] = None  # Use .env defaults (RESPONSE_TEMPERATURE or GENERATIVE_TEMPERATURE)
-    top_p: Optional[float] = None  # Use .env defaults (RESPONSE_TOP_P or GENERATIVE_TOP_P)
-    stream: Optional[bool] = True
 
 
 class RetrieveRequest(BaseModel):
@@ -278,194 +199,18 @@ async def healthz():
     return {"ok": True, "topics": TOPIC_LABELS}
 
 
-@app.get("/v1/models")
-async def list_models(
-    request: Request,
-    api_key: str = Depends(verify_api_key),
-):
-    """Lista modelos disponibles (compatible con OpenAI API)"""
-    models = [
-        {
-            "id": f"topic:{t}",
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": "iasantiago",
-        }
-        for t in TOPIC_LABELS
-    ]
-    return {"object": "list", "data": models}
-
-
-@app.post("/v1/chat/completions")
-async def chat_completions(
-    req: ChatRequest,
-    request: Request,
-    x_email: str = Header(None),
-    api_key: str = Depends(verify_api_key),
-):
-    """
-    Endpoint principal de chat con RAG.
-
-    Flujo:
-    1. Detectar intención (generativa vs respuesta)
-    2. Ejecutar retrieval híbrido
-    3. Construir contexto y mensajes
-    4. Calcular tokens
-    5. Verificar salud de vLLM y enviar (streaming o no)
-    """
-    # Hash del email en lugar de texto plano: identifica al usuario en los logs
-    # sin registrar el correo del alumno.
-    user_ref = (
-        hashlib.sha256(x_email.encode("utf-8")).hexdigest()[:12] if x_email else "anon"
-    )
-    logger.info(f"Usuario: {user_ref}")
-    logger.info(f"Mensajes recibidos: {len(req.messages)}")
-
-    # 1. Extraer topic y mensaje del usuario
-    topic = extract_topic_from_model_name(req.model, TOPIC_LABELS[0])
-    user_msg = get_last_user_message(req.messages)
-
-    # 2. Detectar intención y cargar prompt
-    is_generative = detect_generative_intent(user_msg)
-    sys_prompt = load_system_prompt(is_generative)
-
-    # 3. Ajustar límites de contexto según modo
-    if is_generative:
-        context_token_limit = CTX_TOKENS_GENERATIVE
-        # Reducir contexto para dejar espacio a respuesta
-        max_context = VLLM_MAX_MODEL_LEN - VLLM_MAX_TOKENS - 1000
-        context_token_limit = min(context_token_limit, max_context)
-        logger.info(f"Modo GENERATIVO: Límite de contexto {context_token_limit} tokens")
-        effective_temp = (
-            GENERATIVE_TEMPERATURE if req.temperature is None else req.temperature
-        )
-        effective_top_p = GENERATIVE_TOP_P if req.top_p is None else req.top_p
-        effective_top_k = GENERATIVE_TOP_K
-        effective_rep_penalty = GENERATIVE_REPETITION_PENALTY
-    else:
-        context_token_limit = CTX_TOKENS_SOFT_LIMIT
-        effective_temp = (
-            RESPONSE_TEMPERATURE if req.temperature is None else req.temperature
-        )
-        effective_top_p = RESPONSE_TOP_P if req.top_p is None else req.top_p
-        effective_top_k = RESPONSE_TOP_K
-        effective_rep_penalty = RESPONSE_REPETITION_PENALTY
-
-    logger.info(
-        f"Muestreo: temperature={effective_temp}, top_p={effective_top_p} ({'GENERATIVO' if is_generative else 'RESPUESTA'})"
-    )
-
-    # 4. Retrieval
-    retrieved, meta = choose_retrieval(topic, user_msg, is_generative)
-    logger.info(f"Recuperados {len(retrieved)} chunks para '{topic}'")
-
-    if retrieved:
-        # Reranking
-        retrieved = rerank_passages(user_msg, retrieved, rerank_topk=None)
-        # Trim por tokens después del reranking
-        retrieved = soft_trim_context(retrieved, context_token_limit)
-
-    # 5. Construir contexto con citaciones
-    context_text, cited = attach_citations(retrieved, topic)
-    context_builder.log_context_status(context_text, len(retrieved))
-
-    # 6. Telemetría
-    # `source` marca explícitamente la ruta topic:X para el A/B del §7.1. Las
-    # filas anteriores a este cambio no lo llevan; el comparador las cuenta como
-    # "chat" por ausencia. `generative` deja medible lo que decide el §7.1: aquí
-    # lo adivina la regex de intención, en la ruta /retrieve lo elige el usuario.
-    telemetry_log(
-        {
-            "source": "chat",
-            "generative": is_generative,
-            "query": user_msg,
-            "original_language": meta.get("original_language"),
-            "translated_query": (
-                meta.get("original_query")
-                if meta.get("original_language") != "en"
-                else None
-            ),
-            "topic": topic,
-            "mode": meta.get("mode"),
-            "num_messages": len(req.messages),
-            "dense_k": meta.get("dense_k"),
-            "bm25_k": meta.get("bm25_k"),
-            "final_topk": meta.get("final_topk"),
-            "retrieved": [
-                {
-                    "file_path": r["file_path"],
-                    "page": r["page"],
-                    "chunk_id": r["chunk_id"],
-                }
-                for r in retrieved
-            ],
-        }
-    )
-
-    # 7. Construir mensajes (contexto en user message para prefix caching)
-    messages = context_builder.build_messages(
-        sys_prompt, req.messages, context_text, context_token_limit
-    )
-
-    # 8. Calcular tokens
-    budget = token_calculator.calculate_budget(
-        sys_prompt, context_text, messages, is_generative
-    )
-
-    # Validar que hay espacio para respuesta
-    if budget.available_for_response < MIN_RESPONSE_TOKENS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"El contexto de entrada es demasiado largo ({budget.total_input} tokens). "
-            f"El modelo solo soporta {VLLM_MAX_MODEL_LEN} tokens totales. "
-            f"Por favor, reduce el historial de conversación.",
-        )
-
-    # 9. Verificar salud de vLLM
-    if not await get_vllm_client_instance().check_health():
-        raise HTTPException(
-            status_code=503,
-            detail="vLLM no responde. Por favor intente de nuevo.",
-        )
-
-    # 10. Preparar payload
-    logger.info(f"Enviando a vLLM: {len(messages)} mensajes")
-
-    payload = {
-        # El nombre publicado por vLLM, no la ruta HF (ver settings.VLLM_MODEL).
-        "model": VLLM_SERVED_MODEL,
-        "messages": messages,
-        "temperature": effective_temp,
-        "top_p": effective_top_p,
-        "top_k": effective_top_k,
-        "repetition_penalty": effective_rep_penalty,
-        "stream": req.stream,
-        "max_tokens": budget.max_tokens,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
-
-    payload_size = len(json.dumps(payload))
-    logger.info(
-        f"Tamaño payload: {payload_size:,} bytes ({payload_size / 1024:.1f} KB)"
-    )
-
-    # 11. Enviar a vLLM
-    if req.stream:
-        return StreamingResponse(
-            get_vllm_client_instance().stream_chat_completion(payload),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-    else:
-        resp = await get_vllm_client_instance().chat_completion(payload)
-        return Response(
-            content=resp.content,
-            media_type=resp.headers.get("Content-Type", "application/json"),
-        )
+# `GET /v1/models` y `POST /v1/chat/completions` vivían aquí. Los retiró el
+# rip-out del §7.1 (2026-08-02): eran la superficie compatible con OpenAI que
+# publicaba los nueve modelos falsos `topic:X` y orquestaba el chat contra vLLM.
+# Hoy esa orquestación es de Open WebUI y el único consumidor de rag-api es su
+# Filter, que llama a `POST /retrieve`.
+#
+# Con ellos se fueron `chat/` entero (regex de intención, prompt de sistema,
+# cálculo de presupuesto de tokens, montaje de mensajes), `core/vllm_client.py`
+# (streaming SSE y reintentos), `core/retry.py` y `token_utils.py`.
+#
+# **`/v1/eval/offline` NO es parte de esa superficie** aunque comparta el prefijo
+# `/v1`: es el banco de evaluación y se queda.
 
 
 def _build_citations(chunks: List[Dict], topic: str) -> List[Dict]:
@@ -502,11 +247,15 @@ async def retrieve(
 ):
     """Servicio de retrieval puro (§7.1) — sin vLLM, sin historial.
 
-    Recorre la MISMA cadena que `/v1/chat/completions` (retrieval → reranking →
-    recorte por tokens → citaciones) pero devuelve el contexto en JSON en vez de
-    generar. Open WebUI lo orquesta: su Filter (inlet) llama aquí, inyecta el
-    `context` en el último mensaje del usuario y hace streaming directo contra
-    vLLM. Es aditivo: la ruta `topic:X` sigue viva para poder hacer A/B.
+    Es **la única ruta de servicio** desde el rip-out del §7.1 (2026-08-02).
+    Recorre retrieval → reranking → recorte por tokens → citaciones y devuelve
+    el contexto en JSON. Open WebUI lo orquesta: su Filter (inlet) llama aquí,
+    inyecta el `context` en el último mensaje del usuario y hace streaming
+    directo contra vLLM.
+
+    El modo generativo llega como parámetro (`generative`) porque lo elige el
+    usuario al escoger el modelo "- Generador"; la ruta `topic:X` que se retiró
+    lo adivinaba con una regex de intención sobre el texto de la pregunta.
     """
     user_ref = (
         hashlib.sha256(x_email.encode("utf-8")).hexdigest()[:12] if x_email else "anon"
@@ -579,8 +328,10 @@ async def retrieve(
 
     context_text, cited = attach_citations(retrieved, req.topic)
 
-    # Telemetría marcada source=retrieve para separar el tráfico del Filter del
-    # de la ruta topic:X durante el A/B (§7.1).
+    # `source` se conserva aunque ya sólo haya una ruta: las filas históricas de
+    # `retrieval.jsonl` llevan "chat" (o ninguna, que el comparador cuenta como
+    # chat) y quitarlo ahora haría indistinguible el tráfico posterior al
+    # rip-out del anterior en un fichero que no se reescribe.
     telemetry_log(
         {
             "source": "retrieve",

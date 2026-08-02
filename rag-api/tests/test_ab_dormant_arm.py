@@ -4,9 +4,14 @@
 # El cabo del 2026-08-02: `ab_retrieve_vs_chat.py` imprimía "bloqueado hasta que
 # haya tráfico real" y salía con 1 mientras la ruta topic:X llevaba dos días sin
 # una sola fila. El tráfico se había mudado al Filter cuando entraron los 18
-# modelos de workspace —pudiendo seguir usando topic:X, que sigue anunciado en
-# GET /v1/models—, así que el consejo era falso: esperar no iba a traer esa
+# modelos de workspace, así que el consejo era falso: esperar no iba a traer esa
 # muestra nunca.
+#
+# (Aquel comentario añadía "pudiendo seguir usando topic:X, que sigue anunciado
+# en GET /v1/models". Era falso, y se vio al hacer el rip-out ese mismo día:
+# Open WebUI los tenía desactivados desde el 2026-07-29 15:15. rag-api los
+# anunciaba, sí, pero ningún alumno podía elegirlos. La conclusión del test no
+# cambia —esperar no lo arreglaba— sólo el motivo.)
 #
 # Un criterio de parada que no separa esos dos casos no es un criterio de
 # parada, y es lo que estos tests fijan.

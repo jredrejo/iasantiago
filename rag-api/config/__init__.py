@@ -26,23 +26,13 @@ __all__ = [
     "FINAL_TOPK",
     "BM25_FALLBACK_TOKEN_THRESHOLD",
     "GENERATIVE_TOPK_MULTIPLIER",
-    # vLLM
-    "UPSTREAM_OPENAI_URL",
+    # vLLM (lo que queda tras el rip-out del §7.1: clave, tokenizador, ventana)
     "OPENAI_API_KEY",
     "VLLM_MODEL",
-    "VLLM_SERVED_MODEL",
     "VLLM_MAX_MODEL_LEN",
     "VLLM_MAX_TOKENS",
-    # Tokens dinámicos
-    "GENERATIVE_MAX_TOKENS_PERCENT",
-    "RESPONSE_MAX_TOKENS_PERCENT",
-    "MIN_RESPONSE_TOKENS",
     # Telemetría
     "TELEMETRY_PATH",
     # Helper
     "get_int_env",
-    "RESPONSE_TEMPERATURE",
-    "RESPONSE_TOP_P",
-    "GENERATIVE_TEMPERATURE",
-    "GENERATIVE_TOP_P",
 ]

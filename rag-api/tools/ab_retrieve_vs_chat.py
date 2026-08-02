@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Compara las dos rutas de servicio del §7.1 sobre `retrieval.jsonl`.
 
+**LEE HISTORIA, NO EL SISTEMA VIVO (desde el 2026-08-02).** El rip-out del §7.1
+retiró la ruta `topic:X`: `/v1/chat/completions` ya no existe y no volverá a
+producirse una sola fila `source=chat`. Este comparador se conserva porque
+`retrieval.jsonl` no se reescribe y sigue conteniendo las 82 filas de aquella
+rama, pero **su A/B ya no se puede completar** y su código de salida 3 ("una
+rama está inactiva; esperar no lo arregla") es ahora permanente y correcto. Si
+lo que buscas es el estado de la decisión, está en PLAN.md punto 6.
+
 `POST /retrieve` (el Filter de Open WebUI) y `POST /v1/chat/completions` (los
-modelos `topic:X`) corren **la misma cadena de recuperación**
+modelos `topic:X`) corrían **la misma cadena de recuperación**
 (`choose_retrieval → rerank → soft_trim → attach_citations`). Por construcción
 no pueden diferir en calidad de recuperación para una misma consulta, así que
 este comparador no intenta medirla: mide lo que las rutas sí deciden de forma
@@ -38,11 +46,17 @@ Códigos de salida — son el criterio de parada, no errores:
 
 La diferencia entre 1 y 3 es la que motivó el arreglo del 2026-08-02. Este
 comparador decía "bloqueado hasta que haya tráfico real" mientras la ruta
-topic:X llevaba dos días sin una sola fila —el tráfico se había mudado al
-Filter cuando entraron los 18 modelos de workspace, pudiendo seguir usándola—,
-así que aconsejaba esperar a una muestra que no iba a llegar nunca. Un criterio
-de parada que no distingue "todavía no" de "ya nunca" no es un criterio de
-parada.
+topic:X llevaba dos días sin una sola fila, así que aconsejaba esperar a una
+muestra que no iba a llegar nunca. Un criterio de parada que no distingue
+"todavía no" de "ya nunca" no es un criterio de parada.
+
+**Corrección del 2026-08-02 (rip-out), medida contra `webui.db`:** aquel arreglo
+se escribió creyendo que el tráfico había abandonado `topic:X` *pudiendo*
+usarlo, porque rag-api seguía anunciándolo en `GET /v1/models`. Falso: Open WebUI
+tenía los nueve modelos `topic:X` con `is_active = 0` desde el **2026-07-29
+15:15:30**, una hora después de la última consulta real de esa rama (14:16:44).
+No estaban disponibles para nadie. La rama no se apagó por desuso: se apagó
+administrativamente, y el contador de filas tampoco podía ver *eso*.
 """
 
 from __future__ import annotations
