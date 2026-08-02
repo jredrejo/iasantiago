@@ -2,7 +2,7 @@ fastapi>=0.115.0,<0.120.0
 uvicorn[standard]>=0.30.6,<0.32.0
 httpx>=0.28.1
 pydantic
-qdrant-client==1.15.1
+qdrant-client==1.18.0
 sentence-transformers==3.0.1
 # Rama léxica: BM25 disperso en Qdrant (§7.4). Sustituyó a whoosh 2.7.4, que se
 # retiró el 2026-08-01 tras aceptar los deltas. Arrastra onnxruntime, pero

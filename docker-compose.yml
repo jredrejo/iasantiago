@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.15.5-gpu-nvidia
+    image: qdrant/qdrant:v1.18.3-gpu-nvidia
     container_name: qdrant
     restart: unless-stopped
     # Qdrant mmap-ea cada fichero de segmento y los mantiene abiertos. Con 9

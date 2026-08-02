@@ -43,9 +43,14 @@ def search_dense(topic: str, vector: list, topk: int):
     logger.debug(f"[QDRANT] Searching collection '{coll}' with topk={topk}")
 
     try:
-        res = client.search(
-            collection_name=coll, query_vector=vector, limit=topk, with_payload=True
-        )
+        # `client.search()` desapareció en qdrant-client 1.18 (estaba deprecado
+        # desde 1.10). `query_points` es su sustituto y devuelve la misma forma
+        # —ScoredPoint con .payload/.score/.id— dentro de `.points`, así que los
+        # llamadores (_execute_search y de ahí los 7 flujos de recuperación) no
+        # notan el cambio. La rama dispersa ya usaba query_points (sparse_utils).
+        res = client.query_points(
+            collection_name=coll, query=vector, limit=topk, with_payload=True
+        ).points
         logger.info(f"[QDRANT] Found {len(res)} results in '{coll}'")
 
         # Log de hits para debugging

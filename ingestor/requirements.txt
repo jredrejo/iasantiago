@@ -16,9 +16,9 @@ pypdf[crypto]==6.3.0
 # Docling los soporta de forma nativa y ya arrastra esas librerías.
 
 # Búsqueda y caché
-# qdrant-client alineado con la imagen del servidor (docker-compose: v1.15.x).
+# qdrant-client alineado con la imagen del servidor (docker-compose: v1.18.x).
 # No subir por delante del servidor (PLAN.md §7.2): moverlos en bloque.
-qdrant-client==1.15.1
+qdrant-client==1.18.0
 # Vector disperso BM25 escrito junto al denso (§7.4). Sustituyó a whoosh 2.7.4,
 # retirado el 2026-08-01. Alineado con la versión de rag-api: el mismo modelo
 # tiene que producir los mismos ids de término en los dos servicios o documentos
