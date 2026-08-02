@@ -191,11 +191,12 @@ GENERATIVE_TOPK_MULTIPLIER = get_int_env("GENERATIVE_TOPK_MULTIPLIER", 4)
 # contexto que devuelve) y la ventana del modelo (para no devolver más contexto
 # del que cabe).
 #
-# Las variables retiradas —UPSTREAM_OPENAI_URL, VLLM_SERVED_MODEL,
+# De las variables retiradas, la única que sigue en `.env` es
+# VLLM_SERVED_MODEL: compose la interpola para `vllm` (--served-model-name) y
+# para `openwebui` (TASK_MODEL_EXTERNAL). Las demás —UPSTREAM_OPENAI_URL,
 # GENERATIVE_MAX_TOKENS_PERCENT, RESPONSE_MAX_TOKENS_PERCENT,
-# MIN_RESPONSE_TOKENS y los ocho parámetros de muestreo— siguen en `.env`
-# porque compose las usa para los servicios `vllm` y `openwebui`
-# (VLLM_SERVED_MODEL), o quedan inertes. Aquí ya no se leen.
+# MIN_RESPONSE_TOKENS y los ocho parámetros de muestreo— se borraron del `.env`
+# el 2026-08-02, una vez confirmado que no las leía nadie.
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "dummy-key")
 
