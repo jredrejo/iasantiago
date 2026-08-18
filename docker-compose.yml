@@ -45,7 +45,7 @@ services:
     # Fijado al digest de la nightly auditada (era :nightly, un tag móvil).
     # Para actualizar: `docker pull vllm/vllm-openai:nightly`, verificar, y
     # sustituir el digest por el nuevo (docker inspect ... RepoDigests).
-    image: vllm/vllm-openai@sha256:7ee49e12fc4f971b91d62b1fdb0409b22f85b071c22bc3d9389c636600ae03b8
+    image: vllm/vllm-openai@sha256:045ede572515526c6dc1f4380ba6b988736adc3769db61cc3ce4ff3cca226ed8
     container_name: vllm
     restart: unless-stopped
     ipc: host
@@ -73,6 +73,21 @@ services:
     ports:
       - "8000:8000"
 
+    # --default-chat-template-kwargs '{"enable_thinking": false}' sustituye a la
+    # plantilla de chat vendorizada que se montaba aqui hasta 2026-08-18: ahora se
+    # usa la del modelo tal cual y el default se fija por bandera, asi que cambiar
+    # VLLM_MODEL ya no obliga a re-sincronizar un fork del template (que era la
+    # via por la que el fork se quedaba obsoleto en silencio).
+    #
+    # Motivo del default: upstream activa thinking cuando el cliente NO envia
+    # enable_thinking (y 3.8 ademas inyecta "Reasoning effort ... xhigh"). Open
+    # WebUI no puede enviarlo -sus params por modelo son de esquema fijo-, asi que
+    # sus tareas internas (titulo, tags, follow-up) gastaban todo su presupuesto
+    # de tokens razonando y terminaban en finish_reason="length" sin emitir el
+    # JSON esperado.
+    #
+    # Los chat_template_kwargs de la peticion tienen prioridad sobre estos, de
+    # modo que enable_thinking=true lo sigue activando de forma explicita.
     command: >
       ${VLLM_MODEL}
       --dtype ${VLLM_DTYPE}
@@ -83,7 +98,6 @@ services:
       --host 0.0.0.0
       --port 8000
       --served-model-name ${VLLM_SERVED_MODEL:-santiago}
-      --chat-template /etc/vllm/chat_template.jinja
       --max-num-seqs ${VLLM_MAX_NUM_SEQS}
       --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS}
       --enable-prefix-caching
@@ -92,11 +106,9 @@ services:
       --enable-auto-tool-choice
       --tool-call-parser qwen3_coder
       --speculative-config '{"method": "mtp", "num_speculative_tokens": 2}'
+      --default-chat-template-kwargs '{"enable_thinking": false}'
     volumes:
       - huggingface_cache:/root/.cache/huggingface
-      # Plantilla de chat vendorizada: identica a la del modelo salvo que el modo
-      # thinking pasa a estar desactivado por defecto (ver cabecera del fichero).
-      - ./vllm/chat_template.jinja:/etc/vllm/chat_template.jinja:ro
     deploy:
       resources:
         reservations:
